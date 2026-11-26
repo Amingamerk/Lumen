@@ -9,8 +9,8 @@ You check Lumen against the RAM budget. Read section 2 of PROJECT.md for the cur
 
 ## How to measure
 
-- Sum the **private working set** of every process that belongs to Lumen: the app, every `msedgewebview2` child it spawned, and any sidecar (`yt-dlp`, `deno`). Use the Task Manager Details tab or a PowerShell script over `Get-Process`/CIM (`WorkingSetPrivate`). Never the grouped row.
-- Count only WebView2 processes whose parent chain leads to Lumen, so other Edge or WebView2 apps are not included.
+- Sum the **private working set** of every process that belongs to Lumen: the app, every `msedgewebview2` child it spawned, and any sidecar (`yt-dlp`, `deno`). Read `WorkingSetPrivate` from the CIM class `Win32_PerfFormattedData_PerfProc_Process` (for example `Get-CimInstance Win32_PerfFormattedData_PerfProc_Process`, matching by `IDProcess`). `Get-Process` has no private working set, so do not use it for the numbers. The Task Manager Details tab is the manual cross-check. Never the grouped row.
+- Count only WebView2 processes whose parent chain leads to Lumen (use `Win32_Process` `ParentProcessId`), so other Edge or WebView2 apps are not included.
 - Take two readings: idle on the home screen after 30 s, and while playing with the 5,000-track playlist open. Note the build (debug or release); judge budgets on release builds.
 - Run each reading three times and report the median.
 
