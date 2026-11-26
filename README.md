@@ -33,7 +33,7 @@ All heavy work (network, stream resolving, audio, database, recommendations, ima
 
 ## Status
 
-Early stage, nothing to run yet. Work happens one milestone at a time:
+Early stage. The app shell (sidebar, placeholder views and an inactive player bar) runs; there is no playback or sign-in yet. Work happens one milestone at a time:
 
 0. Spikes: yt-dlp + libmpv playback, and measuring the real Tauri RAM baseline
 1. Skeleton UI
@@ -52,7 +52,7 @@ Performance target: at most 100 MB RAM idle and 150 MB while playing a large pla
 Windows 10 or 11.
 
 - Rust (stable) with the MSVC toolchain (Visual Studio Build Tools, "Desktop development with C++")
-- Node.js 20 or newer and pnpm
+- Node.js 20.19 or newer and pnpm (the version is pinned in `package.json`)
 - Tauri CLI and the other [Tauri 2 prerequisites for Windows](https://tauri.app/start/prerequisites/) (WebView2 is built into Windows 11)
 - libmpv: `libmpv-2.dll` placed next to the executable (and the import library for linking)
 - `yt-dlp.exe` and `deno.exe` (yt-dlp needs a JavaScript runtime for YouTube), used as Tauri sidecars in `src-tauri/binaries/`
@@ -62,17 +62,28 @@ Session data is stored in Windows Credential Manager. Never commit it.
 
 ## Build
 
-The app does not exist yet, so these are the intended steps and may change as the skeleton lands in milestone 1.
+libmpv, `yt-dlp` and Deno are not needed until playback lands in milestone 2.
 
 ```powershell
 git clone https://github.com/Amingamerk/Lumen.git
 cd Lumen
 pnpm install
 pnpm tauri dev      # run in development
-pnpm tauri build    # production build
+pnpm tauri build --no-bundle    # release executable in src-tauri/target/release
 ```
 
-For Rust work, run `cargo clippy` and the Rust and frontend tests before considering a step done.
+Checks, as CI runs them:
+
+```powershell
+pnpm run lint
+pnpm run check
+pnpm run test
+pnpm run build
+cd src-tauri
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
+```
 
 ## Account safety
 

@@ -283,8 +283,8 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 
 The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout". Rust code lives in
 `src-tauri/src/` split into `ipc/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`, `recs/`,
-`art/` and `media/`; the Svelte app lives in `src/`; spikes in `spikes/`; developer scripts in `scripts/`;
-docs in `docs/`.
+`art/` and `media/`, plus `state.rs` for navigation and sidebar state; the Svelte app lives in `src/`; spikes
+in `spikes/`; developer scripts in `scripts/`; docs in `docs/`.
 
 ## 7. Milestones
 
