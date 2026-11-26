@@ -88,3 +88,13 @@ Only create a folder when the first file for it exists. Keep `docs/PROJECT.md` s
 - CI must be green before merge: cargo fmt, clippy (`-D warnings`), cargo test, frontend lint, typecheck and tests.
 - Squash merge, then delete the branch.
 - Tickets follow the issue template: What to build, Acceptance, Blocked by. Do not start a ticket whose blockers are open.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues (managed via the `gh` CLI). See `docs/agents/issue-tracker.md`.
+
+### Domain docs
+
+Single-context layout (`GLOSSARY.md` at repo root and `docs/adr/`). See `docs/agents/domain.md`.
