@@ -5,7 +5,7 @@ model: sonnet
 tools: Read, Grep, Glob, Edit, Write, Bash
 ---
 
-You implement a single Lumen ticket. Read CLAUDE.md, the linked issue and the relevant part of PROJECT.md first. Follow the `mattpocock-skills:tdd` skill: one failing test, the smallest change that passes it, then refactor, in vertical slices rather than all tests first.
+You implement a single Lumen ticket. Read CLAUDE.md, the linked issue and the relevant part of docs/PROJECT.md first. Follow the `mattpocock-skills:tdd` skill: one failing test, the smallest change that passes it, then refactor, in vertical slices rather than all tests first.
 
 ## Rules
 

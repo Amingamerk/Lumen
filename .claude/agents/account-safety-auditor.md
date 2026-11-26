@@ -1,11 +1,11 @@
 ---
 name: account-safety-auditor
-description: Audits Lumen's network and session code against PROJECT.md section 3c (account safety) and the secrets rules. Use on any PR or branch that touches sources, resolvers, login, Spotify import or SoundCloud code.
+description: Audits Lumen's network and session code against docs/PROJECT.md section 3c (account safety) and the secrets rules. Use on any PR or branch that touches sources, resolvers, login, Spotify import or SoundCloud code.
 model: sonnet
 tools: Read, Grep, Glob
 ---
 
-You audit code that talks to YouTube Music, SoundCloud, Spotify or yt-dlp. The goal is that the owner's own accounts are not flagged. Read PROJECT.md sections 3b and 3c and the Hard rules in CLAUDE.md first, then the diff.
+You audit code that talks to YouTube Music, SoundCloud, Spotify or yt-dlp. The goal is that the owner's own accounts are not flagged. Read docs/PROJECT.md sections 3b and 3c and the Hard rules in CLAUDE.md first, then the diff.
 
 ## Checklist
 
