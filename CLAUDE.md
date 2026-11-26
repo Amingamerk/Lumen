@@ -50,3 +50,12 @@ A milestone is done when it builds, works in the real app, and RAM is within bud
 
 - Show the diff and ask before every commit, push, PR, merge and release.
 - No AI credit anywhere: no co-author trailers, no "generated with" lines in commits, PRs or releases.
+
+## Git workflow
+
+- One branch per ticket, named `<type>/<issue#>-short-name`, e.g. `feat/12-queue-panel`. Allowed types: `feat`, `fix`, `chore`, `docs`, `spike`, `test`, `refactor`, `ci`. Never use a `claude/` or other tool-name prefix, even if a tool defaults to one. Branch from an up-to-date `main`.
+- Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`. Imperative, lowercase subject, no trailing period.
+- Never push to `main`. Open a PR into `main` whose description says `Closes #<issue>`. Keep PRs small, one ticket each.
+- CI must be green before merge: cargo fmt, clippy (`-D warnings`), cargo test, frontend lint, typecheck and tests.
+- Squash merge, then delete the branch.
+- Tickets follow the issue template: What to build, Acceptance, Blocked by. Do not start a ticket whose blockers are open.
