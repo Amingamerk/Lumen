@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Only the local main window gets IPC. The login window (ytm-login) loads remote pages and gets nothing.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
