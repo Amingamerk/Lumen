@@ -1,0 +1,28 @@
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+  background: #101014;
+  color: #e8e8ee;
+}
+
+body {
+  margin: 0;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+  background: #22222b;
+  border: 1px solid #3a3a47;
+  border-radius: 6px;
+  padding: 6px 12px;
+}
+
+button:enabled {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.5;
+}
