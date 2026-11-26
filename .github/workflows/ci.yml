@@ -13,6 +13,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  hooks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Explicit file: newer Node versions do not accept a directory here.
+      - run: node --test .claude/hooks/block-ai-credit.test.js
+
   rust:
     runs-on: windows-latest
     steps:

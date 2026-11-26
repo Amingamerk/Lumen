@@ -3,11 +3,12 @@ const fs = require("fs");
 const path = require("path");
 const { execFileSync } = require("child_process");
 
+// Matched one line at a time. The name must be close to the phrase, so a later ".claude" path does not count.
 const BAD = [
-  /co-authored-by:.*(claude|anthropic)/i,
+  /co-authored-by:.{0,80}?(claude|anthropic)/i,
   /claude-session:/i,
-  /generated (with|by)\b.*claude/i,
-  /(assisted|created|written) (with|by)\b.*claude/i,
+  /generated (with|by)\s+[\[*_"'`]{0,3}\s*(claude|anthropic)/i,
+  /(assisted|created|written) (with|by)\s+[\[*_"'`]{0,3}\s*(claude|anthropic)/i,
   /claude\.ai\/code/i,
   /noreply@anthropic\.com/i,
   /\u{1F916}/u,
@@ -15,6 +16,20 @@ const BAD = [
 const BAD_COMMAND = [...BAD, /\bclaude\.ai\b/i];
 const WRITES_TEXT = /\bgit\s+(commit|tag|merge)\b|\bgh\s+(pr|issue|release)\b/;
 const CLAUDE_BRANCH = /^(refs\/heads\/)?claude\//i;
+// MCP tool input fields that hold commit, PR, issue or release text. File contents and paths are not checked.
+const TEXT_FIELDS = /^(message|commit_?(message|title)|title|body|description|notes|comment|review)$/i;
+
+const findCredit = (patterns, text) => {
+  const lines = text.split(/\r?\n/);
+  return patterns.find((re) => lines.some((line) => re.test(line)));
+};
+
+function textFields(value, key = "") {
+  if (typeof value === "string") return TEXT_FIELDS.test(key) ? [value] : [];
+  if (!value || typeof value !== "object" || key === "content") return [];
+  // Array items keep the array's key.
+  return Object.entries(value).flatMap(([k, v]) => textFields(v, Array.isArray(value) ? key : k));
+}
 
 class Block extends Error {}
 const block = (reason) => { throw new Block(reason); };
@@ -142,7 +157,7 @@ function badIdentity(who, name, email) {
 }
 
 function checkCredit(text) {
-  const hit = BAD_COMMAND.find((re) => re.test(text));
+  const hit = findCredit(BAD_COMMAND, text);
   if (hit) {
     block(`this commit/PR text credits Claude or AI (${hit}). ` +
       "Remove all Co-Authored-By, Claude-Session, 'Generated with/by', claude.ai links and robot emoji, then retry.");
@@ -325,7 +340,7 @@ process.stdin.on("end", () => {
     if (tool === "Bash" || tool === "PowerShell") {
       checkCommand(String(args.command || ""), tool === "PowerShell", input.cwd || process.cwd());
     } else if (/git/i.test(tool)) {
-      const hit = BAD.find((re) => re.test(JSON.stringify(args)));
+      const hit = findCredit(BAD, textFields(args).join("\n"));
       if (hit) block(`this tool call credits Claude or AI (${hit}). Remove it, then retry.`);
     }
   } catch (e) {
