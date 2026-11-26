@@ -1,0 +1,38 @@
+# Rust
+/target/
+/src-tauri/target/
+**/*.rs.bk
+
+# Node
+node_modules/
+dist/
+.svelte-kit/
+.vite/
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Tauri
+/src-tauri/gen/
+/src-tauri/binaries/*
+!/src-tauri/binaries/.gitkeep
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+cookies*.txt
+
+# Local tool state
+.claude/settings.local.json
+
+# Editors
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

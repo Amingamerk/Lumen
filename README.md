@@ -29,7 +29,7 @@ Planned (see [Status](#status)):
 | Media keys | `souvlaki` |
 | Login / secrets | In-app login windows; sessions stored in Windows Credential Manager via `keyring` |
 
-All heavy work (network, stream resolving, audio, database, recommendations, image resizing) lives in Rust. The webview only renders and mirrors player state from Rust events. The full spec is in [PROJECT.md](PROJECT.md).
+All heavy work (network, stream resolving, audio, database, recommendations, image resizing) lives in Rust. The webview only renders and mirrors player state from Rust events. The full spec is in [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Status
 
@@ -76,7 +76,7 @@ For Rust work, run `cargo clippy` and the Rust and frontend tests before conside
 
 ## Account safety
 
-Lumen tries to behave like one ordinary user's client: one session per service, conservative rate limits with backoff, caching of metadata and stream URLs, and resolving only the current and next one or two tracks. It does no bulk scraping or downloading and pauses a service when it gets a 429 or captcha. This lowers the risk but cannot remove it. See section 3c of [PROJECT.md](PROJECT.md).
+Lumen tries to behave like one ordinary user's client: one session per service, conservative rate limits with backoff, caching of metadata and stream URLs, and resolving only the current and next one or two tracks. It does no bulk scraping or downloading and pauses a service when it gets a 429 or captcha. This lowers the risk but cannot remove it. See section 3c of [docs/PROJECT.md](docs/PROJECT.md).
 
 ## Personal use and terms of service
 
