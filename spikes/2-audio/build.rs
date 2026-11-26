@@ -10,6 +10,10 @@ fn main() {
                 .join("Programs/libmpv")
         });
     println!("cargo:rustc-link-search=native={}", dir.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        dir.join("libmpv-2.dll").display()
+    );
 
     // OUT_DIR is below target/<profile>/build/; the depth differs between cargo versions.
     let out = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR"));

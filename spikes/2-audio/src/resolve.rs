@@ -1,6 +1,6 @@
 //! Turns `yt-dlp -J` output into what mpv needs to play a stream.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, time::Duration};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ResolveError {
@@ -16,6 +16,9 @@ pub struct StreamInfo {
     pub headers: Vec<(String, String)>,
     /// Unix seconds after which the URL stops working.
     pub expires_at: Option<u64>,
+    /// Unix seconds before which the URL should not be requested. yt-dlp derives it
+    /// from a pre-roll ad in the player response.
+    pub available_at: Option<u64>,
 }
 
 impl StreamInfo {
@@ -42,6 +45,8 @@ struct YtDlp {
     url: Option<String>,
     #[serde(default)]
     http_headers: BTreeMap<String, String>,
+    /// Fractional when the ad's skip offset is not a whole second.
+    available_at: Option<f64>,
 }
 
 pub fn ytdlp_args(url: &str, player_clients: Option<&str>) -> Vec<String> {
@@ -50,6 +55,10 @@ pub fn ytdlp_args(url: &str, player_clients: Option<&str>) -> Vec<String> {
         "-f".to_owned(),
         "bestaudio".to_owned(),
         "--no-playlist".to_owned(),
+        // A user config file must not change what we send or how much we resolve.
+        "--ignore-config".to_owned(),
+        "--playlist-items".to_owned(),
+        "1".to_owned(),
     ];
     if let Some(clients) = player_clients {
         args.push("--extractor-args".to_owned());
@@ -66,8 +75,17 @@ pub fn parse_ytdlp_json(json: &str) -> Result<StreamInfo, ResolveError> {
     Ok(StreamInfo {
         expires_at: expiry_from_url(&url),
         headers: out.http_headers.into_iter().collect(),
+        available_at: out.available_at.map(|at| at.ceil() as u64),
         url,
     })
+}
+
+/// How long to wait before requesting the URL, or `None` if it can be used now.
+pub fn wait_duration(available_at: Option<u64>, now_unix_secs: u64) -> Option<Duration> {
+    available_at?
+        .checked_sub(now_unix_secs)
+        .filter(|&secs| secs > 0)
+        .map(Duration::from_secs)
 }
 
 /// googlevideo URLs carry the expiry as `?expire=N` (HLS manifests as `/expire/N/`).
@@ -102,8 +120,55 @@ mod tests {
                     ("User-Agent".into(), "UA/1.0".into()),
                 ],
                 expires_at: Some(1_795_728_336),
+                available_at: None,
             }
         );
+    }
+
+    #[test]
+    fn reads_available_at_when_yt_dlp_reports_it() {
+        let json = r#"{"url": "https://a", "available_at": 1795711721}"#;
+
+        assert_eq!(
+            parse_ytdlp_json(json).unwrap().available_at,
+            Some(1_795_711_721)
+        );
+    }
+
+    #[test]
+    fn leaves_available_at_empty_when_absent_or_null() {
+        for json in [
+            r#"{"url": "https://a"}"#,
+            r#"{"url": "https://a", "available_at": null}"#,
+        ] {
+            assert_eq!(parse_ytdlp_json(json).unwrap().available_at, None);
+        }
+    }
+
+    #[test]
+    fn rounds_a_fractional_available_at_up() {
+        // A skippable ad with a fractional skip offset gives a fractional timestamp.
+        let json = r#"{"url": "https://a", "available_at": 1795711721.5}"#;
+
+        assert_eq!(
+            parse_ytdlp_json(json).unwrap().available_at,
+            Some(1_795_711_722)
+        );
+    }
+
+    #[test]
+    fn waits_until_a_future_available_at() {
+        assert_eq!(
+            wait_duration(Some(1_006), 1_000),
+            Some(Duration::from_secs(6))
+        );
+    }
+
+    #[test]
+    fn does_not_wait_without_a_future_available_at() {
+        assert_eq!(wait_duration(None, 1_000), None);
+        assert_eq!(wait_duration(Some(999), 1_000), None);
+        assert_eq!(wait_duration(Some(1_000), 1_000), None);
     }
 
     #[test]
@@ -142,7 +207,17 @@ mod tests {
         let url = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
         assert_eq!(
             ytdlp_args(url, None),
-            vec!["-J", "-f", "bestaudio", "--no-playlist", "--", url]
+            vec![
+                "-J",
+                "-f",
+                "bestaudio",
+                "--no-playlist",
+                "--ignore-config",
+                "--playlist-items",
+                "1",
+                "--",
+                url,
+            ]
         );
         assert_eq!(
             ytdlp_args(url, Some("default,-tv_samsung")),
@@ -151,6 +226,9 @@ mod tests {
                 "-f",
                 "bestaudio",
                 "--no-playlist",
+                "--ignore-config",
+                "--playlist-items",
+                "1",
                 "--extractor-args",
                 "youtube:player_client=default,-tv_samsung",
                 "--",

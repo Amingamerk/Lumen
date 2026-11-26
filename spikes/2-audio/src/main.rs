@@ -8,11 +8,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use audio_spike::resolve::{StreamInfo, parse_ytdlp_json, ytdlp_args};
+use audio_spike::resolve::{StreamInfo, parse_ytdlp_json, wait_duration, ytdlp_args};
 use libmpv2::{Mpv, events::Event};
 
 const DEFAULT_URL: &str = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
-/// Excludes `tv_samsung`, whose ad-gated URLs return HTTP 403 on unauthenticated resolves.
+/// Excludes `tv_samsung`: on unauthenticated resolves it is slower, can start Deno, and its
+/// pre-roll ads add an `available_at` wait (see FINDINGS.md).
 const DEFAULT_CLIENTS: &str = "default,-tv_samsung";
 
 /// Audio only, small buffers (PROJECT.md section 2, rule 7).
@@ -73,6 +74,7 @@ fn main() -> Result<()> {
         if flag("--break-url") {
             info.url = info.url.replace("expire=", "expire=1");
         }
+        wait_until_available(&info)?;
         info.url
     };
 
@@ -85,8 +87,10 @@ fn main() -> Result<()> {
 
     let playing = Instant::now();
     while playing.elapsed() < Duration::from_secs(seconds) {
-        if let Some(Ok(Event::EndFile(_))) = mpv.wait_event(0.5) {
-            break;
+        match mpv.wait_event(0.5) {
+            Some(Ok(Event::EndFile(_))) => break,
+            Some(Err(e)) => bail!("mpv playback error: {e}"),
+            _ => {}
         }
     }
     report(&mpv);
@@ -104,8 +108,21 @@ fn resolve(url: &str, player_clients: Option<&str>) -> Result<StreamInfo> {
     Ok(parse_ytdlp_json(&String::from_utf8(out.stdout)?)?)
 }
 
+fn unix_now() -> Result<u64> {
+    Ok(std::time::UNIX_EPOCH.elapsed()?.as_secs())
+}
+
+/// yt-dlp sleeps until `available_at` before downloading; `-J` does not, so we have to.
+fn wait_until_available(info: &StreamInfo) -> Result<()> {
+    if let Some(wait) = wait_duration(info.available_at, unix_now()?) {
+        println!("waiting_for_available_at_s={}", wait.as_secs());
+        std::thread::sleep(wait);
+    }
+    Ok(())
+}
+
 fn print_expiry(info: &StreamInfo) -> Result<()> {
-    let now = std::time::UNIX_EPOCH.elapsed()?.as_secs();
+    let now = unix_now()?;
     match info.expires_at {
         Some(at) => println!("expires_at={at} lifetime_s={}", at.saturating_sub(now)),
         None => println!("expires_at=unknown"),
