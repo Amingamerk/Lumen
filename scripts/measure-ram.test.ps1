@@ -169,6 +169,47 @@ Test-Case 'webview2 roles come from the command line' {
     Assert-Equal '' (Get-ProcessRole -Name 'lumen.exe' -CommandLine 'lumen.exe --list') 'app'
 }
 
+Test-Case '-AsJson keeps stdout pure JSON when a counter is missing' {
+    # Runs the script in a child shell, so stdout and stderr are the real streams.
+    # The fake Get-CimInstance lists two processes and a counter for only one of them.
+    $harness = @'
+param([string]$Script)
+function Get-CimInstance {
+    param([Parameter(Position = 0)] [string]$ClassName, [string[]]$Property)
+    if ($ClassName -eq 'Win32_Process') {
+        [pscustomobject]@{ ProcessId = 100; ParentProcessId = 1; Name = 'lumen.exe'; CreationDate = $null; CommandLine = '' }
+        [pscustomobject]@{ ProcessId = 101; ParentProcessId = 100; Name = 'yt-dlp.exe'; CreationDate = $null; CommandLine = '' }
+    } else {
+        [pscustomobject]@{ IDProcess = 100; WorkingSetPrivate = 10485760 }
+    }
+}
+& $Script -ProcessId 100 -WaitSeconds 0 -AsJson
+'@
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    try {
+        $harnessPath = Join-Path $dir 'harness.ps1'
+        $outPath = Join-Path $dir 'stdout.txt'
+        $errPath = Join-Path $dir 'stderr.txt'
+        Set-Content -LiteralPath $harnessPath -Value $harness
+        $exe = if ($PSVersionTable.PSVersion.Major -ge 6) { 'pwsh.exe' } else { 'powershell.exe' }
+        $script = Join-Path $PSScriptRoot 'measure-ram.ps1'
+        $child = Start-Process -FilePath (Join-Path $PSHOME $exe) -NoNewWindow -Wait -PassThru `
+            -ArgumentList '-NoProfile', '-File', "`"$harnessPath`"", "`"$script`"" `
+            -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+        $stdout = [string](Get-Content -LiteralPath $outPath -Raw)
+        $stderr = [string](Get-Content -LiteralPath $errPath -Raw)
+
+        Assert-Equal 0 $child.ExitCode "exit code (stderr: $stderr)"
+        try { $json = $stdout | ConvertFrom-Json } catch { throw "stdout is not pure JSON: $stdout" }
+        Assert-Equal 101 $json.MissingIds 'MissingIds'
+        Assert-Equal 10 $json.TotalMB 'TotalMB'
+        if ($stderr -notmatch 'No counter for process id\(s\) 101') { throw "no warning on stderr: '$stderr'" }
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force
+    }
+}
+
 Write-Host "$script:passed passed, $script:failed failed"
 if ($script:failed -gt 0) { exit 1 }
 exit 0

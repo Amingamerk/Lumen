@@ -306,7 +306,7 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 |---|---|
 | YouTube changes break stream extraction, or needs PO tokens / SABR | yt-dlp as primary with pinned version and auto-update, bundled Deno + yt-dlp-ejs, swappable resolver backends |
 | Stream URLs expire mid-play | Store expiry, pre-resolve next 1-2 tracks, re-resolve on 403 or stall |
-| RAM budget unrealistic with WebView2 | Milestone 0 measures it first; relax to about 150 / 200 MB if needed; virtual lists, thumbnails only, lean mpv settings |
+| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risk: transient yt-dlp / Deno resolve peaks, to be measured in Milestone 2. Virtual lists, thumbnails only, lean mpv settings |
 | SoundCloud `client_id` rotates, new official API credentials need a paid plan | Scrape and re-scrape automatically on 401/403 (once, then retry once), add retry on the stream-URL step; SoundCloud is last in the order |
 | Spotify web token flow changes again (TOTP) | Metadata only so playback never depends on it; isolate in one module; manual re-login |
 | Account flagged or banned for unofficial access | Section 3c: one session per service, low rates, backoff, caching, resolve only current + next 1-2, pause on 429/captcha. Not a guarantee |

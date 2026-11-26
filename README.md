@@ -45,7 +45,7 @@ Early stage, nothing to run yet. Work happens one milestone at a time:
 7. SoundCloud
 8. Polish
 
-Performance target: at most 100 MB RAM idle and 150 MB while playing a large playlist (summed private working set of all processes). This may be relaxed once the real baseline is measured in milestone 0.
+Performance target: at most 100 MB RAM idle and 150 MB while playing a large playlist (summed private working set of all processes). Milestone 0 measured the baseline and kept this budget (100 MB idle, 150 MB playing): see [docs/ram-baseline.md](docs/ram-baseline.md).
 
 ## Prerequisites
 

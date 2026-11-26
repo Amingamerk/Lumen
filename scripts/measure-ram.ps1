@@ -8,6 +8,13 @@ msedgewebview2, yt-dlp and deno child is counted and other apps' WebView2 proces
 Memory is WorkingSetPrivate from Win32_PerfFormattedData_PerfProc_Process, matched by IDProcess.
 MB means 1,048,576 bytes, as in Task Manager.
 
+The result is one snapshot and can undercount:
+- A process started between the two CIM queries (process list, then counters) is omitted without a
+  warning.
+- A descendant whose intermediate parent has exited can no longer be reached by ParentProcessId, so it
+  drops out of the tree.
+- Short-lived peaks, such as a yt-dlp or deno resolve, are not captured.
+
 .PARAMETER ProcessName
 Name of the app process, with or without .exe. Exactly one instance may be running.
 
@@ -18,7 +25,7 @@ Id of the app process, instead of a name.
 Seconds to wait before measuring, so the app can settle. Default 30.
 
 .PARAMETER AsJson
-Write one JSON object instead of a table.
+Write one JSON object instead of a table. Warnings then go to stderr, so stdout holds only the JSON.
 
 .EXAMPLE
 pwsh -File scripts/measure-ram.ps1 -ProcessName lumen
@@ -182,7 +189,9 @@ try {
 }
 
 if (@($report.MissingIds).Count -gt 0) {
-    Write-Warning "No counter for process id(s) $($report.MissingIds -join ', '); they exited during the measurement and are not in the total."
+    $warning = "No counter for process id(s) $($report.MissingIds -join ', '); they exited during the measurement and are not in the total."
+    # A child shell prints Write-Warning on stdout, which would break the JSON.
+    if ($AsJson) { [Console]::Error.WriteLine("WARNING: $warning") } else { Write-Warning $warning }
 }
 
 if ($AsJson) {

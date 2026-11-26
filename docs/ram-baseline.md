@@ -52,8 +52,11 @@ resized during run 2. It leads to the same decision.
 
 ## Playing estimate
 
-Spike #2 (`spikes/2-audio/FINDINGS.md`, PR #25) measured its release binary plus `libmpv-2.dll` at 13.1 MB
-while playing (3-run median), up from 6.2 MB before playback.
+The spike #2 numbers in this section come from `spikes/2-audio/FINDINGS.md` on PR #25 (head `d96c532`, not
+yet merged to `main`).
+
+Spike #2 measured its release binary plus `libmpv-2.dll` at 13.1 MB while playing (3-run median), up from
+6.2 MB before playback.
 
 74.2 MB (list) + 13.1 MB = **about 87.3 MB**. This was not measured in one app. It leans high, because the
 13.1 MB includes a host process that Lumen already counts; adding only the 6.9 MB growth would give about
@@ -62,13 +65,20 @@ while playing (3-run median), up from 6.2 MB before playback.
 ### Open: resolve peaks
 
 The estimate is steady-state playback. While yt-dlp resolves a stream it adds memory for a moment, and
-sidecars count towards the budget. Adding spike #2's peaks on top of 87.3 MB gives these upper estimates:
+sidecars count towards the budget.
 
-| While resolving | Spike #2 peak | Estimated total | Against 150 MB |
-|---|---|---|---|
-| `default,-tv_samsung` clients, median | 57.2 MB | about 144.5 MB | just under |
-| `default,-tv_samsung` clients, highest run | 65.8 MB | about 153.1 MB | over |
-| default clients with a Deno JS challenge, 1 to 2 s | up to 216.8 MB | up to about 304 MB | far over |
+Spike #2's peaks are whole-tree totals, so each one includes its own host process, `audio-spike.exe`, at
+about 6.2 to 6.3 MB. The 87.3 MB estimate already contains that host (inside the 13.1 MB), so adding a whole
+peak would count it twice. Only the sidecar memory is added:
+
+- sidecars = spike #2 peak - 6.3 MB host
+- estimated total = 87.3 MB + sidecars
+
+| While resolving | Spike #2 peak (whole tree) | Sidecars only | Estimated total | Against 150 MB |
+|---|---|---|---|---|
+| `default,-tv_samsung` clients, median | 57.2 MB | `yt-dlp` 50.9 MB | about 138 MB | under |
+| `default,-tv_samsung` clients, highest run | 65.8 MB | `yt-dlp` 59.5 MB | about 147 MB | just under |
+| default clients with a Deno JS challenge, 1 to 2 s | up to 216.8 MB | `yt-dlp` + `deno` up to 210.5 MB | up to about 298 MB | far over |
 
 Relaxing to 200 MB would not cover the Deno case either, so these peaks do not change the decision above.
 The budget rule itself is unchanged. Milestone 2 has to measure a resolve inside the app, keep resolves

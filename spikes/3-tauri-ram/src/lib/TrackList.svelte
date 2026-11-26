@@ -28,6 +28,8 @@
       shown = { offset, tracks: slice.tracks };
       error = '';
     } catch (cause) {
+      // A stale failure must not put an error over a newer slice.
+      if (request !== latestRequest) return;
       error = String(cause);
     }
   }

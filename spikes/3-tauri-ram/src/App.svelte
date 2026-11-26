@@ -12,7 +12,11 @@
   // Unset until Rust says which screen to open, so --list never mounts Home first.
   let view = $state<View>();
 
-  invoke<View>('initial_view').then((initial) => (view ??= initial));
+  invoke<View>('initial_view')
+    .then((initial) => (view ??= initial))
+    .catch(() => {
+      view ??= 'home';
+    });
 </script>
 
 <div class="grid h-full grid-cols-[12rem_1fr] grid-rows-[1fr_4.5rem]">
