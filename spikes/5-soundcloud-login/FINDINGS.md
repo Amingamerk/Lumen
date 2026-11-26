@@ -10,11 +10,10 @@ reqwest 0.13.5 (native TLS).
 | Signed-out `client_id` scrape, live | **worked** (one run) |
 | `soundcloud.com/signin` renders in WebView2 | **yes**, no bot check seen |
 | Token paste, Credential Manager save and clear, in the real app (fake token) | **worked** |
-| Sign in inside WebView2 and capture `oauth_token` | **pending Amin's live login check** |
-| One authenticated likes call | **pending Amin's live login check** |
+| Sign in inside WebView2 and capture `oauth_token` | **worked** (live 2026-11-26 with SoundCloud login; Google OAuth popup blocked in WebView2) |
+| One authenticated likes call | **worked** (9 tracks returned, more available, 198 total likes, via `/users/{id}/track_likes`) |
 
-The ticket is not accepted until the two pending rows pass. Everything about the signed-in path is only
-tested against fakes.
+**Accepted (live check passed 2026-11-26).**
 
 ## Run
 
@@ -35,33 +34,14 @@ cargo run --example live_scrape -- "<WebView2 user agent>"
 Tests: `cargo test` in `src-tauri` (no test contacts SoundCloud; the transport tests use a local socket,
 and two tests write fake values to throwaway Credential Manager entries and delete them).
 
-## Pending Amin's live login check
-
-Use an account you can afford to lose (PROJECT.md 3c). Never paste the token or the `client_id` anywhere.
-
-1. Build and run as above. The window should show `Session none`.
-2. Press **Open SoundCloud Login** and sign in with email. The window should close by itself and show
-   `oauth_token present (len=N)` and a user agent.
-3. Press **Scrape client_id + Fetch Likes** once. Note the name, the number of tracks, the `Path` line
-   (`/me/track_likes` or the fallback) and whether the `client_id` was scraped or rescraped.
-4. Press **Clear Saved Session**, then run `cmdkey /list | findstr lumen`. It should print nothing.
-5. Optional: repeat step 2 with the social sign-in button you normally use (Google, Facebook or Apple).
-
-If something fails:
-
-- The window stays open after sign-in: no `oauth_token` cookie was seen, or its value has characters other
-  than letters, digits, `-`, `_` and `.`. In `pnpm tauri dev`, check the cookie name in developer tools
-  (Application, Cookies). The paste field takes the cookie value as a fallback.
-- `bot check`: stop. Requests stay paused until the app restarts. Do not keep retrying.
-- `cooling down`: wait the stated time.
-- `session expired`: sign in again once. If it expires again at once, stop and record the message.
+## Live login check (2026-11-26)
 
 | Live result | Value |
 |---|---|
-| Sign-in method and outcome | pending |
-| Token captured, window closed | pending |
-| Likes call outcome and path used | pending |
-| Clear removed the credential | pending |
+| Sign-in method and outcome | Google OAuth popup did not open in WebView2; SoundCloud email/password sign-in worked cleanly |
+| Token captured, window closed | Yes: session saved, `oauth_token` present (len=861), `client_id` present (len=32), WebView2 UA captured (`Chrome/158.0.0.0 ... Edg/158.0.0.0`) |
+| Likes call outcome and path used | Succeeded: 9 tracks returned on first page (more available; 198 likes on profile) via fallback path `/users/{id}/track_likes`; `client_id` scraped from bundle 8 (`ObjectKey`), 1 of 9 fetched in 1,378 ms |
+| Clear removed the credential | Yes (`cmdkey /list | findstr lumen` printed nothing) |
 
 ## client_id scrape
 
@@ -114,17 +94,18 @@ Very. Nothing here is a documented interface, and one successful run says nothin
 
 - `GET https://api-v2.soundcloud.com/me/track_likes?client_id=...&limit=10` with
   `Authorization: OAuth <token>`, then `GET /me` for the display name.
-- **`/me/track_likes` is unconfirmed.** A web search found no source for it, and it was not probed live. If
-  it answers 404, the spike calls `/me` and then `/users/{id}/track_likes`, and shows which path answered.
-  Drop whichever path turns out to be wrong.
+- **Confirmed live:** `/users/{id}/track_likes` is the working path (9 tracks returned on the first page,
+  198 total likes on the profile). Milestone 7 can call `/me` and then `/users/{id}/track_likes` directly
+  instead of probing `/me/track_likes`.
 - The response fields read (`collection[].track.title`, `track.user.username`, `next_href`, `/me` `id`,
-  `username`, `likes_count`) are assumptions tested only against fake bodies. `likes_count` is optional.
+  `username`, `likes_count`) all worked live (`next_href` indicated more available).
 
 ## Login in WebView2
 
 - The sign-in page rendered cleanly in a second Tauri window: Facebook, Google and Apple buttons and the
-  email field. No bot check appeared. Social sign-in was not tried; Google may refuse embedded webviews.
-  Popups use the WebView2 default.
+  email field. No bot check appeared. In live testing, the Google social sign-in popup would not open in
+  the default WebView2 window, whereas SoundCloud email/password sign-in succeeded and captured `oauth_token`.
+  Milestone 7 should either handle OAuth popups explicitly or guide users to SoundCloud email/password login.
 - At about 880 px wide the page scrolled sideways, so the window now opens 1040 px wide.
 - While signed out no `oauth_token` cookie was captured, so nothing was saved.
 - The window is named in no capability, and Tauri rejects commands from remote pages, so the SoundCloud page
