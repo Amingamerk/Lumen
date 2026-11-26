@@ -1,0 +1,29 @@
+[package]
+name = "ytm-login-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+anyhow = "1"
+httpdate = "1"
+keyring = "4"
+reqwest = { version = "0.13", default-features = false, features = ["native-tls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha1 = "0.11"
+tauri = { version = "2", features = [] }
+tempfile = "3"
+thiserror = "2"
+time = "0.3"
+tokio = { version = "1", features = ["process", "sync", "time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt", "time"] }
+
+# No `panic = "abort"`: the temporary cookie file is removed by `Drop`, which needs unwinding.
+
+[workspace]
