@@ -5,7 +5,8 @@ Measured 2026-11-26 on Windows 11, yt-dlp 2026.11.23, Deno 2.9.8, libmpv (LGPL b
 Run: `cargo run --release -- [url] [--seconds N] [--hook] [--break-url] [--clients SPEC | --default-clients]`
 (`LIBMPV_DIR` overrides `%LOCALAPPDATA%\Programs\libmpv`). The spike's own resolve runs yt-dlp with
 `--ignore-config` and `--playlist-items 1`, so a user config cannot change it and one call resolves one
-track. `--hook` ignores `--clients` and `--default-clients`: mpv starts yt-dlp itself, with default clients.
+track. `--hook` ignores `--clients`, `--default-clients`, `--ignore-config` and `--playlist-items 1`: mpv
+starts yt-dlp itself with default clients and reads any user yt-dlp config.
 
 ## libmpv build
 
@@ -14,7 +15,8 @@ track. `--hook` ignores `--clients` and `--default-clients`: mpv starts yt-dlp i
 - The MSVC linker needs `mpv.lib`, generated from the DLL exports: list them with
   `dumpbin /exports libmpv-2.dll`, put the `mpv_*` names under `EXPORTS` in `mpv.def` (first line
   `LIBRARY libmpv-2.dll`), then run `lib /def:mpv.def /machine:x64 /out:mpv.lib` with the Visual Studio
-  x64 tools.
+  x64 tools. Place `mpv.lib` in `LIBMPV_DIR` beside `libmpv-2.dll`, because `build.rs` sets that folder as
+  the linker search path.
 - `libmpv-2.dll` is about 103 MB on disk, far above the 25 to 30 MB estimate in `docs/PROJECT.md`
   section 2.
 
@@ -43,7 +45,8 @@ descendants from `Win32_Process`, median of 3 runs (the 216.8 MB figure is a pea
 **Over budget, carry into #7:** the transient 216.8 MB Deno + yt-dlp resolve peak exceeds the 150 MB playing
 budget. It matters because the real player resolves the next track while one is playing.
 
-Audible output still needs Amin to confirm it on the speakers.
+Audible output confirmed on Amin's speakers during a 6 s release run on head `d96c532` (resolve 4.6 s,
+`loadfile` to audio 266 ms, `wasapi`, Opus 48 kHz).
 
 ## Settings that worked
 
@@ -80,7 +83,9 @@ Headers: `user-agent` option, then `change-list http-header-fields append` once 
 - **For spike #4:** `visionos` is a default client only without login, and it does not accept cookies. In
   yt-dlp 2026.11.23 the authenticated defaults are `tv_samsung`, `web_embedded` and `web` (Premium:
   `web_creator`, `tv_samsung`, `web`), plus `web_music` for `music.youtube.com` URLs. None of them is
-  `visionos`, so spike #4 must test authenticated client behavior and `available_at`.
+  `visionos`, so spike #4 must test authenticated client behavior and `available_at`. Also note that yt-dlp
+  2026.11.23 picks a random Chrome major version (151 to 157) for its default `User-Agent` per process; the
+  real authenticated resolver must pin `--user-agent` to match the login WebView2 build (PROJECT.md 3c).
 - mpv's error log prints the full stream URL, including the client IP. The app must not log it.
 - Without a JS runtime yt-dlp only warns and still exits 0, with formats possibly missing.
 - `ytdl_hook` works in this build but is about as slow as resolving ourselves with the same clients, and
