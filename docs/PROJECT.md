@@ -32,7 +32,7 @@ but uses a fraction of the memory of a browser tab or an Electron app.
 | RAM, playing + 5,000-track playlist open | <= 150 MB |
 | Cold start to usable UI | <= 1.5 s |
 | CPU while playing, window minimized | <= 1-2 % |
-| Installer size | <= 20 MB, excluding the mpv DLL (about 25-30 MB), yt-dlp and Deno |
+| Installer size | <= 20 MB, excluding the mpv DLL (the LGPL `libmpv-2.dll` is about 103 MB on disk, spike #2), yt-dlp and Deno |
 
 **How RAM is measured:** the *summed private working set of all processes* (the app, every
 `msedgewebview2` process and any sidecar such as yt-dlp), read from the Task Manager Details tab or with
@@ -41,9 +41,22 @@ processes.
 
 **Measured baseline (Milestone 0, 2026-11-26):** a release Tauri 2 + Svelte 5 spike used 72.2 MB idle on the
 home screen and 74.2 MB with a 5,000-row virtualized list open (3-run medians, 7 processes). Adding the
-13.1 MB that spike #2 measured for libmpv playback gives an estimate of about 87 MB while playing.
-**Decision: the budget stays at 100 MB idle and 150 MB playing.** Still open: yt-dlp resolve peaks can push
-the total over 150 MB for a moment. Full numbers and method: [ram-baseline.md](ram-baseline.md).
+13.1 MB that spike #2 measured for libmpv playback gives an estimate of about 87 MB while playing. The login
+spikes (#4 to #6) idled between 72.9 and 76.6 MB (3-run medians for YouTube Music and Spotify, a single
+73.5 MB reading for SoundCloud, whose earlier launch read 80.5 MB).
+**Decision: the budget stays at 100 MB idle and 150 MB playing.** Full numbers and method:
+[ram-baseline.md](ram-baseline.md).
+
+**Transient over-budget peaks seen in Milestone 0** (the budget is not relaxed for them):
+
+| Peak | Measured | Duration | Required handling |
+|---|---|---|---|
+| `yt-dlp` + Deno JS challenge during a resolve | up to about 217 MB for the spike #2 process tree; about 298 MB estimated on top of the playing app | 1 to 2 s | Keep resolves serialized; measure inside the real app in Milestone 2 |
+| Third-party login window open | 178.6 MB (SoundCloud sign-in, an earlier reading 188.3 MB); 203.9 MB (Google sign-in, one reading, DevTools port on) | while open | Destroy the login window as soon as the session is captured; re-measure that the total returns to <= 100 MB |
+
+After closing the SoundCloud login window the total read 157.7 MB at 20 s (earlier build) and 82.4 MB at
+120 s. The return was not measured for YouTube Music or Spotify, and the Spotify login window was not
+measured while open.
 
 Measure at the end of every milestone. If a feature breaks the budget, fix it before moving on.
 
@@ -100,13 +113,26 @@ Lumen has no developer apps and no API keys. Each service is connected by loggin
 3. Rust uses the web clients' internal APIs with that session:
    - **YouTube Music:** ytmusicapi-style browser auth (cookies + web client headers). The same cookies are
      handed to yt-dlp for resolving.
-   - **SoundCloud:** the OAuth token from the web login, plus the scraped `client_id`.
-   - **Spotify:** the web player access token obtained from the `sp_dc` cookie. Metadata only.
+   - **SoundCloud:** the OAuth token from the web login, plus the scraped `client_id`. Likes are read from
+     `/users/{id}/track_likes`.
+   - **Spotify:** the web player access token obtained from the `sp_dc` cookie (TOTP), plus a `client-token`.
+     Library pages come from Pathfinder `fetchLibraryTracks`. Metadata only.
 4. On 401/403 the session is marked expired and the app asks me to log in again. No silent retry loops.
 
-Known risks, to check in the Milestone 0 spike: Google may block sign-in in embedded webviews (fallback:
-import cookies from a browser I am already logged in to); Spotify's token flow changed in 2025 (TOTP secret)
-and may change again; all three are unofficial and against the services' terms (see 3c and section 9).
+Measured in Milestone 0 (2026-11-26, see [ADR 0002](adr/0002-in-app-login-no-api-keys.md)):
+
+- **YouTube Music:** sign-in in an InPrivate WebView2 window worked with no Google embedded-browser block,
+  followed by an authenticated `browse` call and an authenticated yt-dlp resolve (HTTP 206). The fallback
+  (import cookies from a browser I am already logged in to) was not needed and was only tested offline.
+- **SoundCloud:** email/password sign-in worked and likes were read via `/users/{id}/track_likes`. The Google
+  social sign-in popup did not open in the default WebView2 window.
+- **Spotify:** TOTP version 61 + `client-token` + Pathfinder `fetchLibraryTracks` worked, with ISRC in none of
+  the 10 sampled tracks. `spclient` track metadata returned ISRC for 10 of 10. REST `/v1/me/tracks` returned
+  HTTP 429 twice and triggered the 36 s cool-down pause.
+
+Remaining risks: Google may start blocking embedded sign-in; Spotify's token flow changed in 2025 (TOTP
+secret) and may change again; all three are unofficial and against the services' terms (see 3c and
+section 9).
 
 ## 3c. Account safety
 
@@ -171,7 +197,7 @@ struct Track {
     album: Option<String>,
     duration_ms: u32,
     artwork_url: Option<String>,
-    isrc: Option<String>,     // helps match Spotify -> YouTube (check the dev app really returns it)
+    isrc: Option<String>,     // helps match Spotify -> YouTube; Spotify: from spclient track metadata, lazily
     sources: Vec<SourceRef>,  // same song can exist on several services
 }
 ```
@@ -187,12 +213,13 @@ trait Source {
 
 #[async_trait]
 trait Resolver {
-    async fn resolve(&self, r: &SourceRef) -> Result<StreamInfo>;    // url + expiry + headers
+    async fn resolve(&self, r: &SourceRef) -> Result<StreamInfo>;    // url + expiry + available_at + headers
 }
 ```
 
 ### Resolving playback
 - YouTube / SoundCloud track -> resolver returns a direct stream URL with its **expiry time** -> hand to mpv.
+- Wait until the stream's `available_at` time, when yt-dlp reports one, before handing the URL to mpv.
 - Store each URL's expiry. **Pre-resolve the next 1-2 tracks** in the queue before the current one ends so
   there are no gaps. **Re-resolve on HTTP 403 or a stall**, mpv will not do this on its own.
 - Gapless via mpv `playlist-append` of pre-resolved URLs (a suggestion, to be verified in a spike).
@@ -201,7 +228,11 @@ trait Resolver {
 - Spotify track -> match on YouTube Music (see below) -> cache the mapping in SQLite.
 
 ### Spotify -> YouTube Music matching
-Follows the spotDL order of operations:
+Follows the spotDL order of operations. The Spotify library response carries no ISRC, so it is looked up from
+`spclient` track metadata (`metadata/4/track/{gid}`, about one extra request per track) inside the paced
+background matching queue and cached permanently; without it, matching falls back to title/artist/duration
+scoring.
+
 1. If the track has an **ISRC** and the provider supports it, search by ISRC. One verified hit wins.
 2. Otherwise search `title artists` among YouTube Music **songs** (not plain videos). Return early at
    score >= 80 and verified, otherwise pool the results.
@@ -296,8 +327,12 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 
 ### Spotify notes
 - Spotify is accessed through the web player token, metadata only (liked songs, playlists, followed artists).
-  The token flow is unofficial and has changed before (TOTP, 2025).
-- Check that ISRC is actually returned before relying on it for matching.
+  The token flow is unofficial and has changed before (TOTP, 2025). Only liked songs were read in Milestone 0.
+- List the library through Pathfinder `fetchLibraryTracks`, not REST `/v1/me/tracks` (HTTP 429 with a web
+  player token).
+- ISRC is not in the Pathfinder response. `spclient` track metadata has it (10 of 10 sampled); fetch it lazily,
+  cache it in SQLite and pause on 429.
+- Read `clientVersion` at run time; it changed within 30 minutes during the spike.
 - The official developer-mode limits (Premium owner, 5 users, `/items`) do not apply: there is no developer app.
 
 ## 9. Risks
@@ -306,12 +341,14 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 |---|---|
 | YouTube changes break stream extraction, or needs PO tokens / SABR | yt-dlp as primary with pinned version and auto-update, bundled Deno + yt-dlp-ejs, swappable resolver backends |
 | Stream URLs expire mid-play | Store expiry, pre-resolve next 1-2 tracks, re-resolve on 403 or stall |
-| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risk: transient yt-dlp / Deno resolve peaks, to be measured in Milestone 2. Virtual lists, thumbnails only, lean mpv settings |
+| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (serialize, measure in Milestone 2) and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
 | SoundCloud `client_id` rotates, new official API credentials need a paid plan | Scrape and re-scrape automatically on 401/403 (once, then retry once), add retry on the stream-URL step; SoundCloud is last in the order |
-| Spotify web token flow changes again (TOTP) | Metadata only so playback never depends on it; isolate in one module; manual re-login |
+| SoundCloud Google sign-in popup does not open in WebView2 | Email/password sign-in works; Milestone 7 handles OAuth popups or guides to email/password |
+| Spotify web token flow changes again (TOTP, `client-token`, Pathfinder query hash) | Worked on 2026-11-26 (TOTP v61). Metadata only so playback never depends on it; isolate in one module; manual re-login |
+| Spotify rate limits (REST `/v1/me/tracks` answered 429) | Use Pathfinder, fetch ISRCs lazily and paced, honor 429 with a cool-down |
 | Account flagged or banned for unofficial access | Section 3c: one session per service, low rates, backoff, caching, resolve only current + next 1-2, pause on 429/captcha. Not a guarantee |
 | Session cookies leaked or expired | Credential Manager only, re-login on 401/403, never log tokens |
-| Google blocks login in embedded webviews | Login spike in Milestone 0; fallback is importing cookies from a logged-in browser |
+| Google blocks login in embedded webviews | Not blocked in the Milestone 0 live check; fallback is importing cookies from a logged-in browser |
 | Wrong Spotify -> YouTube matches | spotDL-style scoring, review list for > 3 s off, manual "fix match", cached corrections |
 | GPL-3 if `rustypipe` is linked | Keep it optional; personal use only; decide the license before publishing |
 | Unofficial APIs and terms of service (YouTube and SoundCloud forbid this) | Personal use only, no redistribution of audio. This is a real risk, not a formality |
@@ -326,8 +363,27 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 
 ## 11. Research and decisions
 
-Not verified yet (check during the spikes): login in WebView2 for each service, Spotify web token flow today, SABR streaming status, LGPL status of the
-libmpv build, souvlaki quirks with Tauri, cold start numbers.
-
-The decisions above come from a plan review, a survey of how other well-starred projects resolve songs, and
+The decisions above started from a plan review, a survey of how other well-starred projects resolve songs, and
 the spotDL matching code (`spotdl/providers/audio/base.py`, `utils/matching.py`).
+
+### Milestone 0 Verdict (2026-11-26)
+
+| Question | Verdict | Record |
+|---|---|---|
+| RAM budget | Keep 100 MB idle / 150 MB playing; transient resolve and login-window peaks are open (section 2) | [ram-baseline.md](ram-baseline.md) |
+| Playback and resolver | yt-dlp + Deno resolves and libmpv plays; yt-dlp behind the `Resolver` trait | [ADR 0001](adr/0001-ytdlp-primary-resolver.md) |
+| YouTube Music login | Works in WebView2; authenticated library call and resolve passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
+| SoundCloud login | Works with email/password; Google popup does not open; likes call passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
+| Spotify login | Works; Pathfinder for liked songs, `spclient` metadata for ISRC, REST answers 429 | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
+| Domain model | Terms and boundaries for Milestone 1 onwards | [CONTEXT.md](CONTEXT.md) |
+
+### Still unverified (check in later milestones)
+
+- `souvlaki` quirks with Tauri.
+- Cold start latency.
+- Signed-in resolving with `web_music,web` alone against the `yt-dlp` default clients.
+- Gapless playback through libmpv `playlist-append`.
+- RAM returning to budget after the login window closes for YouTube Music and Spotify.
+- The transient Deno resolve peak inside the real app.
+- SABR streaming status.
+- Licence terms of the libmpv build (the spike used a build published as LGPL).
