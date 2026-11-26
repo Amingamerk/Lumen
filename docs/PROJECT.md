@@ -248,28 +248,9 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 
 ## 6. Project structure
 
-```
-lumen/
-├─ src-tauri/
-│  ├─ src/
-│  │  ├─ main.rs
-│  │  ├─ api/        # tauri commands + events
-│  │  ├─ player/
-│  │  ├─ sources/
-│  │  ├─ resolver/
-│  │  ├─ recs/
-│  │  ├─ library/    # db + migrations
-│  │  ├─ art/
-│  │  └─ media/
-│  ├─ binaries/      # yt-dlp + Deno sidecars
-│  └─ tauri.conf.json
-├─ src/              # Svelte app
-│  ├─ lib/components/  # Sidebar, PlayerBar, TrackList, Card, QueuePanel
-│  ├─ lib/stores/      # player state mirrored from Rust events
-│  └─ routes/          # home, search, library, playlist
-├─ spikes/           # Milestone 0 throwaway experiments
-└─ PROJECT.md
-```
+The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout". Rust code lives in
+`src-tauri/src/` split into `ipc/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`, `recs/`,
+`art/` and `media/`; the Svelte app lives in `src/`; spikes in `spikes/`; docs in `docs/`.
 
 ## 7. Milestones
 

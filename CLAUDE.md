@@ -1,6 +1,6 @@
 # Lumen
 
-Lightweight Windows desktop music player. Combines YouTube Music, SoundCloud and Spotify (metadata only) into one library, one queue and one recommendation engine. Full spec: [PROJECT.md](PROJECT.md). Read it before starting work.
+Lightweight Windows desktop music player. Combines YouTube Music, SoundCloud and Spotify (metadata only) into one library, one queue and one recommendation engine. Full spec: [docs/PROJECT.md](docs/PROJECT.md). Read it before starting work.
 
 ## Stack
 
@@ -8,14 +8,14 @@ Rust + Tauri 2 (WebView2) backend, Svelte 5 + TypeScript + Vite + Tailwind front
 
 ## Hard rules
 
-- **RAM budget:** target at most 100 MB idle, at most 150 MB while playing a large playlist, measured as the summed private working set of all processes (app, WebView2, sidecars; Task Manager Details tab, not the grouped row). Milestone 0 measures the real baseline; if the target is unrealistic it is relaxed (about 150/200 MB) and PROJECT.md is updated. Measure after every milestone. If a feature breaks the budget, fix it before moving on.
+- **RAM budget:** target at most 100 MB idle, at most 150 MB while playing a large playlist, measured as the summed private working set of all processes (app, WebView2, sidecars; Task Manager Details tab, not the grouped row). Milestone 0 measures the real baseline; if the target is unrealistic it is relaxed (about 150/200 MB) and PROJECT.md is updated (docs/PROJECT.md). Measure after every milestone. If a feature breaks the budget, fix it before moving on.
 - **Heavy work lives in Rust:** network, stream resolving, audio, SQLite, recommendations, thumbnail resizing. The webview only renders.
 - **All player state lives in Rust.** The UI mirrors it through Tauri events. No polling from the UI.
 - **The frontend never calls external services.** Everything goes through Rust commands.
 - **No HTML `<audio>`.** Playback is libmpv only.
 - **Virtualize long lists.** Load thumbnails (not full images) lazily through the `lumen://art/...` protocol.
 - **No API keys.** Each service is connected by logging in inside a Tauri login window; Lumen stores the session in Credential Manager and uses the web clients' internal APIs (YTM ytmusicapi-style cookies, SoundCloud web token, Spotify web player token).
-- **Account safety:** one session per service, consistent web-client headers, conservative rate limits with backoff + jitter, honor 429, cache metadata and stream URLs, resolve only the current and next 1-2 tracks, no bulk scraping or downloading. See PROJECT.md section 3c.
+- **Account safety:** one session per service, consistent web-client headers, conservative rate limits with backoff + jitter, honor 429, cache metadata and stream URLs, resolve only the current and next 1-2 tracks, no bulk scraping or downloading. See docs/PROJECT.md section 3c.
 - **Spotify is metadata only** (import playlists and liked songs). Spotify tracks play by matching them on YouTube Music (spotDL order: ISRC, then title/artist/duration scoring). No match: try SoundCloud, else grey out, skip and show a toast. More than 3 s off goes to the review list.
 - **Stream URLs expire.** Store the expiry, pre-resolve the next 1-2 tracks, re-resolve on 403 or stall.
 - **Recommendations** combine YouTube Music radio and own play/skip/like history (no Last.fm key).
@@ -50,6 +50,34 @@ A milestone is done when it builds, works in the real app, and RAM is within bud
 
 - Show the diff and ask before every commit, push, PR, merge and release.
 - No AI credit anywhere: no co-author trailers, no "generated with" lines in commits, PRs or releases.
+
+## Repo layout
+
+```
+lumen/
+├─ src-tauri/            Rust crate (Tauri 2 app)
+│  ├─ src/
+│  │  ├─ main.rs
+│  │  ├─ ipc/            Tauri commands and event emitters
+│  │  ├─ audio/          libmpv wrapper, playback state
+│  │  ├─ queue/          queue, shuffle, repeat, pre-resolve
+│  │  ├─ sources/        Source trait + youtube, soundcloud, spotify
+│  │  ├─ resolver/       Resolver trait + yt-dlp backend
+│  │  ├─ library/        SQLite (rusqlite), migrations
+│  │  ├─ recs/           recommendation engine
+│  │  ├─ art/            thumbnail download, resize, cache
+│  │  └─ media/          souvlaki media keys
+│  └─ binaries/          yt-dlp and Deno sidecars (not committed)
+├─ src/                  Svelte 5 app
+│  ├─ lib/components/    Sidebar, PlayerBar, TrackList, Card, QueuePanel
+│  ├─ lib/stores/        state mirrored from Rust events
+│  └─ routes/            home, search, library, playlist
+├─ spikes/               Milestone 0 throwaway experiments
+├─ docs/                 PROJECT.md (spec), CONTEXT.md, adr/
+└─ .github/              CI, PR and issue templates
+```
+
+Only create a folder when the first file for it exists. Keep `docs/PROJECT.md` section 6 in step with this layout.
 
 ## Git workflow
 
