@@ -1,0 +1,3 @@
+# Makes the spike its own pnpm root, so a later root workspace does not absorb it.
+# Skip releases younger than a day.
+minimumReleaseAge: 1440
