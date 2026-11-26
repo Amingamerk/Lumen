@@ -37,6 +37,7 @@ A milestone is done when it builds, works in the real app, and RAM is within bud
 ## Code conventions
 
 - Rust: `cargo clippy` clean, `thiserror` for module errors, `anyhow` at the top level.
+- Use the `rust-analyzer-lsp` plugin for Rust code navigation and diagnostics.
 - Backend and CSV changes start with a failing test.
 - Run typecheck and both test suites (Rust and frontend) before reporting a step done.
 - After each step: run the app, check it works, check RAM.
