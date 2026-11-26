@@ -8,16 +8,16 @@ Rust + Tauri 2 (WebView2) backend, Svelte 5 + TypeScript + Vite + Tailwind front
 
 ## Hard rules
 
-- **RAM budget:** at most 100 MB idle, at most 150 MB while playing a large playlist, measured as the summed private working set of all processes (app, WebView2, sidecars; `scripts/measure-ram.ps1` or the Task Manager Details tab, not the grouped row). Milestone 0 measured the baseline (72 MB idle, 74 MB with a 5,000-row list) and kept this budget: [docs/ram-baseline.md](docs/ram-baseline.md). Measure after every milestone. If a feature breaks the budget, fix it before moving on.
+- **RAM budget:** at most 100 MB idle, at most 150 MB while playing a large playlist, measured as the summed private working set of all processes (app, WebView2, sidecars; `scripts/measure-ram.ps1` or the Task Manager Details tab, not the grouped row). Milestone 0 measured the baseline (72 MB idle, 74 MB with a 5,000-row list) and kept this budget: [docs/ram-baseline.md](docs/ram-baseline.md). Spikes idled at 72.2-76.6 MB (one single reading of 80.5 MB). Transient `yt-dlp` + Deno resolve and login-window peaks exceed the budget; see [docs/PROJECT.md](docs/PROJECT.md) section 2: serialize resolves and destroy login windows as soon as the session is captured. Measure after every milestone. If a feature breaks the budget, fix it before moving on.
 - **Heavy work lives in Rust:** network, stream resolving, audio, SQLite, recommendations, thumbnail resizing. The webview only renders.
 - **All player state lives in Rust.** The UI mirrors it through Tauri events. No polling from the UI.
 - **The frontend never calls external services.** Everything goes through Rust commands.
 - **No HTML `<audio>`.** Playback is libmpv only.
 - **Virtualize long lists.** Load thumbnails (not full images) lazily through the `lumen://art/...` protocol.
-- **No API keys.** Each service is connected by logging in inside a Tauri login window; Lumen stores the session in Credential Manager and uses the web clients' internal APIs (YTM ytmusicapi-style cookies, SoundCloud web token, Spotify web player token).
+- **No API keys.** Each service is connected by logging in inside a Tauri login window; Lumen stores the session in Credential Manager and uses the web clients' internal APIs (YTM ytmusicapi-style cookies; SoundCloud web token plus scraped `client_id`, likes via `/users/{id}/track_likes`; Spotify web player token from `sp_dc` (TOTP) plus `client-token`).
 - **Account safety:** one session per service, consistent web-client headers, conservative rate limits with backoff + jitter, honor 429, cache metadata and stream URLs, resolve only the current and next 1-2 tracks, no bulk scraping or downloading. See docs/PROJECT.md section 3c.
-- **Spotify is metadata only** (import playlists and liked songs). Spotify tracks play by matching them on YouTube Music (spotDL order: ISRC, then title/artist/duration scoring). No match: try SoundCloud, else grey out, skip and show a toast. More than 3 s off goes to the review list.
-- **Stream URLs expire.** Store the expiry, pre-resolve the next 1-2 tracks, re-resolve on 403 or stall.
+- **Spotify is metadata only** (import playlists and liked songs). List the library through Pathfinder (`fetchLibraryTracks` for liked songs), not REST (`/v1/me/tracks` answers 429), and fetch ISRCs lazily from `spclient` track metadata (the Pathfinder response has none). Spotify tracks play by matching them on YouTube Music (spotDL order: ISRC, then title/artist/duration scoring). No match: try SoundCloud, else grey out, skip and show a toast. More than 3 s off goes to the review list.
+- **Stream URLs expire.** Store the expiry, pre-resolve the next 1-2 tracks, wait for `available_at`, re-resolve on 403 or stall.
 - **Recommendations** combine YouTube Music radio and own play/skip/like history (no Last.fm key).
 - **Secrets** (session cookies, tokens) go in Windows Credential Manager via `keyring`. Never commit or log them.
 - Spotify-inspired layout, but own name, colors and logo. Do not copy their branding.
@@ -97,4 +97,4 @@ Issues live in GitHub Issues (managed via the `gh` CLI). See `docs/agents/issue-
 
 ### Domain docs
 
-Single-context layout (`GLOSSARY.md` at repo root and `docs/adr/`). See `docs/agents/domain.md`.
+Single-context layout: the glossary is `docs/CONTEXT.md` (read it wherever `docs/agents/domain.md` says `GLOSSARY.md`) and decisions are in `docs/adr/`. See `docs/agents/domain.md`.
