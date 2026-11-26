@@ -44,6 +44,22 @@ struct YtDlp {
     http_headers: BTreeMap<String, String>,
 }
 
+pub fn ytdlp_args(url: &str, player_clients: Option<&str>) -> Vec<String> {
+    let mut args = vec![
+        "-J".to_owned(),
+        "-f".to_owned(),
+        "bestaudio".to_owned(),
+        "--no-playlist".to_owned(),
+    ];
+    if let Some(clients) = player_clients {
+        args.push("--extractor-args".to_owned());
+        args.push(format!("youtube:player_client={clients}"));
+    }
+    args.push("--".to_owned());
+    args.push(url.to_owned());
+    args
+}
+
 pub fn parse_ytdlp_json(json: &str) -> Result<StreamInfo, ResolveError> {
     let out: YtDlp = serde_json::from_str(json)?;
     let url = out.url.ok_or(ResolveError::NoDirectUrl)?;
@@ -118,6 +134,28 @@ mod tests {
         assert_eq!(
             parse_ytdlp_json(json).unwrap().expires_at,
             Some(1_795_728_336)
+        );
+    }
+
+    #[test]
+    fn builds_ytdlp_args_with_optional_player_clients() {
+        let url = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
+        assert_eq!(
+            ytdlp_args(url, None),
+            vec!["-J", "-f", "bestaudio", "--no-playlist", "--", url]
+        );
+        assert_eq!(
+            ytdlp_args(url, Some("default,-tv_samsung")),
+            vec![
+                "-J",
+                "-f",
+                "bestaudio",
+                "--no-playlist",
+                "--extractor-args",
+                "youtube:player_client=default,-tv_samsung",
+                "--",
+                url,
+            ]
         );
     }
 }

@@ -1,6 +1,6 @@
 //! Spike: resolve one track with yt-dlp and play it with libmpv.
 //!
-//! audio-spike <url> [--seconds N] [--hook] [--break-url]
+//! audio-spike <url> [--seconds N] [--hook] [--break-url] [--clients SPEC | --default-clients]
 
 use std::{
     process::Command,
@@ -8,10 +8,12 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use audio_spike::resolve::{StreamInfo, parse_ytdlp_json};
+use audio_spike::resolve::{StreamInfo, parse_ytdlp_json, ytdlp_args};
 use libmpv2::{Mpv, events::Event};
 
 const DEFAULT_URL: &str = "https://music.youtube.com/watch?v=dQw4w9WgXcQ";
+/// Excludes `tv_samsung`, whose ad-gated URLs return HTTP 403 on unauthenticated resolves.
+const DEFAULT_CLIENTS: &str = "default,-tv_samsung";
 
 /// Audio only, small buffers (PROJECT.md section 2, rule 7).
 const LEAN_OPTIONS: &[(&str, &str)] = &[
@@ -40,6 +42,13 @@ fn main() -> Result<()> {
         .find(|a| a.starts_with("https://"))
         .map_or(DEFAULT_URL, String::as_str);
     let hook = flag("--hook");
+    let clients = if flag("--default-clients") {
+        None
+    } else if let Some(i) = args.iter().position(|a| a == "--clients") {
+        Some(args.get(i + 1).context("--clients needs a value")?.as_str())
+    } else {
+        Some(DEFAULT_CLIENTS)
+    };
 
     let mpv = Mpv::with_initializer(|init| {
         for (name, value) in LEAN_OPTIONS {
@@ -57,7 +66,7 @@ fn main() -> Result<()> {
         url.to_owned()
     } else {
         let started = Instant::now();
-        let mut info = resolve(url)?;
+        let mut info = resolve(url, clients)?;
         println!("resolve_ms={}", started.elapsed().as_millis());
         print_expiry(&info)?;
         apply_headers(&mpv, &info)?;
@@ -84,9 +93,9 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn resolve(url: &str) -> Result<StreamInfo> {
+fn resolve(url: &str, player_clients: Option<&str>) -> Result<StreamInfo> {
     let out = Command::new("yt-dlp")
-        .args(["-J", "-f", "bestaudio", "--no-playlist", "--", url])
+        .args(ytdlp_args(url, player_clients))
         .output()
         .context("could not start yt-dlp")?;
     if !out.status.success() {
