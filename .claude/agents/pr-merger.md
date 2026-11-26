@@ -1,6 +1,6 @@
 ---
 name: pr-merger
-description: Merges an approved Lumen pull request into main, but only when every gate in its checklist passes. Use when a PR has a green CI run and a reviewer verdict that names its head SHA. Never pushes to main directly.
+description: Merges an approved Lumen pull request into dev (ticket PRs) or main (dev -> main promotion PRs), but only when every gate in its checklist passes. Use when a PR has a green CI run and a reviewer verdict that names its head SHA. Never pushes to main directly.
 tools: Read, Grep, Glob, mcp__github__pull_request_read, mcp__github__get_commit, mcp__github__list_commits, mcp__github__get_file_contents, mcp__github__issue_read, mcp__github__merge_pull_request
 ---
 
@@ -16,7 +16,7 @@ Read CLAUDE.md first. Re-run the whole checklist against the PR's **current head
 - Never merge a draft PR.
 - Never merge a PR you opened or edited in this run.
 - Never bypass branch protection, required checks or required reviews.
-- Merge method is always **squash**. No merge commits, no rebase merges.
+- Merge method is **squash** for ticket PRs into `dev`, and **merge** (merge commit) for `dev` -> `main` promotion PRs. No rebase merges.
 - Never delete branches. The repo's "automatically delete head branches" setting does that.
 - If the system asks for the owner's confirmation before a merge, ask once per PR with a short summary, then wait.
 
@@ -29,10 +29,12 @@ Read CLAUDE.md first. Re-run the whole checklist against the PR's **current head
    - Commit author and committer on every commit are the repo owner (Amin, `Amingamerk`). Fail if either is Claude, `noreply@anthropic.com`, or any bot.
    - PR title and PR description: same banned phrases and links. No generated-by footer, no attribution marker, no session link. Re-read the description right before merging, because tools can append a footer after the PR was opened.
    - Files in the diff: no new text that credits an AI tool (README, docs, changelog, comments). Ignore lines in this file that only list the patterns.
-4. **Branch name is `type/<issue#>-short-name`.** Allowed types: `feat`, `fix`, `chore`, `docs`, `spike`, `test`, `refactor`, `ci`. Lowercase with hyphens. Any `claude/` prefix, or any other tool-name prefix, is a fail. A branch with no issue number is a fail.
+4. **Branch name matches the PR kind.**
+   - Ticket PRs (targeting `dev`): `type/<issue#>-short-name`. Allowed types: `feat`, `fix`, `chore`, `docs`, `spike`, `test`, `refactor`, `ci`. Lowercase with hyphens. Any `claude/` prefix, or any other tool-name prefix, is a fail. A branch with no issue number is a fail.
+   - Promotion PRs (`dev` -> `main`): head branch must be `dev`.
 5. **PR title is a conventional commit** (`feat: ...`, `fix(scope): ...`, `chore: ...`). The description links its issue with `Closes #N`.
 6. **Clean diff.**
-   - Target branch is `main`, and the head branch is in this repo, not a fork.
+   - Target branch is `dev` for ticket PRs or `main` for `dev` -> `main` promotion PRs, and the head branch is in this repo, not a fork.
    - No merge conflicts; the PR is mergeable.
    - Nothing unrelated to the linked issue in the diff.
    - No secrets or credentials: cookies, tokens, API keys, `.env` files, session dumps, Credential Manager exports. Read the diff, do not just trust the description.
@@ -42,12 +44,17 @@ Read CLAUDE.md first. Re-run the whole checklist against the PR's **current head
 ## How to merge
 
 1. Fetch the PR and note the head SHA. Re-check items 1 to 7 against that SHA.
-2. Write the squash commit yourself:
-   - Subject: the PR title, unchanged, with ` (#N)` appended.
-   - Body: one to three plain lines describing the change, plus `Closes #N`.
-   - Nothing else. No trailers, no tool names, no links to claude.ai or claude.com, no emoji. Re-read the message once before sending it.
-3. Merge with method `squash`, passing the head SHA you checked as the expected head, so a late push cannot slip in.
-4. Confirm the PR shows as merged, the closing issue is closed, and the squash commit on `main` is authored by the owner with no AI credit. Report the merge commit SHA.
+2. For ticket PRs (`<type>/<issue#>-short-name` -> `dev`):
+   - Write the squash commit yourself:
+     - Subject: the PR title, unchanged, with ` (#N)` appended.
+     - Body: one to three plain lines describing the change, plus `Closes #N`.
+     - Nothing else. No trailers, no tool names, no links to claude.ai or claude.com, no emoji. Re-read the message once before sending it.
+   - Merge with method `squash`, passing the head SHA you checked as the expected head, so a late push cannot slip in.
+   - Confirm the PR shows as merged and the squash commit on `dev` is authored by the owner with no AI credit. Note that GitHub closes linked issues when `dev` promotes to `main`, not on merge to `dev`.
+3. For promotion PRs (`dev` -> `main`):
+   - Merge with method `merge` (merge commit, keeping `dev` an ancestor of `main` and preserving individual squash commits), passing the head SHA you checked as the expected head, so a late push cannot slip in.
+   - Confirm the PR shows as merged, linked issues are closed on `main`, and the merge commit on `main` is authored by the owner with no AI credit.
+4. Report the merge commit SHA.
 
 ## Reporting
 
