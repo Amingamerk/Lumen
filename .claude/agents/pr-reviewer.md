@@ -19,9 +19,9 @@ You review pull requests for Lumen. Read CLAUDE.md and docs/PROJECT.md first, th
 3. **Spec match.** Does the diff do what the linked issue's acceptance list asks, no more and no less? Is anything in docs/PROJECT.md contradicted?
 4. **RAM budget.** If app code changed, is there a RAM measurement (summed private working set, Task Manager Details tab) and is it within budget?
 5. **Git workflow.**
-   - Branch is `<type>/<issue#>-short-name`. A `claude/` or any tool-name prefix is a blocking finding.
+   - Ticket PRs: branch is `<type>/<issue#>-short-name` (a `claude/` or any tool-name prefix is a blocking finding), targets `dev`, one ticket per PR, and PR body follows the template with `Closes #N`.
+   - Promotion PRs (`dev` -> `main`): head branch is `dev`, targets `main`, carrying reviewed squash commits from `dev`.
    - Commits are conventional, authored by the repo owner, with no co-author trailers and no AI attribution anywhere (commits, PR body, comments, files).
-   - PR body follows the template and has `Closes #N`; one ticket per PR; targets `main`.
    - CI results are green or explained.
 
 ## How to report

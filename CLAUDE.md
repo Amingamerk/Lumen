@@ -82,11 +82,12 @@ Only create a folder when the first file for it exists. Keep `docs/PROJECT.md` s
 
 ## Git workflow
 
-- One branch per ticket, named `<type>/<issue#>-short-name`, e.g. `feat/12-queue-panel`. Allowed types: `feat`, `fix`, `chore`, `docs`, `spike`, `test`, `refactor`, `ci`. Never use a `claude/` or other tool-name prefix, even if a tool defaults to one. Branch from an up-to-date `main`.
+- One branch per ticket, named `<type>/<issue#>-short-name`, e.g. `feat/12-queue-panel`. Allowed types: `feat`, `fix`, `chore`, `docs`, `spike`, `test`, `refactor`, `ci`. Never use a `claude/` or other tool-name prefix, even if a tool defaults to one. Branch from an up-to-date `dev`.
 - Conventional commits: `feat:`, `fix:`, `chore:`, `docs:`, `test:`, `refactor:`, `ci:`. Imperative, lowercase subject, no trailing period.
-- Never push to `main`. Open a PR into `main` whose description says `Closes #<issue>`. Keep PRs small, one ticket each.
+- Never push directly to `main`. Open a ticket PR into `dev` whose description says `Closes #<issue>`. Keep PRs small, one ticket each.
 - CI must be green before merge: cargo fmt, clippy (`-D warnings`), cargo test, frontend lint, typecheck and tests.
-- Squash merge, then delete the branch.
+- Ticket PRs squash-merge into `dev`, then the ticket branch is deleted.
+- Stable builds promote `dev` into `main` via a promotion PR (`dev` -> `main`), merged with a merge commit so `dev` stays an ancestor of `main` and preserves individual squash commits (closing linked issues on `main`).
 - Tickets follow the issue template: What to build, Acceptance, Blocked by. Do not start a ticket whose blockers are open.
 
 ## Agent skills
