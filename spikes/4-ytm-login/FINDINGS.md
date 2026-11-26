@@ -5,19 +5,20 @@ Measured 2026-11-26 on Windows 11 with Tauri 2.12.7, wry 0.57.4, WebView2 158.0.
 
 ## Status
 
-**No real login has happened yet.** The issue's acceptance ("works in WebView2, or documents Google's
-embedded-login block and proves the cookie-import fallback") is open until the live check below is done.
+**Accepted (live check passed 2026-11-26).** In-app WebView2 login worked without a Google
+embedded-browser block, the authenticated `browse` call returned the user's library playlists, and
+authenticated `yt-dlp` resolve + Range check succeeded with HTTP 206.
 
 | Claim | State |
 |---|---|
 | Login window opens `music.youtube.com`, then Google's sign-in page loads | Seen live, signed out |
-| Google accepts the sign-in inside WebView2 | **Pending** |
+| Google accepts the sign-in inside WebView2 | **Worked** (live 2026-11-26, no embedded-browser block) |
 | `cookies_for_url` reads the InPrivate login window | Seen live (signed-out cookies) |
 | User-Agent read from the login window's page | Seen live |
-| Session saved to and cleared from Credential Manager | Seen live in the app, with fake imported cookies |
-| Authenticated `browse` call returns the library | **Pending** (unit tests and one anonymous call only) |
-| Authenticated yt-dlp resolve, client, `available_at`, Range status | **Pending** (arguments and cookie file accepted by the real yt-dlp against a closed local port) |
-| Cookie-import fallback works against YouTube | **Pending** |
+| Session saved to and cleared from Credential Manager | Seen live in the app (fake import and real login) |
+| Authenticated `browse` call returns the library | **Worked** (12 playlists on first page, more exist, matched real library) |
+| Authenticated yt-dlp resolve, client, `available_at`, Range status | **Worked** (yt-dlp defaults: TVHTML5, format 251 opus 128.93 kbps https, HTTP 206, 0 s wait, ~6 h expiry, stream UA matched login) |
+| Cookie-import fallback works against YouTube | Not needed (WebView2 login succeeded directly; import path verified offline with fake cookies) |
 
 ## Run it
 
@@ -35,33 +36,23 @@ Checks: `pnpm run check`, `pnpm run build`, and in `src-tauri`: `cargo fmt --che
 `cargo test -- --ignored`: a round trip of **fake** data through the real Credential Manager, and the real
 yt-dlp against `127.0.0.1:1`.
 
-## Pending Amin's live login check
+## Live login check (2026-11-26)
 
-This uses a real account against an unofficial API (PROJECT.md 3c). Press each test button once. Never
-paste cookies, tokens or stream URLs into the issue, the PR or a chat.
-
-1. **Open YouTube Music Login.** Answer the consent page, sign in, complete 2FA. Google may send a
-   "new sign-in" notice, because the window is InPrivate.
-   - [ ] Did Google block it ("This browser or app may not be secure" or similar)? At which step?
-   - [ ] Did the window close by itself? If it stayed on `music.youtube.com`, press **Capture now** and
-     note the message.
-   - [ ] Saved session shows: cookie count, `LOGIN_INFO` present, a User-Agent without `Edg/`.
-2. **Test Authenticated Call + yt-dlp** with **yt-dlp defaults**.
-   - [ ] Playlist names and counts match the library.
-   - [ ] Record: client, format, protocol, `available_at` and wait, expiry, Range status, resolve time,
-     "Stream User-Agent equals login", warnings.
-3. Wait at least 10 s, choose **only clients that use our User-Agent**, test once.
-   - [ ] Record the same values, or the error (a Premium account and a free one may differ).
-4. **Only if step 1 was blocked** (or to prove the fallback anyway): in a private window of a normal
-   browser, sign in to `music.youtube.com`, copy the `Cookie` request header or export `cookies.txt`, copy
-   `navigator.userAgent`, close the private window, then import in the app and repeat step 2.
-   - [ ] Import accepted and the test passes. Delete any exported file.
-5. **Clear Saved Session.**
-   - [ ] `cmdkey /list | findstr lumen` prints nothing.
-   - Clearing only removes Lumen's copy. To end the session itself, sign that device out in the Google
-     account's security page.
-
-If a run answers 401/403, "expired", a bot check or 429: stop, note the message, do not retry in a loop.
+| Check | Result |
+|---|---|
+| In-app WebView2 login | Succeeded (no Google block, session captured and saved) |
+| Authenticated `browse` (`FEmusic_liked_playlists`) | Succeeded: 12 playlists on first page (more exist), matched user's library |
+| `yt-dlp` resolve mode tested | `yt-dlp defaults` (`web_music,web` pinned-UA mode was not tested separately; carry into Milestone 2 to compare) |
+| Client | `TVHTML5` |
+| Format | `251`, `opus`, `128.93 kbps`, `https` |
+| `available_at` | `2026-11-26 23:13:43 CET` (waited `0 s`) |
+| Expires | `2026-11-27 05:13:40 CET` (~6 h) |
+| Range request (`bytes=0-1023`) | `HTTP 206` |
+| Resolve time | `12,286 ms` |
+| Stream User-Agent equals login | `yes` |
+| Warnings | `none known` |
+| Cookie-import fallback | Not needed (WebView2 login succeeded directly; import tested offline with fake cookies) |
+| Clear Saved Session | Verified clean (`cmdkey /list | findstr lumen` printed nothing) |
 
 ## Architecture
 
@@ -150,7 +141,7 @@ For imported cookies the app **requires** the source browser's User-Agent, inste
   whether to read them back.
 - yt-dlp's output and the stream URL are never shown: errors are fixed categories.
 
-## yt-dlp when signed in (read from source, not yet seen live)
+## yt-dlp when signed in
 
 From `yt_dlp/extractor/youtube` at tag 2026.11.23:
 
@@ -165,9 +156,11 @@ From `yt_dlp/extractor/youtube` at tag 2026.11.23:
   GVS PO token unless the account is Premium (HLS does not), so a free account may get only HLS or no usable
   format from them.
 
-The app offers both choices so the live check can compare them. **Decision for Milestone 2:** use the
-UA-consistent clients if they deliver, otherwise choose between a PO token provider and accepting the mixed
-identities.
+Live check (2026-11-26): `yt-dlp defaults` resolved cleanly via `TVHTML5` (format 251 opus 128.93 kbps https,
+HTTP 206, 0 s wait, ~6 h expiry) and the stream Range request used the login User-Agent. The
+UA-consistent `web_music,web` option was not tested separately; **decision for Milestone 2:** test
+`web_music,web` first and use it if it delivers, otherwise choose between a PO token provider and accepting
+the mixed identities during `yt-dlp` extraction.
 
 ## Account-safety behaviour
 
