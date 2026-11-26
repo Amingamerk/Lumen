@@ -7,9 +7,9 @@ Measured 2026-11-26 on Windows 11, WebView2 158.0.4370.33, Rust 1.100.0, Tauri 2
 | Question | State |
 |---|---|
 | Does the TOTP secret, version and token endpoint work today? | **Yes**, confirmed live without an account |
-| Does the in-app login window load and can the cookie be captured? | Login page loads; capture proven with a dummy cookie. **Real login pending** |
-| Does the token from a real `sp_dc` read liked songs? | **Pending Amin's live run** |
-| Is ISRC available for matching? | **Not confirmed. Pending Amin's live run.** Expectation below |
+| Does the in-app login window load and can the cookie be captured? | **Yes**, confirmed live (2026-11-26) |
+| Does the token from a real `sp_dc` read liked songs? | **Yes**, Pathfinder `fetchLibraryTracks` returned 10 tracks (0 skipped, 1,288 total likes), no TOTP warning; REST `/v1/me/tracks` returned HTTP 429 twice |
+| Is ISRC available for matching? | **Yes, via track metadata only** (0 of 10 in Pathfinder response; 10 of 10 from `spclient` `metadata/4/track/{gid}`) |
 
 ## Run it
 
@@ -84,25 +84,17 @@ a client token was granted. Limits of this result:
 
 ## Liked songs and ISRC
 
-| Route | Request | ISRC expected? | Cost per 10 tracks |
+| Route | Request | ISRC live result | Cost per 10 tracks |
 |---|---|---|---|
-| Pathfinder (web player's own) | `POST https://api-partner.spotify.com/pathfinder/v2/query`, `fetchLibraryTracks`, `{offset, limit}` | Probably not | 1 request |
-| Track metadata | `GET https://spclient.wg.spotify.com/metadata/4/track/{gid}?market=from_token` | Yes (`external_id`, type `isrc`) | 10 requests |
-| REST | `GET https://api.spotify.com/v1/me/tracks?limit=10` | Yes (`track.external_ids.isrc`) if it answers | 1 request |
+| Pathfinder (web player's own) | `POST https://api-partner.spotify.com/pathfinder/v2/query`, `fetchLibraryTracks`, `{offset, limit}` | No (0 of 10; `isrc` not returned) | 1 request |
+| Track metadata | `GET https://spclient.wg.spotify.com/metadata/4/track/{gid}?market=from_token` | **Yes** (10 of 10 returned ISRC) | 10 requests |
+| REST | `GET https://api.spotify.com/v1/me/tracks?limit=10` | Blocked (HTTP 429 twice; 36 s cooldown) | 1 request (rejected) |
 
-What each expectation rests on:
+Confirmed live details:
 
-- **Pathfinder:** the string `isrc` appears nowhere in either bundle, so the web player never reads an ISRC
-  from any reply. The server decides the fields, so this is an inference until the live run. The spike
-  checks the track's `isrc`, `externalId(s)` and `external_ids` fields and lists the field names it got.
-- **Track metadata:** the web player calls this endpoint (it reads `has_lyrics` from it). That the JSON
-  carries `external_id` comes from the endpoint's long-known shape and community projects, not from the
-  bundle. `gid` is the base62 track id as 32 hex digits. The spike asks for JSON; a non-JSON reply is
-  reported and stops the lookups.
-- **REST:** `external_ids` is part of the public API's track object. Community projects report that
-  `api.spotify.com` answers web player tokens with 429
-  ([example](https://github.com/CHEYCKIT/lokal/pull/127)); not verified here. The web player does not use
-  this route for the library, so it is a comparison only.
+- **Pathfinder:** returned 10 tracks (0 skipped, 1,288 liked songs total) with fields `__typename, albumOfTrack, artists, associationsV3, contentRating, discNumber, duration, mediaType, name, playability, trackNumber` and no ISRC field.
+- **Track metadata:** `spclient.wg.spotify.com/metadata/4/track/{gid}` (`gid` as 32 hex digits) returned JSON with ISRC (`external_id`, type `isrc`) for all 10 of 10 sampled tracks.
+- **REST:** `api.spotify.com/v1/me/tracks` answered HTTP 429 twice with a web player token, triggering the 36 s cooldown pause as designed. The web player itself does not use this route.
 
 The persisted query hash is
 `087278b20b743578a6262c2b0b4bcd20d879c503cc359a2285baf083ef944240`.
@@ -111,12 +103,7 @@ The persisted query hash is
 
 The spotDL order in `docs/PROJECT.md` section 4 starts with an ISRC search.
 
-- **REST answers with ISRC:** no extra requests. Importing 2,000 likes is 40 pages of 50.
-- **Only track metadata has it:** one extra request per track, about 2,000 for 2,000 likes, which is 35 to
-  50 minutes at this spike's pace. Look it up lazily in the background matching queue, only for the track
-  being matched, and cache it for good. A 429 pauses that queue.
-- **Neither works:** skip the ISRC step. Pathfinder still gives title, artists and duration (and album),
-  which cover the scoring steps; expect more entries on the review list.
+- **Confirmed path (Pathfinder + lazy Track metadata):** REST `/v1/me/tracks` is unusable on web-player tokens (immediate 429, handled safely by the cooldown pause). Milestone 5 must list libraries via Pathfinder `fetchLibraryTracks` (1 request per page) and look up ISRCs lazily via `spclient.wg.spotify.com/metadata/4/track/{gid}` inside the paced background matching queue (about 1 extra request per track, cached permanently in SQLite, pausing on 429, with title/artist/duration scoring as fallback).
 
 ## How fragile this is
 
@@ -177,28 +164,15 @@ Gaps the real app must close:
   `scripts/measure-ram.ps1`: **72.9 MB** median of 3 runs (73.1, 72.9, 71.3), 7 processes. Measured before
   the `Accept-Language` change. RAM with the login window open was not measured.
 
-## Pending Amin's live login + ISRC verification
-
-Use an account you can afford to lose. **Never paste `sp_dc` or a token into a chat, issue or PR.**
-
-1. `pnpm tauri dev` in `spikes/6-spotify-login`.
-2. Click **Open Spotify Login** and log in. Expected: the window closes by itself and the status says
-   `saved`. If it does not, note what the window showed. Fallback: paste `sp_dc` by hand from a logged-in
-   browser (DevTools, Application, Cookies, `open.spotify.com`).
-3. Click **Derive Token + Check Liked Songs & ISRC** once (about 15 s). Record the numbers below, the
-   "Track fields" line and any red message.
-4. Optional, once, after step 3: **Compare: REST /v1/me/tracks**. A 429 is a valid result. It pauses all
-   Spotify requests; wait it out, do not restart the app to get around it.
-5. Click **Clear Saved Session**.
+## Live login + ISRC verification (2026-11-26)
 
 | Result | Pathfinder | REST |
 |---|---|---|
-| Login window captured `sp_dc` | | n/a |
-| Tracks returned | | |
-| ISRC in the liked songs response | | |
-| ISRC from track metadata | | n/a |
-| Track fields | | |
-| Errors (status codes only) | | |
+| Login window captured `sp_dc` | Yes (no TOTP warning) | n/a |
+| Tracks returned | 10 (0 skipped; 1,288 liked songs total) | 0 (HTTP 429 twice) |
+| ISRC in the liked songs response | 0 of 10 | n/a (HTTP 429) |
+| ISRC from track metadata | 10 of 10 | n/a |
+| Track fields | `__typename, albumOfTrack, artists, associationsV3, contentRating, discNumber, duration, mediaType, name, playability, trackNumber` | n/a |
+| Errors (status codes only) | None | HTTP 429 (x2; triggered 36 s cooldown pause as designed) |
 
-Then update the Status table and the expectations above with what really happened, and only then mark the
-PR ready.
+`Clear Saved Session` verified clean (`cmdkey /list | findstr lumen` printed nothing). **Issue #6 acceptance is met.**
