@@ -59,6 +59,7 @@ lumen/
 │  ├─ src/
 │  │  ├─ main.rs
 │  │  ├─ ipc/            Tauri commands and event emitters
+│  │  ├─ state.rs        navigation and sidebar state
 │  │  ├─ audio/          libmpv wrapper, playback state
 │  │  ├─ queue/          queue, shuffle, repeat, pre-resolve
 │  │  ├─ sources/        Source trait + youtube, soundcloud, spotify
