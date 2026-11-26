@@ -8,7 +8,7 @@ Rust + Tauri 2 (WebView2) backend, Svelte 5 + TypeScript + Vite + Tailwind front
 
 ## Hard rules
 
-- **RAM budget:** target at most 100 MB idle, at most 150 MB while playing a large playlist, measured as the summed private working set of all processes (app, WebView2, sidecars; Task Manager Details tab, not the grouped row). Milestone 0 measures the real baseline; if the target is unrealistic it is relaxed (about 150/200 MB) and PROJECT.md is updated (docs/PROJECT.md). Measure after every milestone. If a feature breaks the budget, fix it before moving on.
+- **RAM budget:** at most 100 MB idle, at most 150 MB while playing a large playlist, measured as the summed private working set of all processes (app, WebView2, sidecars; `scripts/measure-ram.ps1` or the Task Manager Details tab, not the grouped row). Milestone 0 measured the baseline (72 MB idle, 74 MB with a 5,000-row list) and kept this budget: [docs/ram-baseline.md](docs/ram-baseline.md). Measure after every milestone. If a feature breaks the budget, fix it before moving on.
 - **Heavy work lives in Rust:** network, stream resolving, audio, SQLite, recommendations, thumbnail resizing. The webview only renders.
 - **All player state lives in Rust.** The UI mirrors it through Tauri events. No polling from the UI.
 - **The frontend never calls external services.** Everything goes through Rust commands.
@@ -73,6 +73,7 @@ lumen/
 │  ├─ lib/stores/        state mirrored from Rust events
 │  └─ routes/            home, search, library, playlist
 ├─ spikes/               Milestone 0 throwaway experiments
+├─ scripts/              developer scripts (RAM measurement)
 ├─ docs/                 PROJECT.md (spec), CONTEXT.md, adr/
 └─ .github/              CI, PR and issue templates
 ```

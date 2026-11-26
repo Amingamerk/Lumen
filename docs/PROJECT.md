@@ -35,13 +35,15 @@ but uses a fraction of the memory of a browser tab or an Electron app.
 | Installer size | <= 20 MB, excluding the mpv DLL (about 25-30 MB), yt-dlp and Deno |
 
 **How RAM is measured:** the *summed private working set of all processes* (the app, every
-`msedgewebview2` process and any sidecar such as yt-dlp), read from the Task Manager Details tab or a
-script. Do not use the grouped Task Manager row, it hides processes.
+`msedgewebview2` process and any sidecar such as yt-dlp), read from the Task Manager Details tab or with
+[`scripts/measure-ram.ps1`](../scripts/measure-ram.ps1). Do not use the grouped Task Manager row, it hides
+processes.
 
-**These RAM numbers are targets, not facts yet.** Microsoft publishes no MB figures for WebView2, and a
-Tauri hello world is estimated (not measured) at 80-130 MB summed across the WebView2 processes. Milestone 0
-measures the real baseline. If the baseline makes 100 / 150 MB unrealistic, relax the budget to roughly
-150 MB idle and 200 MB playing, write the measured numbers here, and keep that as the new rule.
+**Measured baseline (Milestone 0, 2026-11-26):** a release Tauri 2 + Svelte 5 spike used 72.2 MB idle on the
+home screen and 74.2 MB with a 5,000-row virtualized list open (3-run medians, 7 processes). Adding the
+13.1 MB that spike #2 measured for libmpv playback gives an estimate of about 87 MB while playing.
+**Decision: the budget stays at 100 MB idle and 150 MB playing.** Still open: yt-dlp resolve peaks can push
+the total over 150 MB for a moment. Full numbers and method: [ram-baseline.md](ram-baseline.md).
 
 Measure at the end of every milestone. If a feature breaks the budget, fix it before moving on.
 
@@ -250,7 +252,8 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 
 The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout". Rust code lives in
 `src-tauri/src/` split into `ipc/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`, `recs/`,
-`art/` and `media/`; the Svelte app lives in `src/`; spikes in `spikes/`; docs in `docs/`.
+`art/` and `media/`; the Svelte app lives in `src/`; spikes in `spikes/`; developer scripts in `scripts/`;
+docs in `docs/`.
 
 ## 7. Milestones
 
@@ -303,7 +306,7 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 |---|---|
 | YouTube changes break stream extraction, or needs PO tokens / SABR | yt-dlp as primary with pinned version and auto-update, bundled Deno + yt-dlp-ejs, swappable resolver backends |
 | Stream URLs expire mid-play | Store expiry, pre-resolve next 1-2 tracks, re-resolve on 403 or stall |
-| RAM budget unrealistic with WebView2 | Milestone 0 measures it first; relax to about 150 / 200 MB if needed; virtual lists, thumbnails only, lean mpv settings |
+| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risk: transient yt-dlp / Deno resolve peaks, to be measured in Milestone 2. Virtual lists, thumbnails only, lean mpv settings |
 | SoundCloud `client_id` rotates, new official API credentials need a paid plan | Scrape and re-scrape automatically on 401/403 (once, then retry once), add retry on the stream-URL step; SoundCloud is last in the order |
 | Spotify web token flow changes again (TOTP) | Metadata only so playback never depends on it; isolate in one module; manual re-login |
 | Account flagged or banned for unofficial access | Section 3c: one session per service, low rates, backoff, caching, resolve only current + next 1-2, pause on 429/captcha. Not a guarantee |
