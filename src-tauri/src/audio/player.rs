@@ -477,6 +477,10 @@ impl<E: Engine> Player<E> {
                 Some(PlayerEvent::Changed(self.commit()))
             }
             EngineEvent::Failed => {
+                // A stream that has ended needs nothing more.
+                if self.phase == Phase::Ended && self.recoverable() {
+                    return None;
+                }
                 if self.recoverable() {
                     self.drop_failed(self.reached());
                 } else {
@@ -549,6 +553,10 @@ impl<E: Engine> Player<E> {
     /// Gives the engine the current media at `start`.
     fn load(&mut self, start: Duration, playing: bool) {
         let media = self.current_media();
+        if let Some(direct) = &mut self.direct {
+            // Where it goes on from if it never opens.
+            direct.recovery.resume_at = start;
+        }
         match self.engine.load(&media, start) {
             Ok(()) => {
                 self.watch_from_now();

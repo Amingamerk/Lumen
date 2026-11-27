@@ -242,6 +242,32 @@ fn an_end_within_five_seconds_is_the_end() {
     assert_eq!(rig.player.recovery_wake(), None);
 }
 
+#[test]
+fn a_failure_while_opening_again_resumes_at_the_new_place() {
+    let mut rig = playing();
+    rig.at(secs(40));
+    rig.fail();
+    rig.recover(secs(2));
+    rig.at(secs(200));
+    rig.end();
+    rig.player.seek(30_000).unwrap();
+
+    let state = rig.fail();
+
+    assert_eq!(state.position_ms, 30_000);
+}
+
+#[test]
+fn nothing_after_the_end_starts_a_recovery() {
+    let mut rig = playing();
+    rig.at(secs(200));
+    rig.end();
+
+    assert_eq!(rig.player.on_engine_event(EngineEvent::Failed), None);
+    assert_eq!(rig.status(), PlaybackStatus::Ended);
+    assert!(!rig.player.fetch_pending());
+}
+
 // The bound.
 
 #[test]
