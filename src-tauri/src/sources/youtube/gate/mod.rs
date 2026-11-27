@@ -150,6 +150,11 @@ impl<C: GateClock> Gate<C> {
         self.clock.sleep(left.min(NAP)).await;
     }
 
+    /// The clock's time since a fixed point, which no clock change moves.
+    pub fn monotonic(&self) -> Duration {
+        self.clock.monotonic()
+    }
+
     pub fn view(&self) -> GateView {
         self.lock().view(self.clock.wall_ms())
     }

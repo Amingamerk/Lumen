@@ -7,9 +7,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::catalog::{
-    Catalog, CollectionDetail, Library, Playlist, SearchView, Shelf, SourceFilter, SourceKind,
-    TrackSlice,
+    Catalog, CollectionDetail, Library, Playlist, SearchStatus, SearchView, Shelf, SourceFilter,
+    SourceKind, Track, TrackRow, TrackSlice,
 };
+use crate::sources::youtube::{GateError, Parsed, ServiceError, search_key};
 
 /// A playlist as the sidebar shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -83,17 +84,44 @@ pub enum StateError {
     UnknownCollection { id: String },
     #[error("the last search did not find the track {id}")]
     NotInSearch { id: Uuid },
+    #[error("playing YouTube Music songs is not available yet")]
+    NotPlayableYet,
 }
 
 fn unknown_collection(id: &str) -> StateError {
     StateError::UnknownCollection { id: id.to_owned() }
 }
 
-/// What was last typed and chosen on the Search view.
+/// A search that has to be asked of YouTube Music.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ticket {
+    /// Only the newest ticket is still wanted.
+    pub number: u64,
+    pub query: String,
+}
+
+/// What a submit or a chip change leads to.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Submitted {
+    /// What to show now, if anything changed.
+    pub view: Option<SearchView>,
+    pub ticket: Option<Ticket>,
+}
+
+/// What was last submitted and chosen on the Search view, and what the live
+/// search found.
 #[derive(Debug, Default)]
-struct SearchRequest {
+struct SearchState {
     query: String,
     filter: SourceFilter,
+    revision: u64,
+    /// The number of the newest live search.
+    newest: u64,
+    /// The query in flight, as the cache keys it.
+    pending: Option<String>,
+    status: SearchStatus,
+    /// The live songs shown, kept whole: their video ids stay here.
+    live: Vec<Track>,
 }
 
 #[derive(Debug)]
@@ -101,7 +129,7 @@ pub struct AppState {
     navigation: NavigationState,
     /// Shared with the player, which has a lock of its own.
     catalog: Arc<Catalog>,
-    search: SearchRequest,
+    search: SearchState,
 }
 
 impl Default for AppState {
@@ -124,7 +152,7 @@ impl AppState {
                 revision: 0,
             },
             catalog: Arc::default(),
-            search: SearchRequest::default(),
+            search: SearchState::default(),
         }
     }
 
@@ -198,18 +226,12 @@ impl AppState {
             .ok_or_else(|| unknown_collection(playlist_id))
     }
 
-    /// Runs a search and remembers it for the next visit to the Search view.
-    pub fn search(&mut self, query: &str, filter: SourceFilter) -> SearchView {
-        self.search = SearchRequest {
-            query: query.to_owned(),
-            filter,
-        };
-        self.search_view()
-    }
-
     /// What playing a result of the remembered search queues: all its Tracks,
     /// and where `track_id` is among them.
     pub fn search_queue(&self, track_id: Uuid) -> Result<(Vec<Uuid>, usize), StateError> {
+        if self.search.filter != SourceFilter::SoundCloud {
+            return Err(StateError::NotPlayableYet);
+        }
         let tracks: Vec<Uuid> = self.search_view().tracks.iter().map(|t| t.id).collect();
         let start = tracks
             .iter()
@@ -218,9 +240,149 @@ impl AppState {
         Ok((tracks, start))
     }
 
-    /// The remembered search with its results.
+    /// Enter on the Search view. A ticket means YouTube Music has to be asked.
+    /// The SoundCloud chip searches the sample catalog instead.
+    pub fn submit_search(&mut self, query: &str, filter: SourceFilter) -> Submitted {
+        let live = filter != SourceFilter::SoundCloud;
+        let key = search_key(query);
+        let search = &mut self.search;
+        search.filter = filter;
+        // Enter again on the query in flight changes nothing.
+        if live && search.pending.as_ref() == Some(&key) {
+            return Submitted::default();
+        }
+        search.query = query.to_owned();
+        search.newest += 1;
+        search.live.clear();
+        let asks = live && !key.is_empty();
+        search.pending = asks.then_some(key);
+        search.status = if asks {
+            SearchStatus::Loading
+        } else {
+            SearchStatus::Idle
+        };
+        let ticket = asks.then(|| Ticket {
+            number: search.newest,
+            query: search.query.clone(),
+        });
+        Submitted {
+            view: Some(self.next_search_view()),
+            ticket,
+        }
+    }
+
+    /// Whether the search with this number is still the newest.
+    pub fn is_newest_search(&self, number: u64) -> bool {
+        number == self.search.newest
+    }
+
+    /// Takes the answer to a ticket. Only the newest one is shown.
+    pub fn finish_search(
+        &mut self,
+        number: u64,
+        outcome: Result<Parsed, ServiceError>,
+    ) -> Option<SearchView> {
+        if !self.is_newest_search(number) {
+            return None;
+        }
+        self.search.pending = None;
+        let status = match outcome {
+            Ok(found) => self.keep(found),
+            Err(ServiceError::Offline) => SearchStatus::Offline,
+            Err(ServiceError::Unexpected) => SearchStatus::Unexpected,
+            Err(ServiceError::Gate(GateError::Superseded)) => SearchStatus::Idle,
+            Err(
+                ServiceError::Disconnected
+                | ServiceError::Expired
+                | ServiceError::Gate(GateError::CoolingDown | GateError::Paused)
+                | ServiceError::Rejected
+                | ServiceError::RateLimited
+                | ServiceError::Blocked,
+            ) => SearchStatus::Blocked,
+        };
+        self.search.status = status;
+        // The sample chip does not show it; coming back reads the cache.
+        (self.search.filter != SourceFilter::SoundCloud).then(|| self.next_search_view())
+    }
+
+    /// The query a chip change shows.
+    pub fn submitted_query(&self) -> String {
+        self.search.query.clone()
+    }
+
+    /// Switches the chip. `cached` is what the cache holds for `query`; nothing
+    /// is ever sent.
+    pub fn set_search_filter(
+        &mut self,
+        filter: SourceFilter,
+        query: &str,
+        cached: Result<Option<Parsed>, ServiceError>,
+    ) -> SearchView {
+        self.search.filter = filter;
+        if filter != SourceFilter::SoundCloud {
+            // Another search may have been submitted since the cache was read.
+            let cached = if query == self.search.query {
+                cached
+            } else {
+                Ok(None)
+            };
+            self.search.live.clear();
+            self.search.status = match cached {
+                Ok(Some(found)) => self.keep(found),
+                Ok(None) if self.search.pending == Some(search_key(&self.search.query)) => {
+                    SearchStatus::Loading
+                }
+                Ok(None) => SearchStatus::Idle,
+                Err(_) => SearchStatus::Blocked,
+            };
+        }
+        self.next_search_view()
+    }
+
+    /// The account changed, so what its searches found is gone.
+    pub fn forget_live_search(&mut self) -> Option<SearchView> {
+        self.search.newest += 1;
+        self.search.pending = None;
+        self.search.status = SearchStatus::Idle;
+        self.search.live.clear();
+        (self.search.filter != SourceFilter::SoundCloud).then(|| self.next_search_view())
+    }
+
+    /// The submitted search as the chosen chip shows it.
     pub fn search_view(&self) -> SearchView {
-        self.catalog.search(&self.search.query, self.search.filter)
+        let search = &self.search;
+        if search.filter == SourceFilter::SoundCloud {
+            return SearchView {
+                revision: search.revision,
+                ..self.catalog.search(&search.query, search.filter)
+            };
+        }
+        SearchView {
+            revision: search.revision,
+            query: search.query.clone(),
+            filter: search.filter,
+            status: search.status,
+            tracks: search.live.iter().map(TrackRow::from).collect(),
+            collections: Vec::new(),
+        }
+    }
+
+    fn next_search_view(&mut self) -> SearchView {
+        self.search.revision += 1;
+        self.search_view()
+    }
+
+    fn keep(&mut self, found: Parsed) -> SearchStatus {
+        match found {
+            Parsed::Songs(tracks) => {
+                self.search.live = tracks;
+                SearchStatus::Results
+            }
+            Parsed::NoResults => {
+                self.search.live.clear();
+                SearchStatus::NoResults
+            }
+        }
     }
 }
 
@@ -229,7 +391,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::catalog::LONG_PLAYLIST_ID;
+    use crate::catalog::{LONG_PLAYLIST_ID, SourceRef};
 
     fn playlist_route(id: &str) -> Route {
         Route::Playlist { id: id.to_owned() }
@@ -456,24 +618,25 @@ mod tests {
 
         assert_eq!(view.query, "");
         assert_eq!(view.filter, SourceFilter::All);
-        assert!(!view.tracks.is_empty());
+        assert_eq!(view.status, SearchStatus::Idle);
+        assert!(view.tracks.is_empty());
     }
 
     #[test]
     fn remembers_the_last_search() {
         let mut state = AppState::default();
 
-        let found = state.search("night", SourceFilter::YouTube);
+        let submitted = state.submit_search("night", SourceFilter::SoundCloud);
 
-        assert_eq!(found.query, "night");
-        assert_eq!(state.search_view(), found);
+        assert_eq!(Some(state.search_view()), submitted.view);
+        assert_eq!(state.search_view().query, "night");
     }
 
     #[test]
     fn searching_does_not_navigate() {
         let mut state = AppState::default();
 
-        state.search("night", SourceFilter::All);
+        state.submit_search("night", SourceFilter::All);
 
         assert_eq!(state.snapshot().navigation.revision, 0);
     }
@@ -520,12 +683,8 @@ mod tests {
     #[test]
     fn a_search_result_queues_the_remembered_results() {
         let mut state = AppState::default();
-        let found: Vec<Uuid> = state
-            .search("night", SourceFilter::All)
-            .tracks
-            .iter()
-            .map(|t| t.id)
-            .collect();
+        state.submit_search("", SourceFilter::SoundCloud);
+        let found: Vec<Uuid> = state.search_view().tracks.iter().map(|t| t.id).collect();
         assert!(found.len() > 1);
 
         assert_eq!(state.search_queue(found[1]), Ok((found.clone(), 1)));
@@ -534,10 +693,246 @@ mod tests {
     #[test]
     fn a_track_outside_the_search_is_rejected() {
         let mut state = AppState::default();
-        state.search("night", SourceFilter::All);
+        state.submit_search("night", SourceFilter::SoundCloud);
         let id = Uuid::from_u128(999_999);
 
         assert_eq!(state.search_queue(id), Err(StateError::NotInSearch { id }));
+    }
+
+    fn song(title: &str) -> Track {
+        Track {
+            id: Uuid::from_u128(7),
+            title: title.to_owned(),
+            artists: vec!["Ada Brook".to_owned()],
+            album: None,
+            duration_ms: 1_000,
+            artwork_url: Some("https://art.invalid/a.jpg".to_owned()),
+            isrc: None,
+            sources: vec![SourceRef {
+                kind: SourceKind::YouTube,
+                id: "fakeVideo01".to_owned(),
+            }],
+        }
+    }
+
+    fn songs(title: &str) -> Result<Parsed, ServiceError> {
+        Ok(Parsed::Songs(vec![song(title)]))
+    }
+
+    fn submit(state: &mut AppState, query: &str) -> Ticket {
+        let submitted = state.submit_search(query, SourceFilter::All);
+        submitted.ticket.expect("a ticket")
+    }
+
+    fn shown(view: &SearchView) -> (SearchStatus, Vec<&str>) {
+        let titles = view.tracks.iter().map(|t| t.title.as_str()).collect();
+        (view.status, titles)
+    }
+
+    #[test]
+    fn a_live_search_loads_and_then_shows_its_songs_with_a_rising_revision() {
+        let mut state = AppState::default();
+        assert_eq!(shown(&state.search_view()), (SearchStatus::Idle, vec![]));
+
+        let submitted = state.submit_search(" Paper ", SourceFilter::YouTube);
+
+        let loading = submitted.view.expect("a view");
+        assert_eq!(shown(&loading), (SearchStatus::Loading, vec![]));
+        assert_eq!(loading.query, " Paper ");
+        let ticket = submitted.ticket.expect("a ticket");
+        assert_eq!(ticket.query, " Paper ");
+        assert!(state.is_newest_search(ticket.number));
+
+        let done = state
+            .finish_search(ticket.number, songs("Lanterns"))
+            .unwrap();
+
+        assert_eq!(shown(&done), (SearchStatus::Results, vec!["Lanterns"]));
+        assert!(done.collections.is_empty());
+        assert!(done.revision > loading.revision);
+        assert_eq!(state.search_view(), done);
+    }
+
+    #[test]
+    fn a_blank_submit_is_idle_asks_nothing_and_supersedes() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "paper");
+
+        let blank = state.submit_search("  ", SourceFilter::All);
+
+        assert_eq!(blank.ticket, None);
+        assert_eq!(blank.view.unwrap().status, SearchStatus::Idle);
+        assert!(!state.is_newest_search(ticket.number));
+        assert_eq!(state.finish_search(ticket.number, songs("Late")), None);
+        assert_eq!(shown(&state.search_view()), (SearchStatus::Idle, vec![]));
+    }
+
+    #[test]
+    fn the_query_already_pending_is_not_asked_again() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "paper");
+
+        let again = state.submit_search(" PAPER ", SourceFilter::All);
+
+        assert_eq!(again.ticket, None);
+        assert!(state.is_newest_search(ticket.number));
+        // Once it is answered, Enter asks again.
+        state.finish_search(ticket.number, Err(ServiceError::Offline));
+        submit(&mut state, "paper");
+    }
+
+    #[test]
+    fn a_late_answer_or_error_does_not_replace_a_newer_one() {
+        for late in [songs("Old"), Err(ServiceError::Offline)] {
+            let mut state = AppState::default();
+            let old = submit(&mut state, "old");
+            let new = submit(&mut state, "new");
+            state.finish_search(new.number, songs("New")).unwrap();
+
+            assert_eq!(state.finish_search(old.number, late), None);
+
+            assert_eq!(
+                shown(&state.search_view()),
+                (SearchStatus::Results, vec!["New"])
+            );
+        }
+    }
+
+    #[test]
+    fn each_outcome_has_its_status() {
+        use SearchStatus::{Blocked, Idle, NoResults, Offline, Unexpected};
+        use ServiceError as E;
+
+        for (outcome, status) in [
+            (Ok(Parsed::NoResults), NoResults),
+            (Err(E::Offline), Offline),
+            (Err(E::Unexpected), Unexpected),
+            (Err(E::Disconnected), Blocked),
+            (Err(E::Expired), Blocked),
+            (Err(E::Rejected), Blocked),
+            (Err(E::RateLimited), Blocked),
+            (Err(E::Blocked), Blocked),
+            (Err(E::Gate(GateError::Paused)), Blocked),
+            (Err(E::Gate(GateError::CoolingDown)), Blocked),
+            (Err(E::Gate(GateError::Superseded)), Idle),
+        ] {
+            let mut state = AppState::default();
+            let ticket = submit(&mut state, "paper");
+
+            let view = state.finish_search(ticket.number, outcome).unwrap();
+
+            assert_eq!(view.status, status);
+        }
+    }
+
+    #[test]
+    fn a_chip_change_shows_only_what_is_cached() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "night");
+        state.finish_search(ticket.number, songs("Live")).unwrap();
+
+        let sample = state.set_search_filter(SourceFilter::SoundCloud, "night", Ok(None));
+        assert!(
+            sample
+                .tracks
+                .iter()
+                .all(|t| t.sources.iter().any(|s| s.badge == "SC"))
+        );
+        assert!(!sample.tracks.is_empty());
+
+        let cached =
+            state.set_search_filter(SourceFilter::YouTube, "night", songs("Kept").map(Some));
+        assert_eq!(shown(&cached), (SearchStatus::Results, vec!["Kept"]));
+        assert!(cached.revision > sample.revision);
+
+        for (cached, status) in [
+            (Ok(None), SearchStatus::Idle),
+            (Err(ServiceError::Expired), SearchStatus::Blocked),
+        ] {
+            let view = state.set_search_filter(SourceFilter::All, "night", cached);
+            assert_eq!(shown(&view), (status, vec![]));
+        }
+        // An answer for a query that is no longer the submitted one is ignored.
+        let stale = state.set_search_filter(SourceFilter::All, "old", songs("Old").map(Some));
+        assert_eq!(shown(&stale), (SearchStatus::Idle, vec![]));
+    }
+
+    #[test]
+    fn a_search_keeps_loading_across_chip_changes() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "night");
+
+        state.set_search_filter(SourceFilter::SoundCloud, "night", Ok(None));
+        // Its answer is not for this chip.
+        let mut elsewhere = AppState::default();
+        let other = submit(&mut elsewhere, "night");
+        elsewhere.set_search_filter(SourceFilter::SoundCloud, "night", Ok(None));
+        assert_eq!(elsewhere.finish_search(other.number, songs("Live")), None);
+
+        let back = state.set_search_filter(SourceFilter::YouTube, "night", Ok(None));
+
+        assert_eq!(back.status, SearchStatus::Loading);
+        assert!(state.is_newest_search(ticket.number));
+    }
+
+    #[test]
+    fn the_soundcloud_chip_searches_the_sample_catalog_and_asks_nothing() {
+        let mut state = AppState::default();
+        let live = submit(&mut state, "paper");
+
+        let submitted = state.submit_search("", SourceFilter::SoundCloud);
+
+        assert_eq!(submitted.ticket, None);
+        let view = submitted.view.unwrap();
+        assert!(!view.tracks.is_empty());
+        assert!(!state.is_newest_search(live.number));
+        let first = view.tracks[0].id;
+        assert!(state.search_queue(first).is_ok());
+    }
+
+    #[test]
+    fn a_live_result_cannot_be_played_yet() {
+        for filter in [SourceFilter::All, SourceFilter::YouTube] {
+            let mut state = AppState::default();
+            let ticket = state.submit_search("paper", filter).ticket.unwrap();
+            state.finish_search(ticket.number, songs("Live")).unwrap();
+
+            assert_eq!(
+                state.search_queue(song("Live").id),
+                Err(StateError::NotPlayableYet)
+            );
+        }
+    }
+
+    #[test]
+    fn an_account_change_clears_the_results_and_supersedes() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "paper");
+        state.finish_search(ticket.number, songs("Live")).unwrap();
+
+        let cleared = state.forget_live_search().unwrap();
+
+        assert_eq!(shown(&cleared), (SearchStatus::Idle, vec![]));
+        assert_eq!(cleared.query, "paper");
+
+        let waiting = submit(&mut state, "paper");
+        state.forget_live_search();
+        assert_eq!(state.finish_search(waiting.number, songs("Late")), None);
+        // The same query may be asked of the new account.
+        submit(&mut state, "paper");
+    }
+
+    #[test]
+    fn live_songs_reach_the_ui_without_an_address() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "paper");
+        let view = state.finish_search(ticket.number, songs("Live")).unwrap();
+
+        let wire = serde_json::to_string(&view).unwrap();
+
+        assert!(wire.contains(r#""status":"results""#), "{wire}");
+        assert!(!wire.contains("http"), "{wire}");
+        assert!(!wire.contains("fakeVideo01"), "{wire}");
     }
 
     #[test]

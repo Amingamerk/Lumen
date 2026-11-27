@@ -1,0 +1,118 @@
+{
+ "responseContext": {
+  "serviceTrackingParams": [
+   {
+    "service": "GFEEDBACK",
+    "params": [
+     {
+      "key": "logged_in",
+      "value": "1"
+     }
+    ]
+   }
+  ]
+ },
+ "contents": {
+  "someNewResultsRenderer": {
+   "items": [
+    {
+     "musicResponsiveListItemRenderer": {
+      "flexColumns": [
+       {
+        "musicResponsiveListItemFlexColumnRenderer": {
+         "text": {
+          "runs": [
+           {
+            "text": "Paper Lanterns"
+           }
+          ]
+         }
+        }
+       },
+       {
+        "musicResponsiveListItemFlexColumnRenderer": {
+         "text": {
+          "runs": [
+           {
+            "text": "Ada Brook",
+            "navigationEndpoint": {
+             "browseEndpoint": {
+              "browseId": "UCfakeArtist",
+              "browseEndpointContextSupportedConfigs": {
+               "browseEndpointContextMusicConfig": {
+                "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+               }
+              }
+             }
+            }
+           },
+           {
+            "text": " & "
+           },
+           {
+            "text": "The Tin Owls",
+            "navigationEndpoint": {
+             "browseEndpoint": {
+              "browseId": "UCfakeArtist",
+              "browseEndpointContextSupportedConfigs": {
+               "browseEndpointContextMusicConfig": {
+                "pageType": "MUSIC_PAGE_TYPE_ARTIST"
+               }
+              }
+             }
+            }
+           },
+           {
+            "text": " • "
+           },
+           {
+            "text": "Night Market",
+            "navigationEndpoint": {
+             "browseEndpoint": {
+              "browseId": "MPREfakeAlbum",
+              "browseEndpointContextSupportedConfigs": {
+               "browseEndpointContextMusicConfig": {
+                "pageType": "MUSIC_PAGE_TYPE_ALBUM"
+               }
+              }
+             }
+            }
+           },
+           {
+            "text": " • "
+           },
+           {
+            "text": "3:14"
+           }
+          ]
+         }
+        }
+       }
+      ],
+      "playlistItemData": {
+       "videoId": "fakeVideo01"
+      },
+      "thumbnail": {
+       "musicThumbnailRenderer": {
+        "thumbnail": {
+         "thumbnails": [
+          {
+           "url": "https://art.invalid/fakeVideo01-60.jpg",
+           "width": 60,
+           "height": 60
+          },
+          {
+           "url": "https://art.invalid/fakeVideo01-120.jpg",
+           "width": 120,
+           "height": 120
+          }
+         ]
+        }
+       }
+      }
+     }
+    }
+   ]
+  }
+ }
+}

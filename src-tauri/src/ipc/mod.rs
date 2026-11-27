@@ -4,13 +4,14 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod account;
 pub mod player;
+pub mod search;
 pub mod youtube;
 
 use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::audio::{PlayerError, PlayerPosition, PlayerState};
-use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, SourceFilter, TrackSlice};
+use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, TrackSlice};
 use crate::secrets::SecretError;
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
 
@@ -46,6 +47,7 @@ pub trait EventSink {
     fn navigation_changed(&self, navigation: &NavigationState) -> Result<(), IpcError>;
     fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError>;
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError>;
+    fn search_changed(&self, view: &SearchView) -> Result<(), IpcError>;
 }
 
 impl<R: Runtime> EventSink for AppHandle<R> {
@@ -59,6 +61,10 @@ impl<R: Runtime> EventSink for AppHandle<R> {
 
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
         Ok(self.emit(player::PLAYER_POSITION, position)?)
+    }
+
+    fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
+        Ok(self.emit_to(MAIN_WINDOW, search::SEARCH_CHANGED, view)?)
     }
 }
 
@@ -152,15 +158,6 @@ pub fn get_search(state: State<'_, SharedState>) -> SearchView {
     lock(&state).search_view()
 }
 
-#[tauri::command]
-pub fn search_catalog(
-    state: State<'_, SharedState>,
-    query: String,
-    filter: SourceFilter,
-) -> SearchView {
-    lock(&state).search(&query, filter)
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -175,6 +172,7 @@ mod tests {
         pub(super) navigations: RefCell<Vec<NavigationState>>,
         pub(super) states: RefCell<Vec<PlayerState>>,
         pub(super) positions: RefCell<Vec<PlayerPosition>>,
+        pub(super) searches: RefCell<Vec<SearchView>>,
     }
 
     impl EventSink for RecordingSink {
@@ -190,6 +188,11 @@ mod tests {
 
         fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
             self.positions.borrow_mut().push(*position);
+            Ok(())
+        }
+
+        fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
+            self.searches.borrow_mut().push(view.clone());
             Ok(())
         }
     }

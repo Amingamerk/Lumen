@@ -16,6 +16,10 @@ const CLIENT_NAME: &str = "WEB_REMIX";
 const CLIENT_NAME_ID: &str = "67";
 /// The library's playlists.
 const BROWSE_ID: &str = "FEmusic_liked_playlists";
+/// The search filter that asks for songs only, as ytmusicapi builds it:
+/// `get_search_params("songs", None, False)` in `ytmusicapi/parsers/search.py`
+/// of sigma67/ytmusicapi at commit 28e00ddc0fffb69d65656d18af35845d656b3096.
+const SONGS_PARAMS: &str = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
 /// Found in the answers of Google's bot checks.
 const BOT_CHECK_MARKERS: [&str; 3] = ["captcha", "unusual traffic", "/sorry/"];
 
@@ -37,6 +41,12 @@ pub enum Fault {
 /// that applies to it can sign it.
 pub fn browse(session: &Session, now_ms: u64) -> Option<Request> {
     request(session, "browse", json!({ "browseId": BROWSE_ID }), now_ms)
+}
+
+/// A search for songs matching `query`. `None` as for [`browse`].
+pub fn search(session: &Session, query: &str, now_ms: u64) -> Option<Request> {
+    let body = json!({ "query": query, "params": SONGS_PARAMS });
+    request(session, "search", body, now_ms)
 }
 
 /// One `youtubei` call with the web client's headers and `context`. `body` holds
@@ -260,6 +270,35 @@ mod tests {
                     "user": {}
                 },
                 "browseId": "FEmusic_liked_playlists"
+            })
+        );
+    }
+
+    #[test]
+    fn searches_for_songs_with_the_same_headers() {
+        let request = search(&session("da-DK"), "Paper Lanterns", NOW_MS).unwrap();
+
+        assert_eq!(
+            request.url,
+            "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+        );
+        assert_eq!(
+            request.headers,
+            browse(&session("da-DK"), NOW_MS).unwrap().headers
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&request.body).unwrap(),
+            json!({
+                "context": {
+                    "client": {
+                        "clientName": "WEB_REMIX",
+                        "clientVersion": "1.20231114.01.00",
+                        "hl": "da"
+                    },
+                    "user": {}
+                },
+                "query": "Paper Lanterns",
+                "params": "EgWKAQIIAWoMEA4QChADEAQQCRAF"
             })
         );
     }
