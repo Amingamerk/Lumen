@@ -27,13 +27,19 @@ whole list stays in Rust; the playlist route asks for the slices it is about to 
 One horizontal row of Collection cards on Home.
 
 ### Search
-A query plus a source chip: `All`, `YouTube` or `SoundCloud` (Spotify shows up under `All`). Every word must
-appear in a Track's title, artists or album, a playlist's name, or an album's title or artists. A blank query
-matches everything. Rust does the matching and remembers the last query and chip.
+A query plus a source chip: `All`, `YouTube` or `SoundCloud`. Rust does the searching and remembers the last
+query and chip.
+
+- With `All` or `YouTube`, YouTube Music is searched live for songs. Only Enter sends a search, and only for a
+  query that is not blank; changing the chip sends nothing. One search makes at most one request through the
+  Account-safety gate, and what it found is kept in memory for an hour (50 queries at most), for that one
+  Session.
+- With `SoundCloud`, the static catalog is searched until Milestone 7: every word must appear in a Track's
+  title, artists or album, a playlist's name, or an album's title or artists. A blank query matches everything.
 
 ### Queue
-The ordered list of what plays. Starting a Collection or a search result replaces it with all of their
-Tracks. When Next or the end of a track passes the last entry, the **Recommender** appends an **autoplay**
+The ordered list of what plays. Starting a Collection or a catalog search result replaces it with all of their
+Tracks. A live YouTube Music result empties it and plays by itself. When Next or the end of a track passes the last entry, the **Recommender** appends an **autoplay**
 pick and keeps a few upcoming. The history is the entries before the current one. The whole Queue stays in
 Rust; the UI asks for the upcoming rows it shows.
 
@@ -52,8 +58,8 @@ cannot play samples: choosing one says "sample track, cannot be played" and chan
 happens before the Engine sees Media.
 
 ### Playback status
-`idle`, `loading`, `playing`, `paused`, `ended` or `error`. Real audio is played by itself: the Queue is
-emptied, Previous and Next are off, and nothing advances when it ends. Queued playback of real audio, with
+`idle`, `loading`, `playing`, `paused`, `ended` or `error`. Real audio (a local file or a live YouTube Music
+song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends. Queued playback of real audio, with
 autoplay on by default, comes in Milestone 4.
 
 ### Notice
@@ -65,9 +71,13 @@ The metadata role of a service, behind the `Source` trait: `search` and `related
 Tracks. Library import also belongs to the source module. A Source never produces audio.
 
 ### Resolver
-The audio role, behind the `Resolver` trait: `SourceRef` -> `StreamInfo`. Backends are swappable;
-`yt-dlp` is first ([ADR 0001](adr/0001-ytdlp-primary-resolver.md)). Only `YouTube` and `SoundCloud` refs can
-be resolved.
+The audio role: `SourceRef` -> `StreamInfo`. `yt-dlp` with Deno is the first backend
+([ADR 0001](adr/0001-ytdlp-primary-resolver.md)). Only `YouTube` and `SoundCloud` refs can be resolved.
+Today it takes a YouTube video id; the `Resolver` trait that makes backends swappable comes in Milestone 3.
+
+A resolve is one `yt-dlp` run through the Account-safety gate. Its `StreamInfo` is cached in memory for that one
+Session and used again while the URL has at least 10 minutes left. A selection that has been replaced before
+its turn runs nothing.
 
 ### Stream URL and StreamInfo
 The Stream URL is a short-lived direct audio URL handed to libmpv. `StreamInfo` is the Stream URL plus what
@@ -80,8 +90,8 @@ is needed to play it:
 | `available_at` | Optional earliest time to use the URL; wait for it before loading |
 | headers | HTTP headers mpv must send, including the pinned `User-Agent` |
 
-The current and next 1-2 queue entries are resolved. HTTP 403, an expired URL or a stall means resolve
-again; mpv does not do it.
+The current and next 1-2 queue entries are resolved (only the current one until queued playback of real audio
+in Milestone 4). HTTP 403, an expired URL or a stall means resolve again; mpv does not do it.
 
 ### Match
 A cached mapping from a Spotify Track to a playable `YouTube` (else `SoundCloud`) `SourceRef`, with its
@@ -134,7 +144,7 @@ The YouTube gate (the only one so far) is ready, cooling down or paused:
 | UI (Svelte) | Rendering, user input | Call external services, hold player state or secrets |
 | `ipc` | Commands in, events out | Business logic |
 | `sources` | Service APIs, import, metadata -> Track | Play audio |
-| `catalog` | Domain shapes, the static fixtures, Home/Library/Search views, Track slices | Call services, store data |
+| `catalog` | Domain shapes, the static fixtures, Home/Library views, catalog search, Track slices | Call services, store data |
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
 | `recs` | Autoplay picks (static until Milestone 6) | Play audio |

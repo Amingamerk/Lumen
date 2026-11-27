@@ -210,6 +210,154 @@ function Get-CimInstance {
     }
 }
 
+# --- Sampling mode ---
+
+# A fake machine: each snapshot is a process list and the counters that go with it.
+function New-Snapshot([object[]]$Processes, [hashtable]$MB) {
+    [pscustomobject]@{
+        Processes   = $Processes
+        PerfRecords = @($MB.GetEnumerator() | ForEach-Object { New-Perf $_.Key ([long]($_.Value * 1MB)) })
+    }
+}
+
+$app = New-Proc 100 10 'lumen.exe' 10
+$view = New-Proc 101 100 'msedgewebview2.exe' 11
+$ytdlp = New-Proc 104 100 'yt-dlp.exe' 20
+$deno = New-Proc 105 104 'deno.exe' 21
+$stranger = New-Proc 201 200 'msedgewebview2.exe' 6
+
+$quiet = New-Snapshot @($app, $view, $stranger) @{ 100 = 10; 101 = 80; 201 = 500 }
+$resolving = New-Snapshot @($app, $view, $ytdlp) @{ 100 = 10; 101 = 80; 104 = 70 }
+$peaking = New-Snapshot @($app, $view, $ytdlp, $deno) @{ 100 = 10; 101 = 80; 104 = 70; 105 = 120 }
+
+# Runs the sampling loop on a fake clock. Each snapshot takes $CostMs; sleeping advances the clock.
+function Invoke-FakeSampling([object[]]$Snapshots, [int]$DurationMs, [int]$IntervalMs = 250, [int]$CostMs = 100) {
+    $state = @{ Now = 0; Next = 0; Slept = New-Object System.Collections.ArrayList }
+    $samples = Invoke-Sampling -RootId 100 -DurationMs $DurationMs -IntervalMs $IntervalMs `
+        -Snapshot {
+            $snapshot = $Snapshots[[math]::Min($state.Next, $Snapshots.Count - 1)]
+            $state.Next++
+            $state.Now += $CostMs
+            $snapshot
+        }.GetNewClosure() `
+        -Clock { $state.Now }.GetNewClosure() `
+        -Sleep { param($Ms) [void]$state.Slept.Add($Ms); $state.Now += $Ms }.GetNewClosure()
+    [pscustomobject]@{ Samples = @($samples); Slept = @($state.Slept) }
+}
+
+Test-Case 'sampling starts a snapshot every interval, less the time the snapshot took' {
+    $run = Invoke-FakeSampling @($quiet) -DurationMs 1000
+    Assert-Equal @(0, 250, 500, 750, 1000) $run.Samples.ElapsedMs 'sample times'
+    Assert-Equal @(150, 150, 150, 150) $run.Slept 'sleeps'
+}
+
+Test-Case 'a snapshot slower than the interval is followed at once' {
+    $run = Invoke-FakeSampling @($quiet) -DurationMs 800 -IntervalMs 250 -CostMs 400
+    Assert-Equal @(0, 400, 800) $run.Samples.ElapsedMs 'sample times'
+    Assert-Equal 0 $run.Slept.Count 'sleeps'
+}
+
+Test-Case 'sampling stops when the app is gone and keeps the samples it has' {
+    $gone = New-Snapshot @($stranger) @{ 201 = 500 }
+    $run = Invoke-FakeSampling @($quiet, $quiet, $gone, $quiet) -DurationMs 5000
+    Assert-Equal 2 $run.Samples.Count 'samples'
+}
+
+Test-Case 'a child that outlives its parent stays counted' {
+    $orphaned = New-Snapshot @($app, $view, $deno) @{ 100 = 10; 101 = 80; 105 = 120 }
+    $run = Invoke-FakeSampling @($peaking, $orphaned) -DurationMs 250
+    Assert-Equal 210 $run.Samples[1].Report.TotalMB 'orphaned deno is still in the total'
+}
+
+Test-Case 'a later owner of a tracked process id is not counted' {
+    $reused = New-Proc 105 200 'other.exe' 40
+    $after = New-Snapshot @($app, $view, $reused) @{ 100 = 10; 101 = 80; 105 = 900 }
+    $run = Invoke-FakeSampling @($peaking, $after) -DurationMs 250
+    Assert-Equal 90 $run.Samples[1].Report.TotalMB 'reused pid'
+}
+
+Test-Case 'summary reports the peak total of the whole tree and its breakdown' {
+    $run = Invoke-FakeSampling @($quiet, $resolving, $peaking, $quiet) -DurationMs 750
+    $summary = Get-SampleSummary -Samples $run.Samples -ThresholdMB 150
+    Assert-Equal 280 $summary.PeakMB 'peak'
+    Assert-Equal 500 $summary.PeakAtMs 'peak time'
+    Assert-Equal @('deno.exe', 'msedgewebview2.exe', 'yt-dlp.exe', 'lumen.exe') $summary.PeakProcesses.Name 'breakdown, largest first'
+    Assert-Equal @(120, 80, 70, 10) $summary.PeakProcesses.PrivateWS_MB 'breakdown MB'
+}
+
+Test-Case 'time above the threshold adds the gaps that follow the samples over it' {
+    # 90, 160, 280, 90 MB at 0, 250, 500, 750 ms.
+    $run = Invoke-FakeSampling @($quiet, $resolving, $peaking, $quiet) -DurationMs 750
+    Assert-Equal 500 (Get-SampleSummary -Samples $run.Samples -ThresholdMB 150).MsAboveThreshold 'over 150'
+    Assert-Equal 250 (Get-SampleSummary -Samples $run.Samples -ThresholdMB 160).MsAboveThreshold 'exactly 160 is not above'
+}
+
+Test-Case 'summary reports the achieved interval, mean and worst' {
+    $samples = foreach ($ms in 0, 200, 500, 1200) {
+        [pscustomobject]@{ ElapsedMs = $ms; Report = (Invoke-FakeSampling @($quiet) -DurationMs 0).Samples[0].Report }
+    }
+    $summary = Get-SampleSummary -Samples @($samples) -ThresholdMB 150
+    Assert-Equal 4 $summary.SampleCount 'count'
+    Assert-Equal 1200 $summary.DurationMs 'duration'
+    Assert-Equal 400 $summary.MeanIntervalMs 'mean'
+    Assert-Equal 700 $summary.MaxIntervalMs 'max'
+}
+
+Test-Case 'summary says when each process name was seen, and that peaks can be undercounted' {
+    $run = Invoke-FakeSampling @($quiet, $resolving, $peaking, $quiet) -DurationMs 750
+    $summary = Get-SampleSummary -Samples $run.Samples -ThresholdMB 150
+    $seen = @($summary.Seen | Where-Object Name -eq 'yt-dlp.exe')[0]
+    Assert-Equal @(250, 500, 2) @($seen.FirstMs, $seen.LastMs, $seen.Samples) 'yt-dlp'
+    Assert-Equal 1 @($summary.Seen | Where-Object Name -eq 'deno.exe')[0].Samples 'deno'
+    if ($summary.Note -notmatch 'undercount' -or $summary.Note -notmatch '250') { throw "note: $($summary.Note)" }
+}
+
+Test-Case 'summary keeps a timeline of totals' {
+    $run = Invoke-FakeSampling @($quiet, $peaking) -DurationMs 250
+    $timeline = @((Get-SampleSummary -Samples $run.Samples -ThresholdMB 150).Timeline)
+    Assert-Equal @(0, 250) $timeline.ElapsedMs 'times'
+    Assert-Equal @(90, 280) $timeline.TotalMB 'totals'
+}
+
+Test-Case '-SampleSeconds writes the summary as pure JSON' {
+    $harness = @'
+param([string]$Script)
+function Get-CimInstance {
+    param([Parameter(Position = 0)] [string]$ClassName, [string[]]$Property)
+    if ($ClassName -eq 'Win32_Process') {
+        [pscustomobject]@{ ProcessId = 100; ParentProcessId = 1; Name = 'lumen.exe'; CreationDate = $null; CommandLine = '' }
+    } elseif ($ClassName -eq 'Win32_PerfRawData_PerfProc_Process') {
+        [pscustomobject]@{ IDProcess = 100; WorkingSetPrivate = 10485760 }
+    }
+}
+& $Script -ProcessId 100 -WaitSeconds 0 -SampleSeconds 1 -IntervalMs 200 -AsJson
+'@
+    $dir = Join-Path ([IO.Path]::GetTempPath()) ([guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $dir | Out-Null
+    try {
+        $harnessPath = Join-Path $dir 'harness.ps1'
+        $outPath = Join-Path $dir 'stdout.txt'
+        $errPath = Join-Path $dir 'stderr.txt'
+        Set-Content -LiteralPath $harnessPath -Value $harness
+        $exe = if ($PSVersionTable.PSVersion.Major -ge 6) { 'pwsh.exe' } else { 'powershell.exe' }
+        $script = Join-Path $PSScriptRoot 'measure-ram.ps1'
+        $child = Start-Process -FilePath (Join-Path $PSHOME $exe) -NoNewWindow -Wait -PassThru `
+            -ArgumentList '-NoProfile', '-File', "`"$harnessPath`"", "`"$script`"" `
+            -RedirectStandardOutput $outPath -RedirectStandardError $errPath
+        $stdout = [string](Get-Content -LiteralPath $outPath -Raw)
+        $stderr = [string](Get-Content -LiteralPath $errPath -Raw)
+
+        Assert-Equal 0 $child.ExitCode "exit code (stderr: $stderr)"
+        try { $json = $stdout | ConvertFrom-Json } catch { throw "stdout is not pure JSON: $stdout" }
+        Assert-Equal 10 $json.PeakMB 'PeakMB'
+        Assert-Equal 0 $json.MsAboveThreshold 'MsAboveThreshold'
+        if ($json.SampleCount -lt 2) { throw "only $($json.SampleCount) sample(s)" }
+        Assert-Equal $json.SampleCount @($json.Timeline).Count 'timeline rows'
+    } finally {
+        Remove-Item -LiteralPath $dir -Recurse -Force
+    }
+}
+
 Write-Host "$script:passed passed, $script:failed failed"
 if ($script:failed -gt 0) { exit 1 }
 exit 0

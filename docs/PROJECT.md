@@ -300,7 +300,13 @@ SQLite library replaces it in Milestone 3.
 account-safety gate (`gate/`: rules, saved state, clock) and the web client (`auth.rs`, `client.rs`,
 `transport.rs`, `http.rs`, which follows the Windows system proxy like the login window). `service.rs` owns the
 account, the gate and the transport and is the only way a request goes out. The gate moves up only when a second
-service needs it.
+service needs it. `sources/youtube/search/` asks YouTube Music for songs, parses the reply into Tracks and
+keeps recent results in memory.
+
+`resolver/` runs the bundled yt-dlp and Deno for one video at a time through that gate: the arguments
+(`args.rs`), the temporary cookie jar (`jar.rs`), the process tree (`process.rs`), reading the answer
+(`stream.rs`) and the in-memory stream cache. `ipc/` connects these to the UI (`account.rs`, `search.rs`,
+`playback.rs`, `recovery.rs`), and `audio/` holds the engine and the player, including stream recovery.
 
 ## 7. Milestones
 
