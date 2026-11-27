@@ -24,7 +24,20 @@ impl Cookie {
         domain == "youtube.com" || domain.ends_with(".youtube.com")
     }
 
-    /// Whether a browser would send it to `host`.
+    /// Whether a browser would send it with an HTTPS request to `host` + `path`
+    /// at `now_s` (Unix seconds).
+    pub fn is_sent_to(&self, host: &str, path: &str, now_s: u64) -> bool {
+        let under_path = path.strip_prefix(&self.path).is_some_and(|rest| {
+            rest.is_empty() || self.path.ends_with('/') || rest.starts_with('/')
+        });
+        // An expiry before 1970 does not convert: long expired.
+        let live = self
+            .expires
+            .is_none_or(|at| u64::try_from(at).is_ok_and(|at| at > now_s));
+        self.applies_to(host) && under_path && live
+    }
+
+    /// Whether its domain takes in `host`.
     pub fn applies_to(&self, host: &str) -> bool {
         match self.domain.strip_prefix('.') {
             Some(suffix) => host
@@ -134,6 +147,45 @@ mod tests {
 
             assert_eq!(cookie.domain, kept, "{name} on {domain}");
         }
+    }
+
+    fn sent(domain: &str, path: &str, expires: Option<i64>) -> bool {
+        let cookie = Cookie {
+            name: "SAPISID".to_owned(),
+            value: "fake-value".to_owned(),
+            domain: domain.to_owned(),
+            path: path.to_owned(),
+            secure: true,
+            http_only: false,
+            expires,
+        };
+        cookie.is_sent_to("music.youtube.com", "/youtubei/v1/browse", 1_000)
+    }
+
+    #[test]
+    fn is_sent_to_matching_hosts_only() {
+        assert!(sent(".youtube.com", "/", None));
+        assert!(sent("music.youtube.com", "/", None));
+        assert!(!sent("youtube.com", "/", None));
+        assert!(!sent("www.youtube.com", "/", None));
+        assert!(!sent(".google.com", "/", None));
+    }
+
+    #[test]
+    fn is_sent_to_matching_paths_only() {
+        for path in ["/", "/youtubei", "/youtubei/", "/youtubei/v1/browse"] {
+            assert!(sent(".youtube.com", path, None), "{path}");
+        }
+        for path in ["/youtube", "/youtubei/v1/search", "/youtubei/v1/browse/x"] {
+            assert!(!sent(".youtube.com", path, None), "{path}");
+        }
+    }
+
+    #[test]
+    fn is_not_sent_once_expired() {
+        assert!(sent(".youtube.com", "/", Some(1_001)));
+        assert!(!sent(".youtube.com", "/", Some(1_000)));
+        assert!(!sent(".youtube.com", "/", Some(-1)));
     }
 
     #[test]

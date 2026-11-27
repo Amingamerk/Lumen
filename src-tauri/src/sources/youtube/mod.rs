@@ -2,6 +2,10 @@
 //! a request.
 
 mod account;
+#[allow(dead_code)]
+mod auth;
+#[allow(dead_code)]
+mod client;
 mod cookies;
 // Not wired up yet.
 #[allow(dead_code)]
