@@ -17,6 +17,8 @@ anyhow = "1"
 # The `keyring` project's core and Windows store, used directly: `keyring`'s own
 # `Entry` cannot set a credential's persistence.
 keyring-core = "1"
+# libmpv-2.dll comes from scripts/fetch-pinned-binaries.ps1; build.rs links it.
+libmpv2 = { version = "7", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }

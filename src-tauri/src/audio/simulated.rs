@@ -1,8 +1,8 @@
-//! An engine that only keeps time.
+//! An engine that only keeps time, so the Queue can be tested without audio.
 
 use std::time::{Duration, Instant};
 
-use super::{Engine, EngineEvent};
+use super::{Engine, EngineError, EngineEvent, Media};
 
 /// Time since some fixed moment.
 pub trait Clock: Send {
@@ -73,11 +73,21 @@ impl<C: Clock> SimulatedEngine<C> {
 }
 
 impl<C: Clock> Engine for SimulatedEngine<C> {
-    fn load(&mut self, duration: Duration) {
-        self.duration = duration;
-        self.base = Duration::ZERO;
+    fn plays_samples(&self) -> bool {
+        true
+    }
+
+    /// Only samples: there is nothing here to open a file or stream with.
+    fn load(&mut self, media: &Media, start: Duration) -> Result<(), EngineError> {
+        let sample = match media {
+            Media::Sample { duration } => Some(*duration),
+            Media::File(_) | Media::Stream { .. } => None,
+        };
+        self.duration = sample.unwrap_or_default();
+        self.base = start.min(self.duration);
         self.since = None;
         self.ended = false;
+        sample.map(|_| ()).ok_or(EngineError::Unplayable)
     }
 
     fn set_playing(&mut self, playing: bool) {
@@ -141,10 +151,15 @@ mod tests {
         Duration::from_millis(n)
     }
 
+    fn load(engine: &mut SimulatedEngine<ManualClock>) {
+        let sample = Media::Sample { duration: LENGTH };
+        engine.load(&sample, Duration::ZERO).unwrap();
+    }
+
     fn loaded() -> (SimulatedEngine<ManualClock>, ManualClock) {
         let clock = ManualClock::default();
         let mut engine = SimulatedEngine::new(clock.clone());
-        engine.load(LENGTH);
+        load(&mut engine);
         (engine, clock)
     }
 
@@ -229,6 +244,16 @@ mod tests {
     }
 
     #[test]
+    fn refuses_real_audio() {
+        let (mut engine, _) = loaded();
+
+        let refused = engine.load(&Media::File("tone.wav".into()), Duration::ZERO);
+
+        assert_eq!(refused, Err(EngineError::Unplayable));
+        assert_eq!(engine.duration(), Duration::ZERO);
+    }
+
+    #[test]
     fn a_new_track_or_a_seek_can_end_again() {
         let (mut engine, clock) = playing();
         clock.advance(LENGTH);
@@ -238,7 +263,7 @@ mod tests {
         clock.advance(LENGTH);
         assert_eq!(engine.poll(), Some(EngineEvent::Ended));
 
-        engine.load(LENGTH);
+        load(&mut engine);
         assert_eq!(engine.position(), Duration::ZERO);
         assert_eq!(engine.next_wake(), None);
         engine.set_playing(true);

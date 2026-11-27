@@ -42,8 +42,23 @@ One place in the Queue: a Track plus a `key` that is unique and never reused, so
 entries. Reordering moves an upcoming entry before another, by key.
 
 ### Engine
-What makes sound, behind the `Engine` trait: load, play or pause, seek, volume, position. It is simulated
-until libmpv arrives (Milestone 2).
+What makes sound, behind the `Engine` trait: load, play or pause, seek, volume, position. The app's engine is
+libmpv; tests use stand-ins. An engine reports back only through engine events: loaded, duration, progress,
+ended and failed.
+
+### Media
+What an Engine is asked to play: a local file, a Stream URL with its headers, or a catalog sample. libmpv
+cannot play samples: choosing one says "sample track, cannot be played" and changes nothing. Resolving
+happens before the Engine sees Media.
+
+### Playback status
+`idle`, `loading`, `playing`, `paused`, `ended` or `error`. Real audio is played by itself: the Queue is
+emptied, Previous and Next are off, and nothing advances when it ends. Queued playback of real audio, with
+autoplay on by default, comes in Milestone 4.
+
+### Notice
+The small error message over the app, for a refused command or a failed load or playback. It never holds a
+Stream URL, headers or the Engine's own words.
 
 ### Source
 The metadata role of a service, behind the `Source` trait: `search` and `related` (radio seeds), returning
@@ -101,7 +116,7 @@ PROJECT.md section 3c.
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
 | `recs` | Autoplay picks (static until Milestone 6) | Play audio |
-| `audio` | Engine, playback state, transport rules | Resolve URLs |
+| `audio` | Engine (libmpv), playback state, transport rules | Resolve URLs |
 | `library` | SQLite: Tracks, playlists, history, caches, Matches | Store secrets |
 
 ## Invariants

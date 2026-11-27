@@ -71,6 +71,17 @@ impl Queue {
         self.revision += 1;
     }
 
+    /// Empties the Queue and returns a key no entry has had, for what plays
+    /// outside it.
+    pub fn clear(&mut self) -> u32 {
+        self.entries.clear();
+        self.current = 0;
+        self.revision += 1;
+        let key = self.next_key;
+        self.next_key += 1;
+        key
+    }
+
     /// Makes the next entry current. `false` when there is none.
     pub fn advance(&mut self) -> bool {
         if self.upcoming().is_empty() {
