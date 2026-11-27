@@ -166,6 +166,7 @@ async fn gives_the_stream_without_the_secret_headers() {
                     ("Accept".to_owned(), "*/*".to_owned()),
                     ("User-Agent".to_owned(), "FakeAgent/1.0".to_owned()),
                 ],
+                expires_at: Some(1_700_021_600),
             }
     );
     let runs = f.ytdlp.runs.lock().unwrap();
@@ -444,4 +445,28 @@ fn a_new_resolver_and_a_shutdown_sweep_leftover_jars() {
         "cache".into(),
     );
     assert!(!leftover.exists());
+}
+
+#[test]
+fn only_answers_that_could_change_are_worth_asking_again() {
+    use ResolveError::*;
+    for error in [TimedOut, Failed, NoFormat, UnexpectedOutput, Spawn] {
+        assert!(error.worth_retrying(), "{error}");
+    }
+    for error in [
+        AuthRejected,
+        RateLimited,
+        BotCheck,
+        Unavailable,
+        MissingYtDlp,
+        MissingDeno,
+        AvailableTooLate,
+        AccountChanged,
+        BadVideo,
+        Closed,
+        Service(ServiceError::Gate(GateError::Paused)),
+        Service(ServiceError::Expired),
+    ] {
+        assert!(!error.worth_retrying(), "{error}");
+    }
 }

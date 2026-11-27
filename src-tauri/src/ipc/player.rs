@@ -6,10 +6,12 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Runtime, State};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::playback::{self, play_stream};
-use super::{EventSink, IpcError, SharedState, lock};
+use super::account::AccountHandle;
+use super::playback::{AppResolver, play_stream, resolve_in_background};
+use super::{EventSink, IpcError, SharedState, lock, recovery};
 use crate::audio::{
     Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError,
     PlayerEvent, PlayerState, QueueSlice, file_media,
@@ -23,7 +25,7 @@ pub const PLAYER_CHANGED: &str = "player-changed";
 pub const PLAYER_POSITION: &str = "player-position";
 
 /// libmpv in the app, stand-ins in tests.
-type AppPlayer = Player<Box<dyn Engine>>;
+pub(super) type AppPlayer = Player<Box<dyn Engine>>;
 
 /// The player behind its own lock, so playback never waits for a search.
 pub struct PlayerHandle {
@@ -78,6 +80,21 @@ impl PlayerHandle {
             key,
         })
     }
+
+    /// Asks again for the stream that failed, if one did, and announces it.
+    pub fn retry_stream(
+        &self,
+        sink: &impl EventSink,
+    ) -> Result<Option<(String, Pending)>, IpcError> {
+        // The lock is released before the event goes out. The revision keeps order.
+        let retried = lock(&self.player).retry_stream();
+        let Some((video, key, state)) = retried else {
+            return Ok(None);
+        };
+        sink.player_changed(&state)?;
+        let player = Arc::clone(&self.player);
+        Ok(Some((video, Pending { player, key })))
+    }
 }
 
 /// How long [`AudioThread::stop`] waits for mpv to shut down.
@@ -127,18 +144,21 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::R
         handle.play_file(path);
     }
     let player = Arc::clone(&handle.player);
+    let wake = Arc::new(Notify::new());
+    let changed = Arc::clone(&wake);
+    lock(&player).on_change(move || changed.notify_one());
     app.manage(handle);
+    tauri::async_runtime::spawn(recovery::watch(
+        app.clone(),
+        Arc::clone(&player),
+        Arc::clone(app.state::<AccountHandle>().youtube()),
+        Arc::clone(app.state::<Arc<AppResolver>>().inner()),
+        wake,
+    ));
     let sink = app.clone();
     let thread = listen(events, move |event| {
         // A failure means the window is gone: nobody is left to tell.
         let _ = relay(&player, event, &sink);
-        if event == EngineEvent::Failed {
-            // A URL that would not play is not used again.
-            let failed = lock(&player).failed_stream();
-            if let Some((video, _)) = failed {
-                playback::forget(&sink, Some(&video));
-            }
-        }
     })?;
     app.manage(AudioThread::new(shutdown, thread));
     Ok(())
@@ -240,9 +260,11 @@ pub fn toggle_play<R: Runtime>(
     app: AppHandle<R>,
     player: State<'_, PlayerHandle>,
 ) -> Result<(), IpcError> {
-    let failed = lock(&player.player).failed_stream();
-    match failed {
-        Some((video, row)) => play_stream(&app, &player, video, row),
+    match player.retry_stream(&app)? {
+        Some((video, pending)) => {
+            resolve_in_background(&app, pending, video);
+            Ok(())
+        }
         None => command(&player, &app, |p| Ok(p.toggle_play())),
     }
 }
@@ -530,6 +552,7 @@ mod tests {
             (PlaybackStatus::Idle, "idle"),
             (PlaybackStatus::Loading, "loading"),
             (PlaybackStatus::Paused, "paused"),
+            (PlaybackStatus::Reconnecting, "reconnecting"),
             (PlaybackStatus::Ended, "ended"),
             (PlaybackStatus::Error, "error"),
         ] {

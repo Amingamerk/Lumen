@@ -15,6 +15,8 @@ pub enum Media {
     Stream {
         url: String,
         headers: Vec<(String, String)>,
+        /// Unix seconds after which the URL stops working, if it says.
+        expires_at: Option<u64>,
     },
 }
 

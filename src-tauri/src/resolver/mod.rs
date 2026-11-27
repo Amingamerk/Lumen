@@ -18,6 +18,8 @@ use std::time::Duration;
 use args::{CLIENTS, Paths, watch_url, ytdlp_args};
 use jar::CookieJarFile;
 pub use jar::default_dir as jar_dir;
+#[cfg(test)]
+pub use process::ProcessOutput;
 pub use process::{Sidecars, YtDlp};
 use stream::{MAX_WAIT_MS, StreamInfo};
 
@@ -72,6 +74,21 @@ pub enum ResolveError {
 }
 
 impl ResolveError {
+    /// Whether asking again for the same song could end better. A refusal, a
+    /// block or a missing song would not.
+    pub fn worth_retrying(self) -> bool {
+        matches!(
+            self,
+            Self::CookieFile
+                | Self::Spawn
+                | Self::TimedOut
+                | Self::NoFormat
+                | Self::Failed
+                | Self::UnexpectedOutput
+                | Self::UnexpectedHost
+        )
+    }
+
     /// What a run that ended this way means to the gate.
     fn verdict(self) -> Verdict {
         match self {

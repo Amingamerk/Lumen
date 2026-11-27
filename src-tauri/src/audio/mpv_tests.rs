@@ -274,6 +274,7 @@ fn a_stream_gets_its_headers_and_a_failure_names_no_url() {
             ("Accept".to_owned(), "audio/webm, audio/mp4".to_owned()),
             ("X-Marker".to_owned(), MARKER.to_owned()),
         ],
+        expires_at: None,
     };
 
     engine.load(&stream, Duration::ZERO).unwrap();
@@ -302,6 +303,7 @@ fn refuses_headers_that_could_smuggle_in_more_and_samples() {
         let stream = Media::Stream {
             url: "http://127.0.0.1:1/a".to_owned(),
             headers: vec![(name.to_owned(), value.to_owned())],
+            expires_at: None,
         };
         assert_eq!(
             engine.load(&stream, Duration::ZERO),

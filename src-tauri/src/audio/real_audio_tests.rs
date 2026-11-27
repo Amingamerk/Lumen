@@ -39,6 +39,7 @@ fn stream() -> Media {
     Media::Stream {
         url: format!("https://media.invalid/{MARKER}/audio?sig={MARKER}"),
         headers: vec![("Cookie".to_owned(), MARKER.to_owned())],
+        expires_at: None,
     }
 }
 

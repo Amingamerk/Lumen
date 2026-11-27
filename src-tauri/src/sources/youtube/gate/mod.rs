@@ -174,7 +174,8 @@ impl<C: GateClock> Gate<C> {
         self.change(|state| state.pause(reason));
     }
 
-    fn apply(&self, verdict: &Verdict) {
+    /// Counts one outcome.
+    pub(super) fn apply(&self, verdict: &Verdict) {
         let (now, jitter) = (self.clock.wall_ms(), self.clock.jitter());
         self.change(|state| state.apply(verdict, now, jitter));
     }

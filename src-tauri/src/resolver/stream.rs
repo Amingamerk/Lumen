@@ -40,6 +40,7 @@ impl StreamInfo {
         Media::Stream {
             url: self.url.clone(),
             headers: self.headers.clone(),
+            expires_at: self.expires_at,
         }
     }
 }

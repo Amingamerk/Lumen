@@ -3,8 +3,11 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod account;
+#[cfg(debug_assertions)]
+mod break_url;
 pub mod playback;
 pub mod player;
+mod recovery;
 pub mod search;
 pub mod youtube;
 
