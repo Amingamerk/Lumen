@@ -243,8 +243,16 @@
     box-shadow: inset 3px 0 0 var(--color-ember);
   }
 
+  /* Lighter than the notice it sits on. */
   .gate-notice .chip {
     margin-top: 8px;
+    background: var(--color-lit);
+    color: var(--color-ink);
+  }
+
+  .account .gate-notice .chip:hover {
+    background: var(--color-lume-hi);
+    color: var(--color-night);
   }
 
   /* Source tints */
