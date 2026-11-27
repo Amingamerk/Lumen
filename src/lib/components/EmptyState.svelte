@@ -16,7 +16,9 @@
     <Icon size={30} weight="duotone" />
   </div>
   <div class="min-w-0 pt-2">
-    <h2 class="font-display text-ink text-2xl font-semibold tracking-tight text-balance">{title}</h2>
+    <h2 class="font-display text-ink text-2xl font-semibold tracking-tight text-balance break-words">
+      {title}
+    </h2>
     <p class="text-ink-soft mt-2 max-w-[46ch] text-[15px] leading-relaxed text-pretty">
       {@render children()}
     </p>

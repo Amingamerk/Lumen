@@ -1,3 +1,4 @@
+import { describeError } from '../errors';
 import type { Bridge, NavigationState, PlaylistSummary, Route } from '../ipc';
 
 /** A read-only mirror of the state Rust owns. It changes only on what Rust sends. */
@@ -23,7 +24,7 @@ export class AppStore {
       this.playlists = snapshot.playlists;
       this.#apply(snapshot.navigation);
     } catch (error) {
-      this.error = describe(error);
+      this.error = describeError(error);
     }
     return disconnect;
   }
@@ -33,7 +34,7 @@ export class AppStore {
       await this.#bridge.navigate(route);
       this.error = null;
     } catch (error) {
-      this.error = describe(error);
+      this.error = describeError(error);
     }
   }
 
@@ -41,9 +42,4 @@ export class AppStore {
     if (this.navigation && next.revision < this.navigation.revision) return;
     this.navigation = next;
   }
-}
-
-/** Rust commands reject with a string; the Tauri API itself throws errors. */
-function describe(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
