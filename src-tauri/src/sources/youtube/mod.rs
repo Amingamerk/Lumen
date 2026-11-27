@@ -1,19 +1,20 @@
-//! YouTube Music: the signed-in session and where it is kept. Nothing here sends
-//! a request.
+//! YouTube Music: the signed-in session, where it is kept, and the one gate its
+//! requests pass.
 
 mod account;
-#[allow(dead_code)]
 mod auth;
-#[allow(dead_code)]
 mod client;
 mod cookies;
 // Not wired up yet.
 #[allow(dead_code)]
 mod gate;
+// Not wired up yet.
 #[allow(dead_code)]
 mod http;
-mod session;
+// Not wired up yet.
 #[allow(dead_code)]
+mod service;
+mod session;
 mod transport;
 
 pub use account::{Account, AccountStatus, LoginAttempt};

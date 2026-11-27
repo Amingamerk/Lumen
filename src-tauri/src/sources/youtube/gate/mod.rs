@@ -15,9 +15,13 @@ use tokio::sync::watch;
 pub use clock::GateClock;
 #[allow(unused_imports)] // Not wired up yet.
 pub use clock::SystemClock;
+#[cfg(test)]
+pub(crate) use clock::fake::FakeClock;
 use policy::GateState;
 pub use policy::{GateView, PauseReason, Verdict};
 use state_file::StateFile;
+#[cfg(test)]
+pub(crate) use state_file::fake::TempDir;
 
 /// What a run does, which decides its spacing.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,6 +142,11 @@ impl<C: GateClock> Gate<C> {
         Ok(output)
     }
 
+    /// The clock the gate runs on, as Unix milliseconds.
+    pub fn now_ms(&self) -> u64 {
+        self.clock.wall_ms()
+    }
+
     pub fn view(&self) -> GateView {
         self.lock().view(self.clock.wall_ms())
     }
@@ -217,8 +226,6 @@ mod tests {
     use tokio::sync::oneshot;
     use tokio::task::{JoinHandle, yield_now};
 
-    use super::clock::fake::FakeClock;
-    use super::state_file::fake::TempDir;
     use super::*;
 
     const NOW: u64 = 1_700_000_000_000;
