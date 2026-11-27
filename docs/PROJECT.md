@@ -51,12 +51,30 @@ spikes (#4 to #6) idled between 72.9 and 76.6 MB (3-run medians for YouTube Musi
 
 | Peak | Measured | Duration | Required handling |
 |---|---|---|---|
-| `yt-dlp` + Deno JS challenge during a resolve | up to about 217 MB for the spike #2 process tree; about 298 MB estimated on top of the playing app | 1 to 2 s | Keep resolves serialized; measure inside the real app in Milestone 2 |
+| `yt-dlp` + Deno JS challenge during a resolve | up to about 217 MB for the spike #2 process tree; about 298 MB estimated on top of the playing app | 1 to 2 s | Keep resolves serialized; measured inside the real app in Milestone 2 (below) |
 | Third-party login window open | 178.6 MB (SoundCloud sign-in, an earlier reading 188.3 MB); 203.9 MB (Google sign-in, one reading, DevTools port on) | while open | Destroy the login window as soon as the session is captured; re-measure that the total returns to <= 100 MB |
 
 After closing the SoundCloud login window the total read 157.7 MB at 20 s (earlier build) and 82.4 MB at
 120 s. The return was not measured for YouTube Music or Spotify, and the Spotify login window was not
 measured while open.
+
+**Measured in the app (Milestone 2, 2026-11-27, release build):** 97.7 MB idle on Home and 129.5 MB playing
+with the 5,000-row playlist open (3-run medians): both within budget. CPU while playing minimized: 0.11 to
+0.26 % of the machine. Five real resolves peaked at 387.1 to 415.3 MB for 5.2 to 5.5 s, and Deno started on
+each. The YouTube Music login window (signed-out page) peaked at 140.3 to 146.0 MB; after closing it, two of
+three launches were back to 100 MB within 23 s and one stayed at 101.0 MB past 120 s. Idle after playback
+ended read 109.2, 127.9 and 128.3 MB. Full numbers: [ram-baseline.md](ram-baseline.md).
+
+Owner decisions (Amin), recorded as given:
+
+> Resolve peak (387-407 MB for ~5.5 s): accepted as a documented exception for M2 — transient, serialized, one
+> resolve at a time. Follow-up ticket #78 (Milestone 4) tries to cut it.
+
+> Idle after playback ended (109.2 MB, one reading): accepted by Amin as is.
+
+The two later idle-after readings and the 415.3 MB resolve fall outside the figures these decisions name.
+"Resolve while another track plays" cannot happen in Milestone 2, because selecting a song stops playback;
+Milestone 4 re-measures it ([#78](https://github.com/Amingamerk/Lumen/issues/78)).
 
 Measure at the end of every milestone. If a feature breaks the budget, fix it before moving on.
 
@@ -363,7 +381,7 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 |---|---|
 | YouTube changes break stream extraction, or needs PO tokens / SABR | yt-dlp as primary with pinned version and auto-update, bundled Deno + yt-dlp-ejs, swappable resolver backends |
 | Stream URLs expire mid-play | Store expiry, pre-resolve next 1-2 tracks, re-resolve on 403 or stall |
-| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (serialize, measure in Milestone 2) and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
+| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (about 400 MB in Milestone 2, serialized, exception until #78), idle after playback above 100 MB, and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
 | SoundCloud `client_id` rotates, new official API credentials need a paid plan | Scrape and re-scrape automatically on 401/403 (once, then retry once), add retry on the stream-URL step; SoundCloud is last in the order |
 | SoundCloud Google sign-in popup does not open in WebView2 | Email/password sign-in works; Milestone 7 handles OAuth popups or guides to email/password |
 | Spotify web token flow changes again (TOTP, `client-token`, Pathfinder query hash) | Worked on 2026-11-26 (TOTP v61). Metadata only so playback never depends on it; isolate in one module; manual re-login |

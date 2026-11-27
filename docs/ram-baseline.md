@@ -2,6 +2,220 @@
 
 Measured with [`scripts/measure-ram.ps1`](../scripts/measure-ram.ps1) (summed `WorkingSetPrivate` across the app and every descendant process). MB means 1,048,576 bytes.
 
+## Milestone 2 (YouTube Music sign-in, search, stream resolving, playback)
+
+Measured 2026-11-27 on the release build of `ab13adf` (`chore/68-m2-ram-baseline`, which adds only the
+sampling mode and documents on top of it), signed in to YouTube Music, with
+[`scripts/measure-ram.ps1`](../scripts/measure-ram.ps1).
+
+### Summary and verdict
+
+**The two budget scenarios pass on 3-run medians: 97.7 MB idle on Home (budget 100 MB) and 129.5 MB playing
+with the 5,000-row playlist open (budget 150 MB).** Resolving a stream is far over budget and is a documented
+exception. Idle after playback ended and one login-window return are also over 100 MB, see below.
+
+| Scenario | Run 1 | Run 2 | Run 3 | Median | Limit | Verdict |
+|---|---|---|---|---|---|---|
+| Idle, Home (30 s after launch) | 98.7 MB | 97.1 MB | 97.7 MB | **97.7 MB** | 100 MB | pass (2.3 MB headroom) |
+| 5,000-row playlist, nothing playing (30 s) | 99.5 MB | 99.6 MB | 101.2 MB | **99.6 MB** | 150 MB | pass |
+| Steady playback, 5,000-row playlist open (30 s) | 132.0 MB | 127.8 MB | 129.5 MB | **129.5 MB** | 150 MB | pass (20.5 MB headroom) |
+| Steady playback, sampled peak over the next 30 s | 134.2 MB | 130.3 MB | 132.7 MB | **132.7 MB** | 150 MB | pass, 0 ms above |
+| Idle, Home, after playback ended (30 s) | 109.2 MB | 127.9 MB | 128.3 MB | **127.9 MB** | 100 MB | **over**, see decision 2 |
+| Login window open, sampled peak | 146.0 MB | 143.8 MB | 140.3 MB | **143.8 MB** | transient | recorded |
+| CPU, playing, minimized, 60 s (share of 12 threads) | 0.264 % | 0.228 % | 0.111 % | **0.228 %** | 1-2 % | pass |
+| Resolve peak (5 resolves) | 387.1 to 415.3 MB | | | **397.4 MB** | 150 MB | **over**, documented exception |
+
+### Owner decisions (Amin)
+
+Recorded as given:
+
+> Resolve peak (387-407 MB for ~5.5 s): accepted as a documented exception for M2 — transient, serialized, one
+> resolve at a time. Follow-up ticket #78 (Milestone 4) tries to cut it.
+
+> Idle after playback ended (109.2 MB, one reading): accepted by Amin as is.
+
+**Readings taken after those decisions fall outside the figures they name.** Two later launches read 127.9 and
+128.3 MB idle after playback ended (median of all three 127.9 MB, not 109.2 MB). A later resolve peaked at
+415.3 MB (above the 387-407 MB range). The decisions above have not been restated for these figures.
+
+**"Resolve while another track plays" cannot happen in Milestone 2**: selecting a song stops playback before
+the new stream is resolved, so no resolve overlaps audio. The resolves below were sampled with nothing
+playing, or selected while a track was playing (which then stopped). Milestone 4 adds pre-resolving and
+re-measures this ([#78](https://github.com/Amingamerk/Lumen/issues/78)).
+
+### Resolve peaks
+
+Whole-tree totals, sampled for 35 s around each selection (mean interval 259 to 261 ms, worst 278 ms). A peak
+shorter than the interval can be missed, so these are lower bounds. 5 of the 681 samples lacked a
+counter for a process that was exiting.
+
+| Resolve | Launch | yt-dlp cache | State at selection | Peak | Time > 150 MB | yt-dlp seen for | Deno seen for | Selection to playing |
+|---|---|---|---|---|---|---|---|---|
+| R1 | 1 | cold | nothing playing | 387.1 MB | 5.4 s | 6.4 s | 3.1 s | 11.3 s |
+| R2 | 1 | warm | a track playing | 397.4 MB | 5.2 s | 5.9 s | 3.1 s | 10.2 s |
+| R3 | 1 | cold | a track playing | 406.7 MB | 5.5 s | 6.2 s | 3.4 s | 11.0 s |
+| R4 | 2 | warm | nothing playing | 415.3 MB | 5.2 s | 6.8 s | 3.4 s | 11.8 s |
+| R5 | 3 | warm | nothing playing | 391.6 MB | 5.2 s | 6.2 s | 3.1 s | 11.3 s |
+
+- Deno started on every resolve, also with a warm cache.
+- "Selection to playing" includes UI Automation polling, so it overstates the latency.
+- Cold means the app's `yt-dlp-cache` folder was moved away first; it held 2 files again after each resolve.
+- Resolves were serialized and spaced by the request gate; no two ran at once.
+- Milestone 0 estimated about 298 MB for 1 to 2 s. In the app it is about 400 MB for about 5 s.
+
+Processes at each peak (MB):
+
+| Process | Role | R1 | R2 | R3 | R4 | R5 | Median |
+|---|---|---|---|---|---|---|---|
+| `deno.exe` | resolver sidecar | 188.6 | 193.5 | 201.5 | 215.4 | 192.1 | 193.5 |
+| `yt-dlp.exe` | resolver sidecar (both processes) | 78.3 | 81.3 | 81.4 | 79.2 | 79.4 | 79.4 |
+| `msedgewebview2.exe` | gpu-process | 31.1 | 31.8 | 31.2 | 30.7 | 30.8 | 31.1 |
+| `msedgewebview2.exe` | renderer | 29.8 | 29.1 | 29.9 | 30.9 | 30.7 | 29.9 |
+| `msedgewebview2.exe` | browser | 25.6 | 25.6 | 25.9 | 25.4 | 24.9 | 25.6 |
+| `lumen.exe` | app | 22.6 | 24.9 | 25.6 | 22.6 | 22.6 | 22.6 |
+| `msedgewebview2.exe` | utility, network service | 6.0 | 5.9 | 5.9 | 5.9 | 6.0 | 5.9 |
+| `msedgewebview2.exe` | utility, storage service | 2.7 | 2.7 | 2.7 | 2.7 | 2.7 | 2.7 |
+| `msedgewebview2.exe` | crashpad-handler | 1.8 | 1.8 | 1.7 | 1.8 | 1.7 | 1.8 |
+| `conhost.exe` | console host of the sidecar | 0.8 | 0.8 | 0.8 | 0.8 | 0.8 | 0.8 |
+| **Total** | | **387.1** | **397.4** | **406.7** | **415.3** | **391.6** | **397.4** |
+
+### Idle, Home
+
+| Process | Role | Run 1 | Run 2 | Run 3 | Median |
+|---|---|---|---|---|---|
+| `msedgewebview2.exe` | gpu-process | 27.0 | 26.1 | 24.5 | 26.1 |
+| `msedgewebview2.exe` | browser | 25.9 | 25.3 | 25.2 | 25.3 |
+| `msedgewebview2.exe` | renderer | 23.9 | 23.8 | 26.2 | 23.9 |
+| `lumen.exe` | app | 10.8 | 10.9 | 10.7 | 10.8 |
+| `msedgewebview2.exe` | utility, network service | 6.3 | 6.2 | 6.3 | 6.3 |
+| `msedgewebview2.exe` | utility, storage service | 2.7 | 2.7 | 2.7 | 2.7 |
+| `msedgewebview2.exe` | crashpad-handler | 2.0 | 2.0 | 2.0 | 2.0 |
+| **Total** | | **98.7** | **97.1** | **97.7** | **97.7** |
+
+### 5,000-row playlist, nothing playing
+
+| Process | Role | Run 1 | Run 2 | Run 3 | Median |
+|---|---|---|---|---|---|
+| `msedgewebview2.exe` | gpu-process | 28.3 | 27.8 | 27.7 | 27.8 |
+| `msedgewebview2.exe` | renderer | 24.6 | 25.4 | 27.5 | 25.4 |
+| `msedgewebview2.exe` | browser | 25.0 | 24.9 | 24.4 | 24.9 |
+| `lumen.exe` | app | 11.0 | 11.0 | 10.9 | 11.0 |
+| `msedgewebview2.exe` | utility, network service | 6.1 | 6.1 | 6.2 | 6.1 |
+| `msedgewebview2.exe` | utility, storage service | 2.7 | 2.7 | 2.7 | 2.7 |
+| `msedgewebview2.exe` | crashpad-handler | 1.8 | 1.8 | 1.7 | 1.8 |
+| **Total** | | **99.5** | **99.6** | **101.2** | **99.6** |
+
+### Steady playback with the 5,000-row playlist open
+
+One long YouTube Music track per launch, volume 0, position checked to be advancing. In launch 1 it was the
+third selection of the launch, in launches 2 and 3 the only one.
+
+| Process | Role | Run 1 | Run 2 | Run 3 | Median |
+|---|---|---|---|---|---|
+| `msedgewebview2.exe` | gpu-process | 31.8 | 32.0 | 31.4 | 31.8 |
+| `msedgewebview2.exe` | renderer | 31.2 | 29.1 | 32.2 | 31.2 |
+| `lumen.exe` | app | 32.2 | 30.8 | 31.0 | 31.0 |
+| `msedgewebview2.exe` | browser | 26.5 | 25.4 | 24.7 | 25.4 |
+| `msedgewebview2.exe` | utility, network service | 6.0 | 5.9 | 5.9 | 5.9 |
+| `msedgewebview2.exe` | utility, storage service | 2.7 | 2.8 | 2.7 | 2.7 |
+| `msedgewebview2.exe` | crashpad-handler | 1.7 | 1.7 | 1.7 | 1.7 |
+| **Total** | | **132.0** | **127.8** | **129.5** | **129.5** |
+
+### Idle after playback ended
+
+The seek bar was set to 99 %, the track played to its end, then Home was opened and read 30 s later.
+
+| Process | Role | Run 1 | Run 2 | Run 3 | Median |
+|---|---|---|---|---|---|
+| `msedgewebview2.exe` | renderer | 28.8 | 32.3 | 34.7 | 32.3 |
+| `msedgewebview2.exe` | gpu-process | 30.1 | 32.2 | 31.8 | 31.8 |
+| `msedgewebview2.exe` | browser | 26.0 | 26.3 | 25.6 | 26.0 |
+| `lumen.exe` | app | 15.4 | 26.6 | 25.7 | 25.7 |
+| `msedgewebview2.exe` | utility, network service | 5.2 | 6.0 | 5.9 | 5.9 |
+| `msedgewebview2.exe` | utility, storage service | 2.5 | 2.9 | 2.7 | 2.7 |
+| `msedgewebview2.exe` | crashpad-handler | 1.2 | 1.7 | 1.7 | 1.7 |
+| **Total** | | **109.2** | **127.9** | **128.3** | **127.9** |
+
+Against the idle readings of the same launches this is +10.5, +30.8 and +30.6 MB. In launches 2 and 3
+`lumen.exe` stayed about 15 MB above its idle size, in launch 1 about 5 MB; the rest is mostly the renderer and
+GPU process. The cause of the difference between launches was not investigated.
+
+### CPU while playing, minimized
+
+CPU time (kernel + user) of every process in the tree over 60 s, on a 12-thread i7-8700.
+
+| Launch | CPU seconds | Share of the machine | Share of one core | `lumen.exe` | WebView2 |
+|---|---|---|---|---|---|
+| 1 | 1.906 | 0.264 % | 3.17 % | 1.516 s | 0.390 s |
+| 2 | 1.641 | 0.228 % | 2.73 % | 1.344 s | 0.297 s |
+| 3 | 0.797 | 0.111 % | 1.33 % | 0.484 s | 0.313 s |
+
+The 1-2 % target is read as share of the whole machine (what Task Manager shows). Measured against one core,
+two of the three launches would be above 2 %.
+
+### Login window
+
+Opened from the connected account with "Sign in again", left for 30 s, then closed with `WM_CLOSE`. The window
+showed what Lumen opens first, an InPrivate `music.youtube.com` that is not signed in. **The Google sign-in
+form and a completed sign-in were not measured.** The stored session was untouched and the account still showed
+as connected afterwards. Three fresh launches, one sampling run each (mean interval 258 to 259 ms, worst
+880 ms in launch 1 and at most 314 ms otherwise).
+
+| Reading | Launch 1 | Launch 2 | Launch 3 |
+|---|---|---|---|
+| Before opening (first sample) | 99.9 MB | 103.0 MB | 100.1 MB |
+| Peak while open | 146.0 MB | 143.8 MB | 140.3 MB |
+| Last sample while open | 137.8 MB | 137.1 MB | 132.2 MB |
+| 20 s after close | 102.8 MB | 100.5 MB | 99.2 MB |
+| 60 s after close | 101.3 MB | 98.9 MB | 96.4 MB |
+| 120 s after close | 101.0 MB | 98.6 MB | 96.2 MB |
+| First reading <= 100 MB after close | **none in 132 s** | 22.9 s | 7.5 s |
+
+Two of three launches were back to 100 MB or less well within the 120 s limit. Launch 1 stayed at 101.0 MB,
+1.1 MB above its own first reading. In every launch a short-lived eighth process (not identified) appeared for
+under a second about 90 s into the sampling and lifted the total to as much as 112.6 MB.
+
+The readings before opening (96.9 to 105.0 MB across the 8 s before the click) are higher than the idle table.
+These launches had already been queried over UI Automation at that point and the idle table had not, which may
+be the reason; that was not tested.
+
+Processes at each peak (MB):
+
+| Process | Role | Run 1 | Run 2 | Run 3 | Median |
+|---|---|---|---|---|---|
+| `msedgewebview2.exe` | renderer | 58.2 | 58.7 | 54.4 | 58.2 |
+| `msedgewebview2.exe` | gpu-process | 32.6 | 30.4 | 30.8 | 30.8 |
+| `msedgewebview2.exe` | browser | 30.8 | 30.7 | 30.9 | 30.8 |
+| `lumen.exe` | app | 11.3 | 11.1 | 11.0 | 11.1 |
+| `msedgewebview2.exe` | utility, network service | 8.1 | 8.0 | 8.2 | 8.1 |
+| `msedgewebview2.exe` | utility, storage service | 2.9 | 2.9 | 2.9 | 2.9 |
+| `msedgewebview2.exe` | crashpad-handler | 2.0 | 2.0 | 2.0 | 2.0 |
+| **Total** | | **146.0** | **143.8** | **140.3** | **143.8** |
+
+### Milestone 2 method notes
+
+- Release build (`pnpm tauri build --no-bundle`), no DevTools port. The app was driven over Windows UI
+  Automation; search was submitted by posting Enter to the web view, which needs the window in the foreground.
+- Single readings use `Win32_PerfFormattedData_PerfProc_Process`. Peaks use the new sampling mode,
+  `-SampleSeconds`, which reads `WorkingSetPrivate` from `Win32_PerfRawData_PerfProc_Process` and reports the
+  peak total, the processes at the peak, the time above `-ThresholdMB`, the achieved interval and when each
+  process was seen. Its tests: `pwsh -File scripts/measure-ram.test.ps1`.
+- Order in each launch: idle 30 s, playlist 30 s, volume 0, search, resolve(s), playlist, playing 30 s, sample
+  30 s, minimize, 10 s, CPU over 60 s, restore, seek to 99 %, wait for the end, Home, 30 s. Every launch was
+  closed and left no `lumen`, `yt-dlp` or `deno` process.
+- Launches 1 to 3 are the three that ran the whole order. Earlier launches that stopped at the search step read
+  95.1, 94.3 and 95.5 MB idle and 97.5, 97.4 and 99.3 MB with the playlist; they are not in the medians.
+- Run command, once the app is open: `pwsh -File scripts/measure-ram.ps1 -ProcessName lumen`, or add
+  `-WaitSeconds 0 -SampleSeconds 35` for a peak.
+
+### Milestone 2 machine, toolchain and build
+
+Same machine as Milestone 1 (Windows 11 Home 26300, i7-8700, 15.9 GB, RTX 5060 driver 32.0.16.2140, WebView2
+158.0.4370.45, Rust 1.100.0, Node 24.14.1, pnpm 12.23.0). Sidecars: yt-dlp 2026.11.23, Deno 2.9.8.
+`libmpv-2.dll` 103,013,888 bytes. Executable 7.8 MB (8,153,088 bytes).
+
+---
+
 ## Milestone 1 (app shell, static catalog, virtualized playlist, player bar)
 
 Measured 2026-11-27 on the release build of [`src-tauri/target/release/lumen.exe`](../src-tauri/Cargo.toml) (`chore/43-m1-ram-baseline`).
