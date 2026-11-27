@@ -43,12 +43,14 @@ A milestone is done when it builds, works in the real app, and RAM is within bud
 - Rust: `cargo clippy` clean, `thiserror` for module errors, `anyhow` at the top level.
 - Use the `rust-analyzer-lsp` plugin for Rust code navigation and diagnostics.
 - Backend and CSV changes start with a failing test.
-- Run typecheck and both test suites (Rust and frontend) before reporting a step done.
-- After each step: run the app, check it works, check RAM.
+- Run typecheck and both test suites (Rust and frontend) before reporting a step done, each under a time limit with trimmed output (`timeout 20m cargo test -q 2>&1 | tail -n 40`; full list in [docs/agents/workflow.md](docs/agents/workflow.md)).
+- After each step: run the app, check it works, check RAM. Close the app afterwards; a running `lumen.exe` blocks the next build.
 
 ## Workflow
 
-- Show the diff and ask before every commit, push, PR, merge and release.
+- Feature-branch commits, pushes and ticket PRs into `dev` need no approval; show the diff in the PR.
+- Every merge (ticket PR into `dev`, promotion into `main`) and every release needs Amin's explicit OK for that PR. The `pr-merger` agent runs only after that OK.
+- Ticket work happens in a worktree that starts with `git fetch origin && git checkout -B <type>/<issue#>-short-name origin/dev`. Setup, command time limits, context hygiene and teardown: [docs/agents/workflow.md](docs/agents/workflow.md).
 - No AI credit anywhere: no co-author trailers, no "generated with" lines in commits, PRs or releases.
 
 ## Repo layout
@@ -93,6 +95,10 @@ Only create a folder when the first file for it exists. Keep `docs/PROJECT.md` s
 - Tickets follow the issue template: What to build, Acceptance, Blocked by. Do not start a ticket whose blockers are open.
 
 ## Agent skills
+
+### Agent workflow
+
+Worktree setup, approvals, time limits on long commands, saving context and teardown: `docs/agents/workflow.md`. The agents in `.claude/agents/` follow it.
 
 ### Issue tracker
 

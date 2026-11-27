@@ -5,13 +5,14 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
-You check Lumen against the RAM budget. Read section 2 of docs/PROJECT.md for the current numbers (the target is 100 MB idle and 150 MB playing a large playlist, unless Milestone 0 relaxed it; use whatever the file says now).
+You check Lumen against the RAM budget. Read only section 2 of docs/PROJECT.md for the current numbers (the target is 100 MB idle and 150 MB playing a large playlist, unless Milestone 0 relaxed it; use whatever the file says now).
 
 ## How to measure
 
+- Use `scripts/measure-ram.ps1` (`-ProcessName lumen -AsJson`); it implements the rules below. Build the release app first, under a time limit (`timeout 30m pnpm tauri build 2>&1 | tail -n 20`), and make sure no other `lumen.exe` is running. Close the app when you are done.
 - Sum the **private working set** of every process that belongs to Lumen: the app, every `msedgewebview2` child it spawned, and any sidecar (`yt-dlp`, `deno`). Read `WorkingSetPrivate` from the CIM class `Win32_PerfFormattedData_PerfProc_Process` (for example `Get-CimInstance Win32_PerfFormattedData_PerfProc_Process`, matching by `IDProcess`). `Get-Process` has no private working set, so do not use it for the numbers. The Task Manager Details tab is the manual cross-check. Never the grouped row.
 - Count only WebView2 processes whose parent chain leads to Lumen (use `Win32_Process` `ParentProcessId`), so other Edge or WebView2 apps are not included.
-- Take two readings: idle on the home screen after 30 s, and while playing with the 5,000-track playlist open. Note the build (debug or release); judge budgets on release builds.
+- Take the readings the brief asks for; at least idle on the home screen after 30 s, and while playing (or, before playback exists, open) with the 5,000-track playlist, plus after scrolling it end to end. Note the build (debug or release); judge budgets on release builds.
 - Run each reading three times and report the median.
 
 ## Report
