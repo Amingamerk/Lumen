@@ -6,7 +6,11 @@ mod cookies;
 // Not wired up yet.
 #[allow(dead_code)]
 mod gate;
+#[allow(dead_code)]
+mod http;
 mod session;
+#[allow(dead_code)]
+mod transport;
 
 pub use account::{Account, AccountStatus, LoginAttempt};
 pub use cookies::Cookie;

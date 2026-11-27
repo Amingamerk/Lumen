@@ -21,12 +21,14 @@ httpdate = "1"
 keyring-core = "1"
 # libmpv-2.dll comes from scripts/fetch-pinned-binaries.ps1; build.rs links it.
 libmpv2 = { version = "7", default-features = false }
+# The Windows TLS stack; no cookie store, system proxy or retries of its own.
+reqwest = { version = "0.13", default-features = false, features = ["gzip", "http2", "native-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["rt", "sync", "time"] }
 uuid = { version = "1", features = ["serde"] }
 windows-native-keyring-store = "1"
 
