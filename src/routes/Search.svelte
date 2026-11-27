@@ -12,9 +12,14 @@
     catalog: CatalogStore;
     onopen: (id: string) => void;
     onplay: (trackId: string) => void;
+    /** Ctrl+F asked for the search box. */
+    focusWanted: boolean;
+    onfocused: () => void;
   }
 
-  let { catalog, onopen, onplay }: Props = $props();
+  let { catalog, onopen, onplay, focusWanted, onfocused }: Props = $props();
+
+  let box = $state<HTMLInputElement>();
 
   const chips: { value: SourceFilter; label: string }[] = [
     { value: 'all', label: 'All' },
@@ -39,6 +44,13 @@
 
   onMount(() => void catalog.openSearch());
 
+  $effect(() => {
+    if (!focusWanted || !box) return;
+    box.focus();
+    box.select();
+    onfocused();
+  });
+
   function ask(next: { query: string; filter: SourceFilter }) {
     draft = next;
     void catalog.runSearch(next.query, next.filter);
@@ -52,6 +64,7 @@
     <div class="search-field">
       <MagnifyingGlassIcon size={20} aria-hidden="true" />
       <input
+        bind:this={box}
         type="search"
         name="query"
         aria-label="Search tracks, albums and playlists"

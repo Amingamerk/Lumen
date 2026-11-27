@@ -6,6 +6,7 @@
   import QueuePanel from './lib/components/QueuePanel.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
   import { tauriBridge } from './lib/ipc';
+  import { shortcutFor } from './lib/shortcuts';
   import { AppStore } from './lib/stores/app.svelte';
   import { CatalogStore } from './lib/stores/catalog.svelte';
   import { PlayerStore } from './lib/stores/player.svelte';
@@ -37,6 +38,36 @@
   /** Cards open albums and playlists alike; Rust decides whether it can. */
   const openCollection = (id: string) => void store.navigate({ view: 'playlist', id });
 
+  /** Set by Ctrl+F until the search box has taken the focus. */
+  let searchFocusWanted = $state(false);
+
+  function onkeydown(event: KeyboardEvent) {
+    const shortcut = shortcutFor(event);
+    if (!shortcut) return;
+    event.preventDefault();
+    switch (shortcut.action) {
+      case 'toggle':
+        void player.togglePlay();
+        break;
+      case 'next':
+        void player.next();
+        break;
+      case 'previous':
+        void player.previous();
+        break;
+      case 'seek':
+        void player.seekBy(shortcut.deltaMs);
+        break;
+      case 'volume':
+        void player.changeVolume(shortcut.delta);
+        break;
+      case 'focus-search':
+        searchFocusWanted = true;
+        if (route?.view !== 'search') void store.navigate({ view: 'search' });
+        break;
+    }
+  }
+
   onMount(() => {
     const connections = [store.connect(), player.connect()];
     return () => {
@@ -44,6 +75,8 @@
     };
   });
 </script>
+
+<svelte:window {onkeydown} />
 
 <a class="skip-link" href="#main">Skip to content</a>
 
@@ -69,6 +102,8 @@
         {catalog}
         onopen={openCollection}
         onplay={(trackId) => void player.playSearchResult(trackId)}
+        focusWanted={searchFocusWanted}
+        onfocused={() => (searchFocusWanted = false)}
       />
     {:else if route?.view === 'library'}
       <Library {catalog} onopen={openCollection} />
