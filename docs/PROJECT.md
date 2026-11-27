@@ -141,7 +141,9 @@ with these services for years (yt-dlp, ytmusicapi, Spotube, spotDL) share the sa
 ordinary user's client and stay quiet.
 
 - **One user, one session per service.** One logged-in session each, no parallel logins, no account sharing,
-  one device identity.
+  one device identity. One accepted exception: signed in, `yt-dlp` keeps its default clients, and two of them
+  send their own User-Agent while extracting; the stream download uses the login one
+  ([ADR 0003](adr/0003-ytdlp-client-set.md)).
 - **Honest, consistent web-client behavior.** Send the headers a real web client sends (user agent, client
   name/version, language), taken from the same WebView2 build that did the login, and keep them stable.
   Keep yt-dlp updated, since it tracks current client versions.
@@ -386,6 +388,7 @@ the spotDL matching code (`spotdl/providers/audio/base.py`, `utils/matching.py`)
 |---|---|---|
 | RAM budget | Keep 100 MB idle / 150 MB playing; transient resolve and login-window peaks are open (section 2) | [ram-baseline.md](ram-baseline.md) |
 | Playback and resolver | yt-dlp + Deno resolves and libmpv plays; yt-dlp behind the `Resolver` trait | [ADR 0001](adr/0001-ytdlp-primary-resolver.md) |
+| yt-dlp client set, signed in | Defaults (Opus 251); `web_music,web` needs a PO token for audio on a free account | [ADR 0003](adr/0003-ytdlp-client-set.md) |
 | YouTube Music login | Works in WebView2; authenticated library call and resolve passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
 | SoundCloud login | Works with email/password; Google popup does not open; likes call passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
 | Spotify login | Works; Pathfinder for liked songs, `spclient` metadata for ISRC, REST answers 429 | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
@@ -395,7 +398,6 @@ the spotDL matching code (`spotdl/providers/audio/base.py`, `utils/matching.py`)
 
 - `souvlaki` quirks with Tauri.
 - Cold start latency.
-- Signed-in resolving with `web_music,web` alone against the `yt-dlp` default clients.
 - Gapless playback through libmpv `playlist-append`.
 - RAM returning to budget after the login window closes for YouTube Music and Spotify.
 - The transient Deno resolve peak inside the real app.
