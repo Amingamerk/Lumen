@@ -5,20 +5,21 @@ mod account;
 mod auth;
 mod client;
 mod cookies;
-// Not wired up yet.
-#[allow(dead_code)]
 mod gate;
-// Not wired up yet.
-#[allow(dead_code)]
 mod http;
-// Not wired up yet.
-#[allow(dead_code)]
 mod service;
 mod session;
 mod transport;
 
 pub use account::{Account, AccountStatus, LoginAttempt};
 pub use cookies::Cookie;
+pub use gate::SystemClock;
+#[cfg(test)]
+pub use gate::{GateView, PauseReason};
+pub use http::HttpTransport;
+#[cfg(test)]
+pub use service::Check;
+pub use service::{ServiceStatus, YouTube};
 pub use session::{ORIGIN, PageIdentity, Session, is_signed_in};
 
 /// The Credential Manager name the session is stored under.

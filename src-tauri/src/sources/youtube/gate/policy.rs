@@ -36,8 +36,14 @@ pub enum PauseReason {
     ExpiryUnsaved,
 }
 
-/// Whether the gate lets requests through.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// Whether the gate lets requests through. The wire shape is mirrored in
+/// `src/lib/ipc.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum GateView {
     Ready,
     CoolingDown { until_ms: u64 },

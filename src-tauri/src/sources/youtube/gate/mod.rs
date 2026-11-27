@@ -10,10 +10,7 @@ use std::path::PathBuf;
 use std::sync::{MutexGuard, PoisonError};
 use std::time::Duration;
 
-use tokio::sync::watch;
-
 pub use clock::GateClock;
-#[allow(unused_imports)] // Not wired up yet.
 pub use clock::SystemClock;
 #[cfg(test)]
 pub(crate) use clock::fake::FakeClock;
@@ -43,6 +40,9 @@ pub enum GateError {
 
 const SPACING: Duration = Duration::from_secs(1);
 const YT_DLP_SPACING: Duration = Duration::from_secs(5);
+/// The longest single wait for a cool-down to end, so a suspended PC or a
+/// changed clock is noticed soon.
+const NAP: Duration = Duration::from_secs(60);
 
 pub struct Gate<C> {
     clock: C,
@@ -51,7 +51,6 @@ pub struct Gate<C> {
     turn: tokio::sync::Mutex<Ends>,
     /// Held briefly, so status and Resume never wait behind a request.
     state: std::sync::Mutex<GateState>,
-    view: watch::Sender<GateView>,
 }
 
 /// When earlier runs ended, in monotonic time.
@@ -96,13 +95,11 @@ impl<C: GateClock> Gate<C> {
     pub fn new(clock: C, path: PathBuf) -> Self {
         let file = StateFile::new(path);
         let state = file.load();
-        let view = watch::Sender::new(state.view(clock.wall_ms()));
         Self {
             clock,
             file,
             turn: Default::default(),
             state: std::sync::Mutex::new(state),
-            view,
         }
     }
 
@@ -147,18 +144,14 @@ impl<C: GateClock> Gate<C> {
         self.clock.wall_ms()
     }
 
+    /// Sleeps towards `until_ms`, for [`NAP`] at most.
+    pub async fn nap_until(&self, until_ms: u64) {
+        let left = Duration::from_millis(until_ms.saturating_sub(self.now_ms()));
+        self.clock.sleep(left.min(NAP)).await;
+    }
+
     pub fn view(&self) -> GateView {
         self.lock().view(self.clock.wall_ms())
-    }
-
-    /// The view as last published.
-    pub fn watch(&self) -> watch::Receiver<GateView> {
-        self.view.subscribe()
-    }
-
-    /// Publishes the view again, once a cool-down has run out.
-    pub fn refresh(&self) {
-        self.publish(&self.lock());
     }
 
     /// Ends a pause, if that can be saved. Sends nothing.
@@ -170,7 +163,6 @@ impl<C: GateClock> Gate<C> {
             Ok(()) => *state = resumed,
             Err(_) => state.paused = Some(PauseReason::StateUnwritable),
         }
-        self.publish(&state);
     }
 
     pub fn pause(&self, reason: PauseReason) {
@@ -191,17 +183,6 @@ impl<C: GateClock> Gate<C> {
         if *state != before && self.file.save(&state).is_err() {
             state.paused = Some(PauseReason::StateUnwritable);
         }
-        self.publish(&state);
-    }
-
-    /// Called with the state lock held, so views arrive in order.
-    fn publish(&self, state: &GateState) {
-        let view = state.view(self.clock.wall_ms());
-        self.view.send_if_modified(|published| {
-            let changed = *published != view;
-            *published = view;
-            changed
-        });
     }
 
     fn check(&self) -> Result<(), GateError> {
@@ -423,7 +404,6 @@ mod tests {
             until_ms: NOW + 60_000,
         };
         assert_eq!(restart().view(), cooling);
-        assert_eq!(*restart().watch().borrow(), cooling);
         assert_eq!(
             run(&restart(), Kind::Api, Verdict::Success).await,
             Err(GateError::CoolingDown)
@@ -447,39 +427,5 @@ mod tests {
         std::fs::remove_dir_all(path(&f.dir)).unwrap();
         f.gate.resume();
         assert_eq!(f.gate.view(), GateView::Ready);
-    }
-
-    #[tokio::test]
-    async fn every_change_of_the_view_is_published() {
-        let f = fixture();
-        let mut views = f.gate.watch();
-        assert_eq!(*views.borrow_and_update(), GateView::Ready);
-        run(&f.gate, Kind::Api, Verdict::Success).await.unwrap();
-        assert!(!views.has_changed().unwrap());
-
-        run(
-            &f.gate,
-            Kind::Api,
-            Verdict::RateLimited { retry_after: None },
-        )
-        .await
-        .unwrap();
-        assert!(matches!(
-            *views.borrow_and_update(),
-            GateView::CoolingDown { .. }
-        ));
-        f.gate.refresh();
-        assert!(!views.has_changed().unwrap());
-        f.clock.advance(60 * SECOND);
-        f.gate.refresh();
-        assert_eq!(*views.borrow_and_update(), GateView::Ready);
-
-        f.gate.pause(PauseReason::ExpiryUnsaved);
-        let paused = GateView::Paused {
-            reason: PauseReason::ExpiryUnsaved,
-        };
-        assert_eq!(*views.borrow_and_update(), paused);
-        f.gate.resume();
-        assert_eq!(*views.borrow_and_update(), GateView::Ready);
     }
 }

@@ -33,12 +33,9 @@ tauri-plugin-single-instance = "2"
 thiserror = "2"
 # The calendar date in the web client's version.
 time = "0.3"
-tokio = { version = "1", features = ["rt", "sync", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 uuid = { version = "1", features = ["serde"] }
 windows-native-keyring-store = "1"
-
-[dev-dependencies]
-tokio = { version = "1", features = ["macros", "rt"] }
 
 # The lean settings the Milestone 0 RAM baseline was measured with, minus
 # `panic = "abort"`: unwinding must stay on so RAII cleanup guards run.

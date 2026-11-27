@@ -5,15 +5,16 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::{Mutex, PoisonError};
 
+use serde::Serialize;
 use serde_json::Value;
 use tokio::sync::watch;
 
-use super::account::{Account, AccountStatus, Generation, Unusable};
+use super::account::{Account, AccountStatus, Generation, LoginAttempt, Unusable};
 use super::client::{self, Fault};
 use super::gate::{Gate, GateClock, GateError, GateView, Kind, PauseReason, Verdict};
 use super::session::Session;
 use super::transport::{Request, Transport};
-use crate::secrets::SecretStore;
+use crate::secrets::{SecretError, SecretStore};
 
 /// Why a call gave nothing. Fixed texts only.
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
@@ -58,7 +59,8 @@ impl From<Unusable> for ServiceError {
 }
 
 /// Whether the stored session has been seen to work. Kept in memory only.
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Check {
     #[default]
     Unchecked,
@@ -68,8 +70,9 @@ pub enum Check {
     Unexpected,
 }
 
-/// What the UI is told, besides the account status.
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// What the UI is told, besides the account status. Mirrored in
+/// `src/lib/ipc.ts`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
 pub struct ServiceStatus {
     /// Rises with every change, so an older answer can be dropped.
     pub revision: u64,
@@ -126,6 +129,26 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
         &self.account
     }
 
+    /// Stores the session a login captured, as [`Account::complete_login`]
+    /// does, and publishes the status. Sends nothing.
+    pub fn complete_login(
+        &self,
+        attempt: LoginAttempt,
+        session: &Session,
+        announce: impl FnOnce(AccountStatus),
+    ) -> Result<bool, SecretError> {
+        let stored = self.account.complete_login(attempt, session, announce);
+        self.refresh();
+        stored
+    }
+
+    /// Removes the session and publishes the status. Sends nothing.
+    pub fn disconnect(&self, announce: impl FnOnce(AccountStatus)) -> Result<(), SecretError> {
+        let cleared = self.account.disconnect(announce);
+        self.refresh();
+        cleared
+    }
+
     /// The status as it is now.
     pub fn status(&self) -> ServiceStatus {
         self.refresh();
@@ -158,6 +181,32 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
             };
             true
         });
+    }
+
+    /// Hands `emit` every status published from now on, for as long as the
+    /// service lives. It also publishes the end of a cool-down, so the UI needs
+    /// no timer.
+    pub async fn forward(&self, mut emit: impl FnMut(ServiceStatus)) {
+        let mut statuses = self.watch();
+        loop {
+            // Read into a value: holding the borrow would block `refresh`.
+            let gate = statuses.borrow().gate;
+            let changed = match gate {
+                GateView::CoolingDown { until_ms } => tokio::select! {
+                    changed = statuses.changed() => changed,
+                    () = self.gate.nap_until(until_ms) => {
+                        self.refresh();
+                        continue;
+                    }
+                },
+                _ => statuses.changed().await,
+            };
+            if changed.is_err() {
+                return;
+            }
+            let status = *statuses.borrow_and_update();
+            emit(status);
+        }
     }
 
     /// Ends a pause, if that can be saved. Sends nothing.
@@ -263,8 +312,10 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
+    use std::time::Duration;
 
     use serde_json::json;
+    use tokio::sync::mpsc;
     use tokio::task::yield_now;
 
     use super::*;
@@ -332,10 +383,123 @@ mod tests {
     fn sign_in(service: &Service) {
         let session = Session::capture(music_page(), signed_in_cookies()).unwrap();
         let attempt = service.account().begin_login();
-        service
-            .account()
-            .complete_login(attempt, &session, |_| {})
-            .unwrap();
+        service.complete_login(attempt, &session, |_| {}).unwrap();
+    }
+
+    /// Runs the forwarder and hands back what it passes on.
+    fn forwarded(f: &Fixture) -> mpsc::UnboundedReceiver<ServiceStatus> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        let service = f.service.clone();
+        tokio::spawn(async move {
+            service
+                .forward(move |status| {
+                    let _ = sender.send(status);
+                })
+                .await;
+        });
+        receiver
+    }
+
+    fn limited(retry_after: &str) -> Result<Response, TransportError> {
+        Ok(Response {
+            status: 429,
+            retry_after: Some(retry_after.to_owned()),
+            ..Response::default()
+        })
+    }
+
+    #[tokio::test]
+    async fn a_login_or_a_disconnect_is_published_without_being_asked_for() {
+        let f = fixture();
+        let statuses = f.service.watch();
+        let published = || statuses.borrow().check;
+        f.transport.answer(page("1"));
+        f.service.verify().await.unwrap();
+        assert_eq!(published(), Check::Verified);
+
+        sign_in(&f.service);
+        assert_eq!(published(), Check::Unchecked);
+
+        f.clock.advance(Duration::from_secs(1));
+        f.transport.answer(page("1"));
+        f.service.verify().await.unwrap();
+        f.service.disconnect(|_| {}).unwrap();
+
+        assert_eq!(published(), Check::Unchecked);
+        assert_eq!(
+            f.service.account().status(),
+            Ok(AccountStatus::Disconnected)
+        );
+        assert_eq!(f.transport.sent(), 2);
+    }
+
+    #[tokio::test]
+    async fn resuming_publishes_the_gate_without_being_asked() {
+        let f = fixture();
+        f.transport.answer(reply(429, "unusual traffic"));
+        assert_eq!(f.service.verify().await, Err(ServiceError::Blocked));
+        let statuses = f.service.watch();
+
+        f.service.resume();
+
+        let cooling = GateView::CoolingDown {
+            until_ms: NOW + 60_000,
+        };
+        assert_eq!(statuses.borrow().gate, cooling);
+    }
+
+    #[tokio::test]
+    async fn the_forwarder_passes_on_each_change_once() {
+        let f = fixture();
+        let mut seen = forwarded(&f);
+        settle().await;
+        assert!(seen.try_recv().is_err(), "nothing has changed yet");
+        let answer = f.transport.hold();
+        let verify = spawn_verify(&f);
+        settle().await;
+        assert_eq!(seen.try_recv().unwrap().check, Check::Checking);
+
+        answer.send(page("1")).unwrap();
+        verify.await.unwrap().unwrap();
+        settle().await;
+
+        assert_eq!(seen.try_recv().unwrap().check, Check::Verified);
+        assert!(seen.try_recv().is_err());
+        assert!(f.clock.slept().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_forwarder_publishes_the_end_of_a_new_cool_down() {
+        let f = fixture();
+        let mut seen = forwarded(&f);
+        settle().await;
+        f.transport.answer(limited("30"));
+
+        assert_eq!(f.service.verify().await, Err(ServiceError::RateLimited));
+
+        let cooling = GateView::CoolingDown {
+            until_ms: NOW + 60_000,
+        };
+        assert_eq!(seen.recv().await.unwrap().gate, cooling);
+        assert_eq!(seen.recv().await.unwrap().gate, GateView::Ready);
+        assert_eq!(f.transport.sent(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_cool_down_already_running_is_waited_out_a_minute_at_a_time() {
+        let f = fixture();
+        f.transport.answer(limited("90"));
+        assert_eq!(f.service.verify().await, Err(ServiceError::RateLimited));
+
+        let mut seen = forwarded(&f);
+
+        assert_eq!(seen.recv().await.unwrap().gate, GateView::Ready);
+        // Short naps notice a suspended PC or a changed clock.
+        let naps = [60, 30].map(Duration::from_secs);
+        assert_eq!(f.clock.slept(), naps);
+        settle().await;
+        assert!(seen.try_recv().is_err());
+        assert_eq!(f.transport.sent(), 1);
     }
 
     fn reply(status: u16, body: impl ToString) -> Result<Response, TransportError> {
@@ -440,10 +604,7 @@ mod tests {
             cookie.expires = Some(1);
         }
         let attempt = f.service.account().begin_login();
-        f.service
-            .account()
-            .complete_login(attempt, &session, |_| {})
-            .unwrap();
+        f.service.complete_login(attempt, &session, |_| {}).unwrap();
 
         assert_eq!(f.service.verify().await, Err(ServiceError::Rejected));
 
