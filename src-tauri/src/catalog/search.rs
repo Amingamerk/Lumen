@@ -25,12 +25,32 @@ impl SourceFilter {
     }
 }
 
+/// Where a search stands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SearchStatus {
+    /// Nothing has been asked.
+    #[default]
+    Idle,
+    Loading,
+    Results,
+    NoResults,
+    Offline,
+    Unexpected,
+    /// The account or the gate lets nothing through; their stores say why.
+    Blocked,
+}
+
 /// A search and what it found.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SearchView {
+    /// Grows with every change, so the UI can drop a snapshot that arrives
+    /// after a newer event.
+    pub revision: u64,
     /// The query exactly as it was typed.
     pub query: String,
     pub filter: SourceFilter,
+    pub status: SearchStatus,
     pub tracks: Vec<TrackRow>,
     pub collections: Vec<CollectionSummary>,
 }
@@ -41,7 +61,7 @@ impl Catalog {
     pub fn search(&self, query: &str, filter: SourceFilter) -> SearchView {
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 
-        let tracks = self.tracks[..self.searchable]
+        let tracks: Vec<TrackRow> = self.tracks[..self.searchable]
             .iter()
             .filter(|track| track.sources.iter().any(|r| filter.accepts(r.kind)))
             .filter(|track| {
@@ -69,12 +89,20 @@ impl Catalog {
                     && matches(&words, [album.title.as_str()].into_iter().chain(artists))
             })
             .map(CollectionSummary::from);
+        let collections: Vec<CollectionSummary> = playlists.chain(albums).collect();
+        let status = if tracks.is_empty() && collections.is_empty() {
+            SearchStatus::NoResults
+        } else {
+            SearchStatus::Results
+        };
 
         SearchView {
+            revision: 0,
             query: query.to_owned(),
             filter,
+            status,
             tracks,
-            collections: playlists.chain(albums).collect(),
+            collections,
         }
     }
 }

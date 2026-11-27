@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod account;
 pub mod player;
+pub mod search;
 pub mod youtube;
 
 use serde::{Serialize, Serializer};
@@ -46,6 +47,7 @@ pub trait EventSink {
     fn navigation_changed(&self, navigation: &NavigationState) -> Result<(), IpcError>;
     fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError>;
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError>;
+    fn search_changed(&self, view: &SearchView) -> Result<(), IpcError>;
 }
 
 impl<R: Runtime> EventSink for AppHandle<R> {
@@ -59,6 +61,10 @@ impl<R: Runtime> EventSink for AppHandle<R> {
 
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
         Ok(self.emit(player::PLAYER_POSITION, position)?)
+    }
+
+    fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
+        Ok(self.emit_to(MAIN_WINDOW, search::SEARCH_CHANGED, view)?)
     }
 }
 
@@ -175,6 +181,7 @@ mod tests {
         pub(super) navigations: RefCell<Vec<NavigationState>>,
         pub(super) states: RefCell<Vec<PlayerState>>,
         pub(super) positions: RefCell<Vec<PlayerPosition>>,
+        pub(super) searches: RefCell<Vec<SearchView>>,
     }
 
     impl EventSink for RecordingSink {
@@ -190,6 +197,11 @@ mod tests {
 
         fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
             self.positions.borrow_mut().push(*position);
+            Ok(())
+        }
+
+        fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
+            self.searches.borrow_mut().push(view.clone());
             Ok(())
         }
     }

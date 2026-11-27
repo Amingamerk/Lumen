@@ -11,7 +11,7 @@ mod search;
 mod slice;
 
 pub use fixtures::LONG_PLAYLIST_ID;
-pub use search::{SearchView, SourceFilter};
+pub use search::{SearchStatus, SearchView, SourceFilter};
 pub use slice::{CollectionDetail, MAX_SLICE, TrackSlice};
 
 /// The service a Track or Collection comes from.

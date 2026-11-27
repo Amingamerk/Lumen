@@ -3,7 +3,7 @@
 mod cache;
 mod parse;
 
-pub use cache::Cache;
+pub use cache::{Cache, key};
 pub use parse::Parsed;
 
 use super::account::Generation;
