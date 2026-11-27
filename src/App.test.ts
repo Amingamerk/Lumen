@@ -24,7 +24,9 @@ describe('app shell', () => {
   it('shows the brand, the three destinations and the player frame', async () => {
     await openApp();
 
-    expect(sidebar().getByText('Lumen')).toBeTruthy();
+    expect(sidebar().getByRole('img', { name: 'Lumen' })).toBeTruthy();
+    // The wordmark is the name; no text repeats it beside the image.
+    expect(sidebar().queryByText('Lumen')).toBeNull();
     for (const name of ['Home', 'Search', 'Library']) {
       expect(sidebar().getByRole('link', { name })).toBeTruthy();
     }
