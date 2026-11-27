@@ -74,3 +74,5 @@ jobs:
         run: pnpm run check
       - if: steps.detect.outputs.present == 'true'
         run: pnpm run test
+      - if: steps.detect.outputs.present == 'true'
+        run: pnpm run build
