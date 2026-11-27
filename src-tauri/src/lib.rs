@@ -5,16 +5,40 @@ mod catalog;
 mod ipc;
 mod queue;
 mod recs;
+mod resolver;
+mod secrets;
+mod sources;
 mod state;
 
+use tauri::{Manager, RunEvent, WindowEvent};
+
 /// Builds the app and runs its event loop until the last window closes.
+///
+/// Only one instance ever runs, so there is one session and one rate limiter. A
+/// second launch focuses the running window and exits.
 pub fn run() -> Result<(), tauri::Error> {
     let args = std::env::args_os()
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned());
+    let play_file = audio::play_file_arg(std::env::args_os().skip(1));
     tauri::Builder::default()
+        // First, so a second launch exits before it sets anything up.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            ipc::focus_main_window(app);
+        }))
+        .on_window_event(|window, event| {
+            // Without the main window the login window would keep Lumen alive.
+            if window.label() == ipc::MAIN_WINDOW && matches!(event, WindowEvent::Destroyed) {
+                // If this fails, the user can still close it by hand.
+                let _ = ipc::account::close_login(window.app_handle());
+            }
+        })
         .manage(ipc::SharedState::new(state::AppState::from_args(args)))
-        .setup(|app| Ok(ipc::player::start(app.handle())?))
+        .setup(move |app| {
+            ipc::youtube::start(app.handle())?;
+            ipc::playback::start(app.handle())?;
+            Ok(ipc::player::start(app.handle(), play_file)?)
+        })
         .invoke_handler(tauri::generate_handler![
             ipc::get_app_state,
             ipc::navigate,
@@ -23,7 +47,8 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::get_collection,
             ipc::get_track_slice,
             ipc::get_search,
-            ipc::search_catalog,
+            ipc::search::submit_search,
+            ipc::search::set_search_filter,
             ipc::toggle_queue,
             ipc::player::get_player_state,
             ipc::player::play_collection,
@@ -37,6 +62,18 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::player::change_volume,
             ipc::player::get_queue,
             ipc::player::move_queue_entry,
+            ipc::account::get_account_status,
+            ipc::account::sign_in,
+            ipc::account::disconnect,
+            ipc::youtube::get_youtube_status,
+            ipc::youtube::resume_youtube,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            if matches!(event, RunEvent::Exit) {
+                ipc::playback::stop(app);
+                ipc::player::stop(app);
+            }
+        });
+    Ok(())
 }

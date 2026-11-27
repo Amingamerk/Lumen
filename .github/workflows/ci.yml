@@ -37,6 +37,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - if: steps.detect.outputs.present == 'true'
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: pinned-binaries-${{ runner.os }}-${{ hashFiles('scripts/pinned-binaries.json') }}
+      - if: steps.detect.outputs.present == 'true'
+        shell: pwsh
+        run: ./scripts/fetch-pinned-binaries.test.ps1
+      - if: steps.detect.outputs.present == 'true'
+        shell: pwsh
+        run: ./scripts/fetch-pinned-binaries.ps1
+      - if: steps.detect.outputs.present == 'true'
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri

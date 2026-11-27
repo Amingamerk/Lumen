@@ -13,6 +13,13 @@
   let clients = $state<Clients>('Default');
   let report = $state<CheckReport | null>(null);
 
+  /** The backend keeps a stream only for a run whose Range request succeeded. */
+  const playable = $derived(
+    report?.resolve && 'Ok' in report.resolve
+      ? [200, 206].includes(report.resolve.Ok.range_status)
+      : false,
+  );
+
   const when = (unixSeconds: number | null) =>
     unixSeconds === null ? 'none' : new Date(unixSeconds * 1000).toLocaleString();
 
@@ -76,6 +83,18 @@
       report = null;
       report = await invoke<CheckReport>('run_check', { trackUrl, clients });
       return '';
+    });
+
+  const playStream = () =>
+    run(async () => {
+      await invoke('play_last_stream');
+      return 'libmpv started the stream and played it for up to 5 s. Did you hear it?';
+    });
+
+  const copyReport = (text: string) =>
+    run(async () => {
+      await navigator.clipboard.writeText(text);
+      return 'Safe report copied.';
     });
 
   onMount(() => {
@@ -208,8 +227,13 @@
             <dt>Format</dt>
             <dd>
               {stream.format_id}, {stream.codec ?? 'unknown codec'},
-              {stream.abr_kbps ?? '?'} kbps, {stream.protocol ?? 'unknown protocol'}
+              {stream.abr_kbps ?? '?'} kbps audio, {stream.tbr_kbps ?? '?'} kbps total,
+              {stream.protocol ?? 'unknown protocol'}
             </dd>
+            <dt>Audio only</dt>
+            <dd>{stream.audio_only ? 'yes' : 'no'} (vcodec {stream.vcodec ?? 'unknown'})</dd>
+            <dt>Deno started</dt>
+            <dd>{stream.deno_started ? 'yes' : 'no'}</dd>
             <dt>available_at</dt>
             <dd>{when(stream.available_at)} (waited {stream.waited_s} s)</dd>
             <dt>Expires</dt>
@@ -221,8 +245,15 @@
             <dt>Warnings</dt>
             <dd>{stream.warnings.join('; ') || 'none known'}</dd>
           </dl>
+          <button onclick={playStream} disabled={busy || !playable}>Play 5 s in libmpv</button>
         {/if}
       {/if}
+
+      <h3>Safe report</h3>
+      <pre>{report.safe_report}</pre>
+      <button onclick={() => copyReport(report?.safe_report ?? '')} disabled={busy}>
+        Copy safe report
+      </button>
     </section>
   {/if}
 </main>
@@ -265,6 +296,10 @@
   }
   .bad {
     color: #ff9a8a;
+  }
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
   dt {
     color: #9aa0aa;

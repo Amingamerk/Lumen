@@ -40,6 +40,8 @@
   },
   "bundle": {
     "active": false,
+    "externalBin": ["binaries/yt-dlp", "binaries/deno"],
+    "resources": { "binaries/libmpv-2.dll": "libmpv-2.dll" },
     "icon": ["icons/icon.ico", "icons/icon.png"]
   }
 }

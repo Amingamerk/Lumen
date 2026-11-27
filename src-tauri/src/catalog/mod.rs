@@ -11,7 +11,7 @@ mod search;
 mod slice;
 
 pub use fixtures::LONG_PLAYLIST_ID;
-pub use search::{SearchView, SourceFilter};
+pub use search::{SearchStatus, SearchView, SourceFilter};
 pub use slice::{CollectionDetail, MAX_SLICE, TrackSlice};
 
 /// The service a Track or Collection comes from.
@@ -150,6 +150,20 @@ impl From<&Album> for CollectionSummary {
             subtitle: album.artists.join(", "),
             source: album.source,
             badge: album.source.badge(),
+        }
+    }
+}
+
+impl TrackRow {
+    /// A row for audio that is not in the catalog: a title and nothing else.
+    pub fn untagged(title: String) -> Self {
+        Self {
+            id: Uuid::nil(),
+            title,
+            artists: Vec::new(),
+            album: None,
+            duration_ms: 0,
+            sources: Vec::new(),
         }
     }
 }

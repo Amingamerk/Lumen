@@ -63,11 +63,12 @@ lumen/
 │  │  ├─ main.rs
 │  │  ├─ ipc/            Tauri commands and event emitters
 │  │  ├─ state.rs        navigation, search and catalog state
+│  │  ├─ secrets.rs      Credential Manager storage, split into chunks
 │  │  ├─ catalog/        domain shapes, static fixtures, views, search, track slices
 │  │  ├─ audio/          libmpv wrapper, playback state
 │  │  ├─ queue/          queue, shuffle, repeat, pre-resolve
-│  │  ├─ sources/        Source trait + youtube, soundcloud, spotify
-│  │  ├─ resolver/       Resolver trait + yt-dlp backend
+│  │  ├─ sources/        youtube (session, safety gate, web client, search); soundcloud, spotify and Source trait later
+│  │  ├─ resolver/       yt-dlp + Deno runs, cookie jar, stream cache (Resolver trait in Milestone 3)
 │  │  ├─ library/        SQLite (rusqlite), migrations
 │  │  ├─ recs/           recommendation engine
 │  │  ├─ art/            thumbnail download, resize, cache

@@ -7,6 +7,7 @@
   import SkipBackIcon from 'phosphor-svelte/lib/SkipBackIcon';
   import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
   import { releasePointerFocus } from '../focus';
+  import type { PlaybackStatus } from '../ipc';
   import type { PlayerStore } from '../stores/player.svelte';
   import CoverArt from './CoverArt.svelte';
   import SeekBar from './SeekBar.svelte';
@@ -20,10 +21,24 @@
 
   let { player, queueOpen, ontogglequeue }: Props = $props();
 
+  /** The statuses the controls alone do not tell apart. */
+  const WORDS: Partial<Record<PlaybackStatus, string>> = {
+    loading: 'Loading…',
+    reconnecting: 'Reconnecting…',
+    ended: 'Ended',
+    error: 'Could not play',
+  };
+
   const current = $derived(player.state?.current ?? null);
   const idle = $derived(current === null);
-  const playing = $derived(player.state?.status === 'playing');
+  const status = $derived(player.state?.status ?? 'idle');
+  /** A stream is on its way: there is nothing to seek in yet. */
+  const waiting = $derived(status === 'loading' || status === 'reconnecting');
+  // While it waits it is about to play, so the button pauses.
+  const playing = $derived(status === 'playing' || waiting);
+  const seekable = $derived(!idle && !waiting && status !== 'error');
   const canNext = $derived(player.state?.canNext ?? false);
+  const canPrevious = $derived(player.state?.canPrevious ?? false);
 
   /** Runs a button's action and gives the keyboard back after a mouse click. */
   function press(event: MouseEvent, action: () => unknown) {
@@ -42,7 +57,21 @@
       </div>
       <div class="min-w-0">
         <p class="truncate text-[15px] font-semibold" title={track.title}>{track.title}</p>
-        <p class="text-ink-faint truncate text-[13px]" title={artists}>{artists}</p>
+        {#if artists}
+          <p class="text-ink-faint truncate text-[13px]" title={artists}>{artists}</p>
+        {/if}
+        <div class="flex items-center gap-2">
+          <p class="text-ink-soft text-[12px]" role="status">{WORDS[status]}</p>
+          {#if status === 'error'}
+            <button
+              type="button"
+              class="retry"
+              onclick={(event) => press(event, () => player.togglePlay())}
+            >
+              Try again
+            </button>
+          {/if}
+        </div>
       </div>
     {:else}
       <div class="art-slot" aria-hidden="true">
@@ -54,12 +83,14 @@
 
   <div class="flex flex-col items-center gap-2">
     <div class="flex items-center gap-4">
+      <!-- aria-disabled here and on Next, so losing one does not throw the focus away. -->
       <button
         type="button"
         class="transport"
         disabled={idle}
+        aria-disabled={!canPrevious}
         aria-label="Previous"
-        onclick={(event) => press(event, () => player.previous())}
+        onclick={(event) => press(event, () => canPrevious && player.previous())}
       >
         <SkipBackIcon size={20} weight="fill" aria-hidden="true" />
       </button>
@@ -76,7 +107,6 @@
           <PlayIcon size={18} weight="fill" aria-hidden="true" />
         {/if}
       </button>
-      <!-- aria-disabled, so reaching the end does not throw the focus away. -->
       <button
         type="button"
         class="transport"
@@ -93,7 +123,7 @@
       <SeekBar
         positionMs={player.positionMs}
         durationMs={player.state?.durationMs ?? 0}
-        disabled={idle}
+        disabled={!seekable}
         onseek={(positionMs) => player.seek(positionMs)}
       />
     {/key}

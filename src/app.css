@@ -200,6 +200,61 @@
     color: var(--color-lume);
   }
 
+  /* The account sits under the playlists. */
+  .account {
+    margin-top: 12px;
+    padding: 14px 12px 2px;
+    border-top: 1px solid var(--color-edge);
+  }
+
+  .account-status {
+    color: var(--color-ink-faint);
+    font-size: 13px;
+  }
+
+  .account-status[data-status='connected'] {
+    color: var(--color-ink);
+  }
+
+  .account-status[data-status='expired'] {
+    color: var(--color-ember);
+  }
+
+  .account .chip {
+    height: 30px;
+    padding-inline: 12px;
+    font-size: 13px;
+  }
+
+  .account-note,
+  .gate-notice {
+    margin-top: 8px;
+    color: var(--color-ink-soft);
+    font-size: 13px;
+    line-height: 1.45;
+    user-select: text;
+  }
+
+  /* A block the user has to wait out or end stands apart. */
+  .gate-notice[data-blocked] {
+    padding: 10px 12px;
+    border-radius: var(--radius-row);
+    background: var(--color-raise);
+    box-shadow: inset 3px 0 0 var(--color-ember);
+  }
+
+  /* Lighter than the notice it sits on. */
+  .gate-notice .chip {
+    margin-top: 8px;
+    background: var(--color-lit);
+    color: var(--color-ink);
+  }
+
+  .account .gate-notice .chip:hover {
+    background: var(--color-lume-hi);
+    color: var(--color-night);
+  }
+
   /* Source tints */
   [data-source='youtube'] {
     --source: var(--color-youtube);
@@ -575,6 +630,22 @@
     background: var(--color-lit);
   }
 
+  /* Beside "Could not play" in the player bar. */
+  .retry {
+    height: 24px;
+    padding-inline: 10px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .retry:hover {
+    background: var(--color-lit);
+  }
+
   .step[aria-disabled='true'] {
     background: transparent;
     color: var(--color-ink-faint);
@@ -808,6 +879,43 @@
   .alert > svg {
     flex: none;
     color: var(--color-ember);
+  }
+
+  /* Over everything, just above the player. */
+  .toast {
+    position: fixed;
+    z-index: 3;
+    bottom: 112px;
+    left: 50%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    width: max-content;
+    max-width: min(36rem, calc(100vw - 32px));
+    translate: -50% 0;
+    padding: 10px 10px 10px 16px;
+    border-radius: var(--radius-row);
+    background: var(--color-lit);
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-ember) 50%, transparent),
+      0 12px 32px color-mix(in srgb, var(--color-night) 70%, transparent);
+    overflow-wrap: anywhere;
+  }
+
+  .toast-message {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .toast-message > svg {
+    flex: none;
+    color: var(--color-ember);
+  }
+
+  .toast > .step {
+    flex: none;
   }
 
   /* Queue panel */

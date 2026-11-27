@@ -9,8 +9,15 @@ use crate::catalog::TrackRow;
 #[serde(rename_all = "lowercase")]
 pub enum PlaybackStatus {
     Idle,
+    /// Real audio is being opened, and plays once it is.
+    Loading,
     Playing,
     Paused,
+    /// A stream was lost and a new one is on its way.
+    Reconnecting,
+    /// Real audio played to its end.
+    Ended,
+    Error,
 }
 
 /// The current Queue entry.
@@ -38,10 +45,14 @@ pub struct PlayerState {
     pub volume: u8,
     /// Whether there is an entry to go to, queued or recommendable.
     pub can_next: bool,
+    /// Whether there is a Queue to go back in or restart.
+    pub can_previous: bool,
     /// How many entries come after the current one.
     pub upcoming: usize,
     /// Grows when the Queue changes.
     pub queue_revision: u64,
+    /// Why playback failed, in words for the user. Set in the error state only.
+    pub error: Option<String>,
 }
 
 /// The clock moving on. It belongs to the state with the same revision.

@@ -51,12 +51,31 @@ spikes (#4 to #6) idled between 72.9 and 76.6 MB (3-run medians for YouTube Musi
 
 | Peak | Measured | Duration | Required handling |
 |---|---|---|---|
-| `yt-dlp` + Deno JS challenge during a resolve | up to about 217 MB for the spike #2 process tree; about 298 MB estimated on top of the playing app | 1 to 2 s | Keep resolves serialized; measure inside the real app in Milestone 2 |
+| `yt-dlp` + Deno JS challenge during a resolve | up to about 217 MB for the spike #2 process tree; about 298 MB estimated on top of the playing app | 1 to 2 s | Keep resolves serialized; measured inside the real app in Milestone 2 (below) |
 | Third-party login window open | 178.6 MB (SoundCloud sign-in, an earlier reading 188.3 MB); 203.9 MB (Google sign-in, one reading, DevTools port on) | while open | Destroy the login window as soon as the session is captured; re-measure that the total returns to <= 100 MB |
 
 After closing the SoundCloud login window the total read 157.7 MB at 20 s (earlier build) and 82.4 MB at
 120 s. The return was not measured for YouTube Music or Spotify, and the Spotify login window was not
 measured while open.
+
+**Measured in the app (Milestone 2, 2026-11-27, release build):** 97.7 MB idle on Home and 129.5 MB playing
+with the 5,000-row playlist open (3-run medians): both within budget. CPU while playing minimized: 0.11 to
+0.26 % of the machine. Five real resolves peaked at 387.1 to 415.3 MB for 5.2 to 5.5 s, and Deno started on
+each. The YouTube Music login window (signed-out page) peaked at 140.3 to 146.0 MB; after closing it, two of
+three launches were back to 100 MB within 23 s and one stayed at 101.0 MB past 120 s. Idle after playback
+ended read 109.2, 127.9 and 128.3 MB. Full numbers: [ram-baseline.md](ram-baseline.md).
+
+Owner decisions (Amin), recorded as given:
+
+> Resolve peak (387-407 MB for ~5.5 s): accepted as a documented exception for M2 — transient, serialized, one
+> resolve at a time. Follow-up ticket #78 (Milestone 4) tries to cut it.
+
+> Idle after playback ended (109.2 MB, one reading): accepted by Amin as is.
+
+The two later idle-after readings (median 127.9 MB) and the 415.3 MB resolve fell outside those figures; Amin
+accepted both on 2026-11-27 ("its okay Idle after playback", "the peak let it be okay for now").
+"Resolve while another track plays" cannot happen in Milestone 2, because selecting a song stops playback;
+Milestone 4 re-measures it ([#78](https://github.com/Amingamerk/Lumen/issues/78)).
 
 Measure at the end of every milestone. If a feature breaks the budget, fix it before moving on.
 
@@ -141,7 +160,9 @@ with these services for years (yt-dlp, ytmusicapi, Spotube, spotDL) share the sa
 ordinary user's client and stay quiet.
 
 - **One user, one session per service.** One logged-in session each, no parallel logins, no account sharing,
-  one device identity.
+  one device identity. One accepted exception: signed in, `yt-dlp` keeps its default clients, and two of them
+  send their own User-Agent while extracting; the stream download uses the login one
+  ([ADR 0003](adr/0003-ytdlp-client-set.md)).
 - **Honest, consistent web-client behavior.** Send the headers a real web client sends (user agent, client
   name/version, language), taken from the same WebView2 build that did the login, and keep them stable.
   Keep yt-dlp updated, since it tracks current client versions.
@@ -222,6 +243,10 @@ trait Resolver {
 - Wait until the stream's `available_at` time, when yt-dlp reports one, before handing the URL to mpv.
 - Store each URL's expiry. **Pre-resolve the next 1-2 tracks** in the queue before the current one ends so
   there are no gaps. **Re-resolve on HTTP 403 or a stall**, mpv will not do this on its own.
+- Recovery of the current track: a load or playback error, 10 s without progress while playing, or an end
+  more than 5 s early drops the stream and resolves again through the gate, at least 2 s and then 10 s later.
+  After those two attempts it stops with a manual retry and counts one gate failure. An expired URL is
+  replaced before a resume or seek uses it. A debug build started with `--break-url` spoils the first stream.
 - Gapless via mpv `playlist-append` of pre-resolved URLs (a suggestion, to be verified in a spike).
 - YouTube needs PO tokens / SABR handling in some clients. Bundle Deno + yt-dlp-ejs, optionally a token
   provider later, and auto-update yt-dlp.
@@ -284,11 +309,23 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 
 The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout". Rust code lives in
 `src-tauri/src/` split into `ipc/`, `catalog/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`,
-`recs/`, `art/` and `media/`, plus `state.rs` for navigation, search and catalog state; the Svelte app lives
-in `src/`; spikes in `spikes/`; developer scripts in `scripts/`; docs in `docs/`. `catalog/` holds the domain
+`recs/`, `art/` and `media/`, plus `state.rs` for navigation, search and catalog state and `secrets.rs` for
+sessions in Credential Manager (split into chunks); the Svelte app lives in `src/`; spikes in `spikes/`; developer scripts in `scripts/`; docs in `docs/`. `catalog/` holds the domain
 shapes, the views built from them, search and Track slices (the playlist page gets only the rows it shows);
 its data is a static fixture, including a generated 5,000-Track playlist that Search leaves out, until the
 SQLite library replaces it in Milestone 3.
+
+`sources/youtube/` holds the YouTube Music session (`account.rs`, `cookies.rs`, `session.rs`), the
+account-safety gate (`gate/`: rules, saved state, clock) and the web client (`auth.rs`, `client.rs`,
+`transport.rs`, `http.rs`, which follows the Windows system proxy like the login window). `service.rs` owns the
+account, the gate and the transport and is the only way a request goes out. The gate moves up only when a second
+service needs it. `sources/youtube/search/` asks YouTube Music for songs, parses the reply into Tracks and
+keeps recent results in memory.
+
+`resolver/` runs the bundled yt-dlp and Deno for one video at a time through that gate: the arguments
+(`args.rs`), the temporary cookie jar (`jar.rs`), the process tree (`process.rs`), reading the answer
+(`stream.rs`) and the in-memory stream cache. `ipc/` connects these to the UI (`account.rs`, `search.rs`,
+`playback.rs`, `recovery.rs`), and `audio/` holds the engine and the player, including stream recovery.
 
 ## 7. Milestones
 
@@ -345,7 +382,7 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 |---|---|
 | YouTube changes break stream extraction, or needs PO tokens / SABR | yt-dlp as primary with pinned version and auto-update, bundled Deno + yt-dlp-ejs, swappable resolver backends |
 | Stream URLs expire mid-play | Store expiry, pre-resolve next 1-2 tracks, re-resolve on 403 or stall |
-| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (serialize, measure in Milestone 2) and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
+| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (about 400 MB in Milestone 2, serialized, exception until #78), idle after playback above 100 MB, and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
 | SoundCloud `client_id` rotates, new official API credentials need a paid plan | Scrape and re-scrape automatically on 401/403 (once, then retry once), add retry on the stream-URL step; SoundCloud is last in the order |
 | SoundCloud Google sign-in popup does not open in WebView2 | Email/password sign-in works; Milestone 7 handles OAuth popups or guides to email/password |
 | Spotify web token flow changes again (TOTP, `client-token`, Pathfinder query hash) | Worked on 2026-11-26 (TOTP v61). Metadata only so playback never depends on it; isolate in one module; manual re-login |
@@ -376,6 +413,7 @@ the spotDL matching code (`spotdl/providers/audio/base.py`, `utils/matching.py`)
 |---|---|---|
 | RAM budget | Keep 100 MB idle / 150 MB playing; transient resolve and login-window peaks are open (section 2) | [ram-baseline.md](ram-baseline.md) |
 | Playback and resolver | yt-dlp + Deno resolves and libmpv plays; yt-dlp behind the `Resolver` trait | [ADR 0001](adr/0001-ytdlp-primary-resolver.md) |
+| yt-dlp client set, signed in | Defaults (Opus 251); `web_music,web` needs a PO token for audio on a free account | [ADR 0003](adr/0003-ytdlp-client-set.md) |
 | YouTube Music login | Works in WebView2; authenticated library call and resolve passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
 | SoundCloud login | Works with email/password; Google popup does not open; likes call passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
 | Spotify login | Works; Pathfinder for liked songs, `spclient` metadata for ISRC, REST answers 429 | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |
@@ -385,7 +423,6 @@ the spotDL matching code (`spotdl/providers/audio/base.py`, `utils/matching.py`)
 
 - `souvlaki` quirks with Tauri.
 - Cold start latency.
-- Signed-in resolving with `web_music,web` alone against the `yt-dlp` default clients.
 - Gapless playback through libmpv `playlist-append`.
 - RAM returning to budget after the login window closes for YouTube Music and Spotify.
 - The transient Deno resolve peak inside the real app.

@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use ytm_login_spike::{
     account::CheckReport,
     cookies::parse_import,
+    player,
     resolver::Clients,
     session::{CaptureMethod, SessionStatus},
 };
@@ -64,6 +65,18 @@ pub async fn clear_session(app: AppHandle) -> CommandResult<()> {
     }
     app.state::<App>().clear().await.map_err(text)?;
     announce(&app).await
+}
+
+/// Plays the latest resolved stream for 5 s. The URL stays in Rust.
+#[tauri::command]
+pub async fn play_last_stream(account: State<'_, App>) -> CommandResult<()> {
+    let stream = account
+        .last_stream()
+        .ok_or("no playable stream: run a successful test first")?;
+    tauri::async_runtime::spawn_blocking(move || player::play_five_seconds(&stream))
+        .await
+        .map_err(text)?
+        .map_err(text)
 }
 
 #[tauri::command]

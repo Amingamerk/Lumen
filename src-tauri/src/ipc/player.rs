@@ -1,62 +1,206 @@
 //! Player commands in, player events out. The rules live in `audio`.
 
-use std::sync::mpsc::Receiver;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Runtime, State};
+use tokio::sync::Notify;
 use uuid::Uuid;
 
-use super::{EventSink, IpcError, SharedState, lock};
+use super::account::AccountHandle;
+use super::playback::{AppResolver, play_stream, resolve_in_background};
+use super::{EventSink, IpcError, SharedState, lock, recovery};
 use crate::audio::{
-    Player, PlayerError, PlayerEvent, PlayerState, QueueSlice, SimulatedEngine, SystemClock, Wake,
-    ticker,
+    Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError,
+    PlayerEvent, PlayerState, QueueSlice, file_media,
 };
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, TrackRow};
 use crate::recs::StaticRecommender;
+use crate::state::SearchPick;
 
 /// Events sent to the UI. Mirrored in `src/lib/ipc.ts`.
 pub const PLAYER_CHANGED: &str = "player-changed";
 pub const PLAYER_POSITION: &str = "player-position";
 
-type AppPlayer = Player<SimulatedEngine>;
+/// libmpv in the app, stand-ins in tests.
+pub(super) type AppPlayer = Player<Box<dyn Engine>>;
 
 /// The player behind its own lock, so playback never waits for a search.
 pub struct PlayerHandle {
     player: Arc<Mutex<AppPlayer>>,
-    wake: Wake,
 }
 
 impl PlayerHandle {
-    /// A player over `catalog`, and what its clock thread waits on.
-    fn new(catalog: Arc<Catalog>) -> (Self, Receiver<()>) {
-        let engine = SimulatedEngine::new(SystemClock::default());
+    fn new(catalog: Arc<Catalog>, engine: Box<dyn Engine>) -> Self {
         let recommender = Box::new(StaticRecommender::new(Arc::clone(&catalog)));
         let player = Arc::new(Mutex::new(Player::new(engine, catalog, recommender)));
-        let (wake, woken) = Wake::channel();
-        (Self { player, wake }, woken)
+        Self { player }
+    }
+
+    /// Plays a file before the UI is there to ask: it reads the state later.
+    fn play_file(&self, path: PathBuf) {
+        let (media, row) = file_media(path);
+        lock(&self.player).play_media(media, row);
     }
 }
 
-/// Sets the player up and starts its clock.
-pub fn start<R: Runtime>(app: &AppHandle<R>) -> std::io::Result<()> {
+/// A song waiting for its stream. It outlives the command that chose it.
+pub struct Pending {
+    player: Arc<Mutex<AppPlayer>>,
+    key: u32,
+}
+
+impl Pending {
+    /// Whether it is still the song to play.
+    pub fn wanted(&self) -> bool {
+        lock(&self.player).awaits(self.key)
+    }
+
+    /// The change the outcome made, if it was still wanted.
+    pub fn finish(&self, outcome: Result<Media, String>) -> Option<PlayerState> {
+        lock(&self.player).finish_stream(self.key, outcome)
+    }
+}
+
+impl PlayerHandle {
+    /// Shows `row` as loading and announces it.
+    pub fn begin_stream(
+        &self,
+        sink: &impl EventSink,
+        video: String,
+        row: TrackRow,
+    ) -> Result<Pending, IpcError> {
+        // The lock is released before the event goes out. The revision keeps order.
+        let (key, state) = lock(&self.player).begin_stream(video, row);
+        sink.player_changed(&state)?;
+        Ok(Pending {
+            player: Arc::clone(&self.player),
+            key,
+        })
+    }
+
+    /// Asks again for the stream that failed, if one did, and announces it.
+    pub fn retry_stream(
+        &self,
+        sink: &impl EventSink,
+    ) -> Result<Option<(String, Pending)>, IpcError> {
+        // The lock is released before the event goes out. The revision keeps order.
+        let retried = lock(&self.player).retry_stream();
+        let Some((video, key, state)) = retried else {
+            return Ok(None);
+        };
+        sink.player_changed(&state)?;
+        let player = Arc::clone(&self.player);
+        Ok(Some((video, Pending { player, key })))
+    }
+}
+
+/// How long [`AudioThread::stop`] waits for mpv to shut down.
+const STOP_PATIENCE: Duration = Duration::from_secs(2);
+
+/// The thread that reads mpv's events. It holds the player, and with it the
+/// engine, so dropping the engine cannot end it: [`AudioThread::stop`] does.
+pub struct AudioThread {
+    shutdown: MpvShutdown,
+    thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl AudioThread {
+    fn new(shutdown: MpvShutdown, thread: JoinHandle<()>) -> Self {
+        Self {
+            shutdown,
+            thread: Mutex::new(Some(thread)),
+        }
+    }
+
+    /// Tells mpv to quit and waits a little for the thread to end. Whether it
+    /// ended; if not, the process exit ends it.
+    pub fn stop(&self) -> bool {
+        self.shutdown.shut_down();
+        let Some(thread) = lock(&self.thread).take() else {
+            return true;
+        };
+        let started = Instant::now();
+        while !thread.is_finished() {
+            if started.elapsed() >= STOP_PATIENCE {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread.join().is_ok()
+    }
+}
+
+/// Sets the player up over libmpv, plays `file` if the launch asked for one,
+/// and starts listening to mpv.
+pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::Result<()> {
     let catalog = lock(app.state::<SharedState>().inner()).catalog();
-    let (handle, woken) = PlayerHandle::new(catalog);
+    let (engine, events) = MpvEngine::new()?;
+    let shutdown = engine.shutdown_handle();
+    let handle = PlayerHandle::new(catalog, Box::new(engine));
+    if let Some(path) = file {
+        handle.play_file(path);
+    }
     let player = Arc::clone(&handle.player);
+    let wake = Arc::new(Notify::new());
+    let changed = Arc::clone(&wake);
+    lock(&player).on_change(move || changed.notify_one());
     app.manage(handle);
-    let app = app.clone();
-    thread::Builder::new()
-        .name("player-clock".to_owned())
-        .spawn(move || {
-            ticker::run(&player, woken, |event| {
-                // A failure means the window is gone: nobody is left to tell.
-                let _ = announce(&event, &app);
-            });
-        })?;
+    tauri::async_runtime::spawn(recovery::watch(
+        app.clone(),
+        Arc::clone(&player),
+        Arc::clone(app.state::<AccountHandle>().youtube()),
+        Arc::clone(app.state::<Arc<AppResolver>>().inner()),
+        wake,
+    ));
+    let sink = app.clone();
+    let thread = listen(events, move |event| {
+        // A failure means the window is gone: nobody is left to tell.
+        let _ = relay(&player, event, &sink);
+    })?;
+    app.manage(AudioThread::new(shutdown, thread));
     Ok(())
 }
 
-/// Sends what the clock found out.
+/// Ends playback before the app exits, so mpv shuts down cleanly.
+pub fn stop<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(audio) = app.try_state::<AudioThread>() {
+        audio.stop();
+    }
+}
+
+/// Hands each event mpv reports to `heard`, on a thread of its own, until mpv
+/// shuts down.
+fn listen(
+    mut events: MpvEvents,
+    mut heard: impl FnMut(EngineEvent) + Send + 'static,
+) -> std::io::Result<JoinHandle<()>> {
+    thread::Builder::new()
+        .name("mpv-events".to_owned())
+        .spawn(move || {
+            while let Some(event) = events.wait() {
+                heard(event);
+            }
+        })
+}
+
+/// Gives the player what the engine heard, and tells the UI what came of it.
+fn relay(
+    player: &Mutex<AppPlayer>,
+    event: EngineEvent,
+    sink: &impl EventSink,
+) -> Result<(), IpcError> {
+    // The lock is released before the event goes out. The revision keeps order.
+    let heard = lock(player).on_engine_event(event);
+    match heard {
+        Some(heard) => announce(&heard, sink),
+        None => Ok(()),
+    }
+}
+
+/// Sends what the engine found out.
 fn announce(event: &PlayerEvent, sink: &impl EventSink) -> Result<(), IpcError> {
     match event {
         PlayerEvent::Changed(state) => sink.player_changed(state),
@@ -64,8 +208,8 @@ fn announce(event: &PlayerEvent, sink: &impl EventSink) -> Result<(), IpcError> 
     }
 }
 
-/// Runs one change on the player. Only a real change wakes the clock and is
-/// announced; the answer to a command is the event.
+/// Runs one change on the player. Only a real change is announced; the answer to
+/// a command is the event.
 fn command(
     handle: &PlayerHandle,
     sink: &impl EventSink,
@@ -74,7 +218,6 @@ fn command(
     // The lock is released before the event goes out. The revision keeps order.
     let changed = act(&mut lock(&handle.player))?;
     if let Some(state) = changed {
-        handle.wake.wake();
         sink.player_changed(&state)?;
     }
     Ok(())
@@ -103,8 +246,13 @@ pub fn play_search_result<R: Runtime>(
     track_id: Uuid,
 ) -> Result<(), IpcError> {
     // The app's lock is released before the player's is taken.
-    let (tracks, start) = lock(&state).search_queue(track_id)?;
-    command(&player, &app, |p| p.play_tracks(tracks, start).map(Some))
+    let pick = lock(&state).search_pick(track_id)?;
+    match pick {
+        SearchPick::Samples { tracks, start } => {
+            command(&player, &app, |p| p.play_tracks(tracks, start).map(Some))
+        }
+        SearchPick::Live { video, row } => play_stream(&app, &player, video, row),
+    }
 }
 
 #[tauri::command]
@@ -112,7 +260,13 @@ pub fn toggle_play<R: Runtime>(
     app: AppHandle<R>,
     player: State<'_, PlayerHandle>,
 ) -> Result<(), IpcError> {
-    command(&player, &app, |p| Ok(p.toggle_play()))
+    match player.retry_stream(&app)? {
+        Some((video, pending)) => {
+            resolve_in_background(&app, pending, video);
+            Ok(())
+        }
+        None => command(&player, &app, |p| Ok(p.toggle_play())),
+    }
 }
 
 #[tauri::command]
@@ -189,58 +343,71 @@ mod tests {
 
     use super::super::tests::RecordingSink;
     use super::*;
-    use crate::audio::{NowPlaying, PlaybackStatus, PlayerPosition, QueueItem};
-    use crate::catalog::{SourceKind, SourceTag, TrackRow};
+    use crate::audio::{
+        FakeEngine, NowPlaying, PlaybackStatus, PlayerPosition, QueueItem, SimulatedEngine,
+        SystemClock,
+    };
+    use crate::catalog::{SourceKind, SourceTag};
 
-    fn handle() -> (PlayerHandle, Receiver<()>) {
-        PlayerHandle::new(Arc::default())
+    /// A player that can play the catalog's samples.
+    fn handle() -> PlayerHandle {
+        let engine = SimulatedEngine::new(SystemClock::default());
+        PlayerHandle::new(Arc::default(), Box::new(engine))
     }
 
-    fn play(handle: &PlayerHandle, sink: &RecordingSink) {
+    /// A player over an engine like libmpv: real audio only.
+    fn real() -> (PlayerHandle, FakeEngine) {
+        let engine = FakeEngine::default();
+        let handle = PlayerHandle::new(Arc::default(), Box::new(engine.clone()));
+        (handle, engine)
+    }
+
+    #[test]
+    fn stopping_ends_the_event_thread_while_it_holds_the_player() {
+        let (engine, events) = MpvEngine::silent().expect("libmpv-2.dll starts");
+        let shutdown = engine.shutdown_handle();
+        let handle = PlayerHandle::new(Arc::default(), Box::new(engine));
+        let player = Arc::clone(&handle.player);
+        let thread = listen(events, move |_| {
+            let _ = lock(&player).state();
+        })
+        .unwrap();
+        let audio = AudioThread::new(shutdown, thread);
+
+        assert!(audio.stop(), "the event thread is still running");
+        drop(handle);
+    }
+
+    fn play(handle: &PlayerHandle, sink: &RecordingSink) -> Result<(), IpcError> {
         command(handle, sink, |p| {
             p.play_collection("night-shift", 0).map(Some)
         })
-        .unwrap();
     }
 
     #[test]
     fn a_command_announces_the_new_state_once() {
-        let (handle, woken) = handle();
+        let handle = handle();
         let sink = RecordingSink::default();
 
-        play(&handle, &sink);
+        play(&handle, &sink).unwrap();
 
         assert_eq!(*sink.states.borrow(), [lock(&handle.player).state()]);
         assert_eq!(sink.states.borrow()[0].revision, 1);
-        assert_eq!(woken.try_recv(), Ok(()));
-    }
-
-    #[test]
-    fn a_command_does_not_wait_for_a_busy_clock() {
-        let (handle, _woken) = handle();
-        let sink = RecordingSink::default();
-
-        // Nothing reads the wake channel here, so it is full after the first.
-        play(&handle, &sink);
-        play(&handle, &sink);
-
-        assert_eq!(sink.states.borrow().len(), 2);
     }
 
     #[test]
     fn a_no_op_stays_quiet() {
-        let (handle, woken) = handle();
+        let handle = handle();
         let sink = RecordingSink::default();
 
         command(&handle, &sink, |p| Ok(p.toggle_play())).unwrap();
 
         assert!(sink.states.borrow().is_empty());
-        assert!(woken.try_recv().is_err());
     }
 
     #[test]
     fn a_failed_command_stays_quiet() {
-        let (handle, woken) = handle();
+        let handle = handle();
         let sink = RecordingSink::default();
 
         let error = command(&handle, &sink, |p| p.play_collection("nope", 0).map(Some))
@@ -251,12 +418,47 @@ mod tests {
             json!("no playlist or album has the id “nope”")
         );
         assert!(sink.states.borrow().is_empty());
-        assert!(woken.try_recv().is_err());
     }
 
     #[test]
-    fn clock_events_go_out_as_changes_or_positions() {
-        let (handle, _woken) = handle();
+    fn a_sample_track_is_refused_in_words_and_changes_nothing() {
+        let (handle, _) = real();
+        let sink = RecordingSink::default();
+
+        let error = play(&handle, &sink).expect_err("samples have no audio");
+
+        assert_eq!(
+            serde_json::to_value(&error).unwrap(),
+            json!("sample track, cannot be played")
+        );
+        assert!(sink.states.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_launch_file_is_loaded_and_the_engine_is_relayed() {
+        let (handle, engine) = real();
+        let sink = RecordingSink::default();
+
+        handle.play_file(PathBuf::from(r"C:\music\tone.wav"));
+        let state = lock(&handle.player).state();
+        assert_eq!(state.status, PlaybackStatus::Loading);
+        assert_eq!(state.current.unwrap().track.title, "tone");
+
+        engine.fake().duration = std::time::Duration::from_secs(9);
+        relay(&handle.player, EngineEvent::Loaded, &sink).unwrap();
+        engine.fake().position = std::time::Duration::from_secs(2);
+        relay(&handle.player, EngineEvent::Progress, &sink).unwrap();
+        relay(&handle.player, EngineEvent::Progress, &sink).unwrap();
+        relay(&handle.player, EngineEvent::Failed, &sink).unwrap();
+
+        let statuses: Vec<PlaybackStatus> = sink.states.borrow().iter().map(|s| s.status).collect();
+        assert_eq!(statuses, [PlaybackStatus::Playing, PlaybackStatus::Error]);
+        assert_eq!(sink.positions.borrow().len(), 1);
+    }
+
+    #[test]
+    fn engine_events_go_out_as_changes_or_positions() {
+        let handle = handle();
         let sink = RecordingSink::default();
         let state = lock(&handle.player).state();
         let position = PlayerPosition {
@@ -297,8 +499,10 @@ mod tests {
             duration_ms: 201_000,
             volume: 80,
             can_next: true,
+            can_previous: true,
             upcoming: 5,
             queue_revision: 3,
+            error: None,
         };
 
         assert_eq!(
@@ -311,8 +515,10 @@ mod tests {
                 "durationMs": 201_000,
                 "volume": 80,
                 "canNext": true,
+                "canPrevious": true,
                 "upcoming": 5,
-                "queueRevision": 3
+                "queueRevision": 3,
+                "error": null
             })
         );
         assert_eq!(
@@ -344,7 +550,11 @@ mod tests {
         );
         for (status, wire) in [
             (PlaybackStatus::Idle, "idle"),
+            (PlaybackStatus::Loading, "loading"),
             (PlaybackStatus::Paused, "paused"),
+            (PlaybackStatus::Reconnecting, "reconnecting"),
+            (PlaybackStatus::Ended, "ended"),
+            (PlaybackStatus::Error, "error"),
         ] {
             assert_eq!(serde_json::to_value(status).unwrap(), json!(wire));
         }

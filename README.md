@@ -35,7 +35,7 @@ All heavy work (network, stream resolving, audio, database, recommendations, ima
 
 ## Status
 
-Early stage. The app shell (sidebar, placeholder views and an inactive player bar) runs; there is no playback or sign-in yet. Work happens one milestone at a time:
+Early stage. The app shell runs on a static sample catalog, you can sign in to YouTube Music, and libmpv plays a local audio file passed with `--play-file` (see [Build](#build)). Nothing is streamed from a service yet. Work happens one milestone at a time:
 
 0. Spikes: yt-dlp + libmpv playback, and measuring the real Tauri RAM baseline
 1. Skeleton UI
@@ -56,7 +56,7 @@ Windows 10 or 11.
 - Rust (stable) with the MSVC toolchain (Visual Studio Build Tools, "Desktop development with C++")
 - Node.js 20.19 or newer and pnpm (the version is pinned in `package.json`)
 - Tauri CLI and the other [Tauri 2 prerequisites for Windows](https://tauri.app/start/prerequisites/) (WebView2 is built into Windows 11)
-- libmpv: `libmpv-2.dll` placed next to the executable (and the import library for linking)
+- libmpv: `libmpv-2.dll` and its import library `mpv.lib` in `src-tauri/binaries/` (or the folder named by `LIBMPV_DIR`). The build copies the DLL next to the executable
 - `yt-dlp.exe` and `deno.exe` (yt-dlp needs a JavaScript runtime for YouTube), used as Tauri sidecars in `src-tauri/binaries/`
 - Accounts for the services you want to use (YouTube Music, SoundCloud, Spotify). You log in inside Lumen; there are no API keys or developer apps to set up.
 
@@ -64,15 +64,29 @@ Session data is stored in Windows Credential Manager. Never commit it.
 
 ## Build
 
-libmpv, `yt-dlp` and Deno are not needed until playback lands in milestone 2.
+Fetch the pinned libmpv, yt-dlp and Deno binaries before building. The command verifies
+every cached file too, so it is safe to run again.
 
 ```powershell
 git clone https://github.com/Amingamerk/Lumen.git
 cd Lumen
 pnpm install
+./scripts/fetch-pinned-binaries.ps1
 pnpm tauri dev      # run in development
 pnpm tauri build --no-bundle    # release executable in src-tauri/target/release
 ```
+
+To try playback, start the app with a local audio file (URLs and network shares are refused):
+
+```powershell
+./src-tauri/target/release/lumen.exe --play-file "C:\path\to\song.flac"
+```
+
+To update a pinned dependency, publish or select a permanent source URL, independently
+verify its SHA-256, then update its version, URL and hash in
+`scripts/pinned-binaries.json`. Update `THIRD-PARTY-NOTICES.md` for any version or
+license change, run the fetcher twice from an empty `src-tauri/binaries/`, and run the
+script tests before opening the change.
 
 Checks, as CI runs them:
 

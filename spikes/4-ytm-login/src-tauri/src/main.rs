@@ -39,6 +39,7 @@ fn main() -> anyhow::Result<()> {
             commands::import_session,
             commands::clear_session,
             commands::run_check,
+            commands::play_last_stream,
         ])
         .build(tauri::generate_context!())
         .context("failed to start the Tauri app")?

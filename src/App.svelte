@@ -5,12 +5,15 @@
   import PlayerBar from './lib/components/PlayerBar.svelte';
   import QueuePanel from './lib/components/QueuePanel.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
+  import Toast from './lib/components/Toast.svelte';
   import { tauriBridge } from './lib/ipc';
   import { shortcutFor } from './lib/shortcuts';
+  import { AccountStore } from './lib/stores/account.svelte';
   import { AppStore } from './lib/stores/app.svelte';
   import { CatalogStore } from './lib/stores/catalog.svelte';
   import { PlayerStore } from './lib/stores/player.svelte';
   import { QueueStore } from './lib/stores/queue.svelte';
+  import { YoutubeStore } from './lib/stores/youtube.svelte';
   import Home from './routes/Home.svelte';
   import Library from './routes/Library.svelte';
   import Playlist from './routes/Playlist.svelte';
@@ -21,6 +24,8 @@
     catalog?: CatalogStore;
     player?: PlayerStore;
     queue?: QueueStore;
+    account?: AccountStore;
+    youtube?: YoutubeStore;
   }
 
   let {
@@ -28,12 +33,21 @@
     catalog = new CatalogStore(tauriBridge),
     player = new PlayerStore(tauriBridge),
     queue = new QueueStore(tauriBridge),
+    account = new AccountStore(tauriBridge),
+    youtube = new YoutubeStore(tauriBridge),
   }: Props = $props();
 
   const route = $derived(store.navigation?.route);
   const pageKey = $derived(route?.view === 'playlist' ? `playlist/${route.id}` : route?.view);
   const queueOpen = $derived(store.navigation?.queueOpen ?? false);
-  const error = $derived(store.error ?? catalog.error ?? player.error ?? queue.error);
+  const error = $derived(
+    store.error ??
+      catalog.error ??
+      player.error ??
+      queue.error ??
+      account.error ??
+      youtube.error,
+  );
 
   /** Cards open albums and playlists alike; Rust decides whether it can. */
   const openCollection = (id: string) => void store.navigate({ view: 'playlist', id });
@@ -69,7 +83,13 @@
   }
 
   onMount(() => {
-    const connections = [store.connect(), player.connect()];
+    const connections = [
+      store.connect(),
+      catalog.connect(),
+      player.connect(),
+      account.connect(),
+      youtube.connect(),
+    ];
     return () => {
       for (const connection of connections) void connection.then((disconnect) => disconnect());
     };
@@ -81,7 +101,16 @@
 <a class="skip-link" href="#main">Skip to content</a>
 
 <div class="shell" data-queue={queueOpen ? 'open' : undefined}>
-  <Sidebar playlists={store.playlists} {route} onnavigate={(next) => store.navigate(next)} />
+  <Sidebar
+    playlists={store.playlists}
+    {route}
+    onnavigate={(next) => store.navigate(next)}
+    account={account.status}
+    youtube={youtube.status}
+    onsignin={() => void account.signIn()}
+    ondisconnect={() => void account.disconnect()}
+    onresume={() => void youtube.resume()}
+  />
 
   <MainFrame view={route?.view} {pageKey}>
     {#if error}
@@ -100,6 +129,10 @@
     {:else if route?.view === 'search'}
       <Search
         {catalog}
+        account={account.status}
+        youtube={youtube.status}
+        onsignin={() => void account.signIn()}
+        onresume={() => void youtube.resume()}
         onopen={openCollection}
         onplay={(trackId) => void player.playSearchResult(trackId)}
         focusWanted={searchFocusWanted}
@@ -119,3 +152,10 @@
 
   <PlayerBar {player} {queueOpen} ontogglequeue={() => void store.toggleQueue()} />
 </div>
+
+<!-- A new notice is a new element, so it is announced again. -->
+{#key player.notice}
+  {#if player.notice}
+    <Toast message={player.notice.message} ondismiss={() => player.dismissNotice()} />
+  {/if}
+{/key}

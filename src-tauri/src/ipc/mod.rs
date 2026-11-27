@@ -2,14 +2,25 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+pub mod account;
+#[cfg(debug_assertions)]
+mod break_url;
+pub mod playback;
 pub mod player;
+mod recovery;
+pub mod search;
+pub mod youtube;
 
 use serde::{Serialize, Serializer};
-use tauri::{AppHandle, Emitter, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::audio::{PlayerError, PlayerPosition, PlayerState};
-use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, SourceFilter, TrackSlice};
+use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, TrackSlice};
+use crate::secrets::SecretError;
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
+
+/// The label of the app's own window, set in `tauri.conf.json`.
+pub const MAIN_WINDOW: &str = "main";
 
 /// Event sent after the route changes. Mirrored in `src/lib/ipc.ts`.
 pub const NAVIGATION_CHANGED: &str = "navigation-changed";
@@ -22,8 +33,10 @@ pub enum IpcError {
     State(#[from] StateError),
     #[error(transparent)]
     Player(#[from] PlayerError),
-    #[error("could not notify the window: {0}")]
-    Emit(#[from] tauri::Error),
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+    #[error("the window failed: {0}")]
+    Window(#[from] tauri::Error),
 }
 
 /// The webview receives the message as a plain string.
@@ -38,6 +51,7 @@ pub trait EventSink {
     fn navigation_changed(&self, navigation: &NavigationState) -> Result<(), IpcError>;
     fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError>;
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError>;
+    fn search_changed(&self, view: &SearchView) -> Result<(), IpcError>;
 }
 
 impl<R: Runtime> EventSink for AppHandle<R> {
@@ -51,6 +65,20 @@ impl<R: Runtime> EventSink for AppHandle<R> {
 
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
         Ok(self.emit(player::PLAYER_POSITION, position)?)
+    }
+
+    fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
+        Ok(self.emit_to(MAIN_WINDOW, search::SEARCH_CHANGED, view)?)
+    }
+}
+
+/// Brings the app's window to the front, as a second launch asks for.
+pub fn focus_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        // Best effort: the second launch has already exited either way.
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
@@ -134,15 +162,6 @@ pub fn get_search(state: State<'_, SharedState>) -> SearchView {
     lock(&state).search_view()
 }
 
-#[tauri::command]
-pub fn search_catalog(
-    state: State<'_, SharedState>,
-    query: String,
-    filter: SourceFilter,
-) -> SearchView {
-    lock(&state).search(&query, filter)
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
@@ -157,6 +176,7 @@ mod tests {
         pub(super) navigations: RefCell<Vec<NavigationState>>,
         pub(super) states: RefCell<Vec<PlayerState>>,
         pub(super) positions: RefCell<Vec<PlayerPosition>>,
+        pub(super) searches: RefCell<Vec<SearchView>>,
     }
 
     impl EventSink for RecordingSink {
@@ -172,6 +192,11 @@ mod tests {
 
         fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
             self.positions.borrow_mut().push(*position);
+            Ok(())
+        }
+
+        fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
+            self.searches.borrow_mut().push(view.clone());
             Ok(())
         }
     }
