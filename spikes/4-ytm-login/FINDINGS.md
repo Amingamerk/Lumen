@@ -36,6 +36,19 @@ Checks: `pnpm run check`, `pnpm run build`, and in `src-tauri`: `cargo fmt --che
 `cargo test -- --ignored`: a round trip of **fake** data through the real Credential Manager, and the real
 yt-dlp against `127.0.0.1:1`.
 
+## Extensions for issue #60 (client sets)
+
+- Building also needs libmpv in `%LOCALAPPDATA%\Programs\libmpv` (or `LIBMPV_DIR`); `build.rs` copies
+  `libmpv-2.dll` beside the exe.
+- The format selector is now `bestaudio/best`, so a client set without an audio-only format shows its
+  HLS or combined fallback (`audio_only`, `vcodec`, total bitrate) instead of failing. Results above
+  were measured with `bestaudio`.
+- yt-dlp runs with `-v`. `deno_started` is true when a `[jsc:deno] Running deno:` debug line appears;
+  debug lines are ignored for warnings and never leave `resolver.rs`.
+- "Play 5 s in libmpv" plays the stream of the latest successful run. The URL stays in Rust memory.
+- "Copy safe report" copies the run as text without URLs, cookies or account data. Premium status is
+  not detected: note it by hand.
+
 ## Live login check (2026-11-26)
 
 | Check | Result |

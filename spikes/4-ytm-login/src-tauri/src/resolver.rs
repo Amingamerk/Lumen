@@ -74,6 +74,11 @@ pub struct ResolveReport {
     pub format_id: String,
     pub codec: Option<String>,
     pub abr_kbps: Option<f64>,
+    /// Total bitrate. Combined formats may give no audio bitrate.
+    pub tbr_kbps: Option<f64>,
+    /// `"none"` for an audio-only format.
+    pub vcodec: Option<String>,
+    pub audio_only: bool,
     pub protocol: Option<String>,
     /// The `c=` parameter of the stream URL, i.e. which YouTube client produced it.
     pub client: Option<String>,
@@ -82,10 +87,35 @@ pub struct ResolveReport {
     pub expires_at: Option<u64>,
     pub resolve_ms: u64,
     pub user_agent_matches_login: bool,
+    /// Whether yt-dlp ran Deno to solve a JavaScript challenge.
+    pub deno_started: bool,
     /// HTTP status of `Range: bytes=0-1023`, normally 206.
     pub range_status: u16,
     /// Known yt-dlp warnings, as fixed labels.
     pub warnings: Vec<&'static str>,
+}
+
+/// The last playable stream, kept in memory for the player only. No `Debug` or `Serialize`, and
+/// nothing outside this crate can read it.
+#[derive(Clone)]
+pub struct LastStream {
+    url: String,
+    /// Without credentials.
+    headers: Vec<(String, String)>,
+}
+
+impl LastStream {
+    pub(crate) fn new(url: String, headers: Vec<(String, String)>) -> Self {
+        Self { url, headers }
+    }
+
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub(crate) fn headers(&self) -> &[(String, String)] {
+        &self.headers
+    }
 }
 
 pub struct ProcessOutput {
@@ -149,8 +179,11 @@ pub fn watch_url(input: &str) -> Result<String, ResolveError> {
 pub fn ytdlp_args(jar: &Path, user_agent: &str, url: &str, clients: Clients) -> Vec<OsString> {
     let mut args: Vec<OsString> = [
         "-J",
+        // Debug lines say whether Deno ran. They stay in this module.
+        "-v",
         "-f",
-        "bestaudio",
+        // The fallback shows what a client set without audio-only formats would give.
+        "bestaudio/best",
         "--no-playlist",
         // A user config file must not change what we send or how much we resolve.
         "--ignore-config",
@@ -179,11 +212,30 @@ struct YtDlpJson {
     url: String,
     acodec: Option<String>,
     abr: Option<f64>,
+    tbr: Option<f64>,
+    vcodec: Option<String>,
     protocol: Option<String>,
     /// Fractional when a pre-roll ad's skip offset is.
     available_at: Option<f64>,
     #[serde(default)]
     http_headers: BTreeMap<String, String>,
+}
+
+/// yt-dlp's output without the `[debug]` lines of `-v`: those quote arbitrary text.
+fn without_debug_lines(stderr: &str) -> String {
+    stderr
+        .lines()
+        .filter(|line| !line.starts_with("[debug]"))
+        .map(|line| format!("{line}\n"))
+        .collect()
+}
+
+/// yt-dlp 2026.11.23 logs this, with `-v`, each time it runs Deno on a challenge script.
+/// Listing Deno as an available runtime does not count.
+fn deno_ran(stderr: &str) -> bool {
+    stderr
+        .lines()
+        .any(|line| line.starts_with("[debug]") && line.contains("[jsc:deno] Running deno:"))
 }
 
 /// Warnings that end the run even when yt-dlp itself carried on.
@@ -290,13 +342,14 @@ pub struct Resolver<'a, Y, T, C> {
 }
 
 impl<Y: YtDlp, T: Transport, C: Clock> Resolver<'_, Y, T, C> {
-    /// One yt-dlp run and one Range request, no retries.
+    /// One yt-dlp run and one Range request, no retries. The stream is returned only when the
+    /// Range request accepted it.
     pub async fn resolve(
         &self,
         session: &Session,
         track_url: &str,
         clients: Clients,
-    ) -> Result<ResolveReport, ResolveError> {
+    ) -> Result<(ResolveReport, Option<LastStream>), ResolveError> {
         let url = watch_url(track_url)?;
         let started = Instant::now();
         let output = {
@@ -310,7 +363,8 @@ impl<Y: YtDlp, T: Transport, C: Clock> Resolver<'_, Y, T, C> {
                 .map_err(|e| ResolveError::Spawn(e.kind()))?
         };
         let resolve_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
-        if let Some(error) = warning_sign(&output.stderr) {
+        let messages = without_debug_lines(&output.stderr);
+        if let Some(error) = warning_sign(&messages) {
             return Err(error);
         }
         if !output.success {
@@ -335,15 +389,17 @@ impl<Y: YtDlp, T: Transport, C: Clock> Resolver<'_, Y, T, C> {
         let user_agent_matches_login = stream.http_headers.iter().any(|(name, value)| {
             name.eq_ignore_ascii_case("user-agent") && *value == session.user_agent
         });
-        let mut headers: Vec<(String, String)> = stream
+        let kept: Vec<(String, String)> = stream
             .http_headers
             .into_iter()
-            .filter(|(name, _)| {
-                !["cookie", "authorization", "range"]
+            .filter(|(name, value)| {
+                let credential_or_range = ["cookie", "authorization", "range"]
                     .iter()
-                    .any(|blocked| name.eq_ignore_ascii_case(blocked))
+                    .any(|blocked| name.eq_ignore_ascii_case(blocked));
+                !credential_or_range && !format!("{name}{value}").contains(['\r', '\n'])
             })
             .collect();
+        let mut headers = kept.clone();
         headers.push(("Range".to_owned(), "bytes=0-1023".to_owned()));
         let response = self
             .transport
@@ -360,10 +416,15 @@ impl<Y: YtDlp, T: Transport, C: Clock> Resolver<'_, Y, T, C> {
             });
         }
 
-        Ok(ResolveReport {
+        let playable =
+            matches!(response.status, 200 | 206).then(|| LastStream::new(stream.url.clone(), kept));
+        let report = ResolveReport {
             format_id: stream.format_id,
             codec: stream.acodec,
             abr_kbps: stream.abr,
+            tbr_kbps: stream.tbr,
+            audio_only: stream.vcodec.as_deref() == Some("none"),
+            vcodec: stream.vcodec,
             protocol: stream.protocol,
             client: client_name(&stream.url),
             available_at,
@@ -372,8 +433,10 @@ impl<Y: YtDlp, T: Transport, C: Clock> Resolver<'_, Y, T, C> {
             resolve_ms,
             user_agent_matches_login,
             range_status: response.status,
-            warnings: known_warnings(&output.stderr),
-        })
+            deno_started: deno_ran(&output.stderr),
+            warnings: known_warnings(&messages),
+        };
+        Ok((report, playable))
     }
 }
 
@@ -465,6 +528,7 @@ mod tests {
     fn stream_json(url: &str, available_at: Option<f64>) -> String {
         json!({
             "format_id": "251", "acodec": "opus", "abr": 129.5, "protocol": "https",
+            "vcodec": "none", "tbr": 130.5,
             "url": url, "available_at": available_at,
             "http_headers": {
                 "User-Agent": "FakeAgent/1.0",
@@ -493,6 +557,13 @@ mod tests {
         }
 
         async fn resolve(&self, url: &str) -> Result<ResolveReport, ResolveError> {
+            self.resolve_both(url).await.map(|(report, _)| report)
+        }
+
+        async fn resolve_both(
+            &self,
+            url: &str,
+        ) -> Result<(ResolveReport, Option<LastStream>), ResolveError> {
             Resolver {
                 ytdlp: &self.ytdlp,
                 transport: &self.transport,
@@ -543,8 +614,9 @@ mod tests {
             args,
             [
                 "-J",
+                "-v",
                 "-f",
-                "bestaudio",
+                "bestaudio/best",
                 "--no-playlist",
                 "--ignore-config",
                 "--playlist-items",
@@ -591,6 +663,9 @@ mod tests {
                 format_id: "251".into(),
                 codec: Some("opus".into()),
                 abr_kbps: Some(129.5),
+                tbr_kbps: Some(130.5),
+                vcodec: Some("none".into()),
+                audio_only: true,
                 protocol: Some("https".into()),
                 client: Some("WEB_REMIX".into()),
                 available_at: None,
@@ -598,6 +673,7 @@ mod tests {
                 expires_at: Some(1_700_021_600),
                 resolve_ms: report.resolve_ms,
                 user_agent_matches_login: true,
+                deno_started: false,
                 range_status: 206,
                 warnings: vec!["formats skipped: PO token required"],
             }
@@ -606,6 +682,79 @@ mod tests {
         for secret in ["googlevideo", "203.0.113.7", "fake"] {
             assert!(!shown.contains(secret), "{secret} in {shown}");
         }
+    }
+
+    async fn report_for(stderr: &str) -> Result<ResolveReport, ResolveError> {
+        let ytdlp = FakeYtDlp {
+            stderr: stderr.into(),
+            ..FakeYtDlp::printing(stream_json(STREAM, None))
+        };
+        Fixture::new(ytdlp, &[response(206, "")])
+            .resolve(TRACK)
+            .await
+    }
+
+    #[tokio::test]
+    async fn reports_that_deno_ran_a_javascript_challenge() {
+        let stderr = r"[debug] [youtube] [jsc:deno] Running deno: C:\tools\deno.exe run --ext=js -";
+
+        assert!(report_for(stderr).await.unwrap().deno_started);
+    }
+
+    #[tokio::test]
+    async fn a_listed_but_unused_deno_did_not_start() {
+        let stderr = concat!(
+            "[debug] JS runtimes: deno-2.9.8\n",
+            "[debug] [youtube] [jsc] JS Challenge Providers: bun (unavailable), deno\n",
+            "WARNING: [youtube] x: Running deno failed\n",
+        );
+
+        assert!(!report_for(stderr).await.unwrap().deno_started);
+    }
+
+    #[tokio::test]
+    async fn verbose_debug_lines_are_not_warning_signs() {
+        let stderr = concat!(
+            "[debug] cache key abcaptcha challenge sabr\n",
+            "[debug] HTTP Error 429 handling: javascript runtime\n",
+        );
+
+        let report = report_for(stderr).await.unwrap();
+
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+    }
+
+    #[tokio::test]
+    async fn reports_a_combined_hls_fallback_as_not_audio_only() {
+        let manifest = "https://manifest.googlevideo.com/api/manifest/hls_playlist/expire/1700021600/c/WEB/file/index.m3u8";
+        let stdout = json!({
+            "format_id": "95", "acodec": "mp4a.40.2", "vcodec": "avc1.4d401f", "tbr": 1500.0,
+            "protocol": "m3u8_native", "url": manifest
+        })
+        .to_string();
+        let fixture = Fixture::new(FakeYtDlp::printing(stdout), &[response(200, "")]);
+
+        let report = fixture.resolve(TRACK).await.unwrap();
+
+        assert!(!report.audio_only);
+        assert_eq!(report.vcodec.as_deref(), Some("avc1.4d401f"));
+        assert_eq!(report.abr_kbps, None);
+        assert_eq!(report.tbr_kbps, Some(1500.0));
+        assert_eq!(report.protocol.as_deref(), Some("m3u8_native"));
+        assert_eq!(report.client.as_deref(), Some("WEB"));
+        assert_eq!(report.expires_at, Some(1_700_021_600));
+        assert_eq!(fixture.ytdlp.runs(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_video_codec_is_not_claimed_to_be_audio_only() {
+        let stdout = json!({"format_id": "x", "url": STREAM}).to_string();
+        let fixture = Fixture::new(FakeYtDlp::printing(stdout), &[response(206, "")]);
+
+        let report = fixture.resolve(TRACK).await.unwrap();
+
+        assert!(!report.audio_only);
+        assert_eq!(report.vcodec, None);
     }
 
     #[tokio::test]
@@ -624,6 +773,41 @@ mod tests {
         assert_eq!(probes[0].header("Range"), Some("bytes=0-1023"));
         assert_eq!(probes[0].header("User-Agent"), Some("FakeAgent/1.0"));
         assert_eq!(probes[0].header("Cookie"), None);
+    }
+
+    #[tokio::test]
+    async fn keeps_a_playable_stream_with_sanitized_headers() {
+        let stdout = json!({
+            "format_id": "251", "url": STREAM,
+            "http_headers": {
+                "User-Agent": "FakeAgent/1.0", "Accept": "*/*",
+                "cookie": "a=b", "Authorization": "x", "Range": "bytes=5-",
+                "X-Split": "a\r\nCookie: c=d"
+            }
+        })
+        .to_string();
+        let fixture = Fixture::new(FakeYtDlp::printing(stdout), &[response(206, "")]);
+
+        let stream = fixture.resolve_both(TRACK).await.unwrap().1.unwrap();
+
+        assert_eq!(stream.url(), STREAM);
+        assert_eq!(
+            stream.headers(),
+            [
+                ("Accept".to_owned(), "*/*".to_owned()),
+                ("User-Agent".to_owned(), "FakeAgent/1.0".to_owned()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn keeps_no_stream_when_the_range_request_is_refused() {
+        let fixture = Fixture::new(
+            FakeYtDlp::printing(stream_json(STREAM, None)),
+            &[response(403, "")],
+        );
+
+        assert!(fixture.resolve_both(TRACK).await.unwrap().1.is_none());
     }
 
     #[tokio::test]
@@ -705,7 +889,8 @@ mod tests {
         }
         .resolve(&session(), TRACK, Clients::Default)
         .await
-        .unwrap();
+        .unwrap()
+        .0;
 
         assert_eq!(report.available_at, Some(NOW + 6));
         assert_eq!(report.waited_s, 6);
