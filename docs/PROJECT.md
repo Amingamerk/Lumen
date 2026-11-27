@@ -276,7 +276,8 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 - **Player bar (bottom)**: artwork + title, controls, seek bar, volume, queue button.
 - **Queue panel** (right side, toggle) with drag-to-reorder.
 - Small **source badge** (YT / SC / SP) on each track.
-- Keyboard: Space play/pause, Ctrl+F search, Ctrl+Left/Right prev/next. Media keys work globally.
+- Keyboard: Space play/pause, Ctrl+F search, Ctrl+Left/Right prev/next, Shift+Left/Right seek 5 s back or
+  forward, Ctrl+Up/Down volume. Media keys work globally.
 - Mini-player mode later.
 
 ## 6. Project structure
