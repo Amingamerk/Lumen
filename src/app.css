@@ -1,0 +1,1057 @@
+/* Only scan the app for class names, not spikes/ or docs/. */
+@import 'tailwindcss' source('.');
+
+/*
+ * Lumen: the logo's light in a dark room.
+ * Night is the window, deck and stage are the surfaces on it, lume is the one accent.
+ * Iris, lume and ember are stops of the logo gradient (violet, pink, orange).
+ * Radius scale: frames 18px, rows and covers 12px, badges 6px, transport buttons round.
+ */
+@theme static {
+  --color-night: #0e0d12;
+  --color-deck: #15141b;
+  --color-stage: #18161f;
+  --color-raise: #221f2b;
+  --color-lit: #2d2939;
+  --color-edge: rgb(226 220 255 / 0.08);
+
+  --color-ink: #f4f2f9;
+  --color-ink-soft: #c7c2d6;
+  --color-ink-faint: #a19bb3;
+
+  --color-iris: #894dfa;
+  --color-lume: #fa5292;
+  --color-lume-hi: #ffa6c8;
+  --color-ember: #f8984f;
+
+  /* Source tints carry meaning (where a playlist lives). They are not accents. */
+  --color-youtube: #ffa099;
+  --color-soundcloud: #9fcdf5;
+  --color-spotify: #d6bcf7;
+
+  --font-sans: 'Figtree Variable', 'Segoe UI Variable Text', 'Segoe UI', sans-serif;
+  --font-display:
+    'Bricolage Grotesque Variable', 'Segoe UI Variable Display', 'Segoe UI', sans-serif;
+
+  --radius-frame: 18px;
+  --radius-row: 12px;
+  --radius-chip: 6px;
+
+  --ease-glide: cubic-bezier(0.2, 0.75, 0.2, 1);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+    background: var(--color-night);
+    color: var(--color-ink);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  a,
+  button {
+    touch-action: manipulation;
+  }
+
+  /* A desktop window should not rubber-band. */
+  @media (pointer: fine) {
+    html {
+      overscroll-behavior: none;
+    }
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-lume-hi);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .skip-link {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 1;
+    padding: 8px 14px;
+    border-radius: var(--radius-row);
+    background: var(--color-lume);
+    color: var(--color-night);
+    font-weight: 700;
+    translate: 0 -200%;
+  }
+
+  .skip-link:focus-visible {
+    translate: 0 0;
+  }
+
+  .shell {
+    display: grid;
+    grid-template-areas:
+      'sidebar stage'
+      'player player';
+    grid-template-columns: 264px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) 92px;
+    gap: 8px;
+    height: 100dvh;
+    padding: 8px;
+  }
+
+  /* The queue takes a third column. */
+  .shell[data-queue='open'] {
+    grid-template-areas:
+      'sidebar stage queue'
+      'player player player';
+    grid-template-columns: 264px minmax(0, 1fr) 320px;
+  }
+
+  /* A raised plane: faint grain, light falling from above, a hairline edge. */
+  .surface {
+    border-radius: var(--radius-frame);
+    background-color: var(--color-deck);
+    background-image:
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 .86 0 0 0 0 .84 0 0 0 0 1 0 0 0 .075 0'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E"),
+      linear-gradient(180deg, rgb(226 220 255 / 0.04), transparent 240px);
+    box-shadow:
+      inset 0 0 0 1px var(--color-edge),
+      inset 0 1px 0 rgb(232 228 255 / 0.07);
+  }
+
+  .scroller {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: rgb(226 220 255 / 0.18) transparent;
+  }
+
+  /* A page without links takes the focus itself, so the keys can scroll it. */
+  .scroller:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    grid-area: sidebar;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 12px;
+    user-select: none;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 10px 22px;
+  }
+
+  .section-title {
+    margin: 20px 0 8px;
+    padding: 18px 12px 0;
+    border-top: 1px solid var(--color-edge);
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .nav-link {
+    display: flex;
+    align-items: center;
+    padding-inline: 12px;
+    border-radius: var(--radius-row);
+    color: var(--color-ink-soft);
+  }
+
+  /* Inside a scrolling list an outer ring would be clipped. */
+  .nav-link:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .nav-link:hover {
+    background: var(--color-raise);
+    color: var(--color-ink);
+  }
+
+  .nav-link:active {
+    background: var(--color-lit);
+  }
+
+  /* The current place is lit from the left. */
+  .nav-link[aria-current='page'] {
+    background: linear-gradient(90deg, color-mix(in srgb, var(--color-lume) 20%, transparent), color-mix(in srgb, var(--color-iris) 5%, transparent));
+    box-shadow: inset 3px 0 0 var(--color-lume);
+    color: var(--color-ink);
+  }
+
+  .nav-link[aria-current='page'] > svg {
+    color: var(--color-lume);
+  }
+
+  /* Source tints */
+  [data-source='youtube'] {
+    --source: var(--color-youtube);
+  }
+
+  [data-source='soundcloud'] {
+    --source: var(--color-soundcloud);
+  }
+
+  [data-source='spotify'] {
+    --source: var(--color-spotify);
+  }
+
+  .badge {
+    flex: none;
+    padding: 1px 6px;
+    border-radius: var(--radius-chip);
+    background: color-mix(in oklab, var(--source) 13%, transparent);
+    color: var(--source);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  /* Main frame */
+  .stage {
+    grid-area: stage;
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    background-color: var(--color-stage);
+  }
+
+  .stage:focus-visible {
+    outline-offset: -2px;
+  }
+
+  /* A pool of light under a filament on the top edge. */
+  .beam {
+    position: absolute;
+    z-index: -1;
+    top: -380px;
+    left: -260px;
+    width: 960px;
+    height: 760px;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--color-lume) 28%, transparent),
+      color-mix(in srgb, var(--color-iris) 15%, transparent) 46%,
+      color-mix(in srgb, var(--color-iris) 4%, transparent) 72%,
+      transparent
+    );
+    pointer-events: none;
+  }
+
+  .beam::after {
+    content: '';
+    position: absolute;
+    top: 380px;
+    left: 50%;
+    width: 300px;
+    height: 2px;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      var(--color-iris),
+      var(--color-lume),
+      var(--color-ember),
+      transparent
+    );
+    translate: -50% 0;
+  }
+
+  .stage[data-view='search'] .beam {
+    translate: 22vw 0;
+  }
+
+  .stage[data-view='library'] .beam {
+    translate: 40vw 0;
+  }
+
+  /* A playlist is lit by its own cover instead: see .hero. */
+  .stage[data-view='playlist'] .beam {
+    opacity: 0;
+  }
+
+  .page-title {
+    font-family: var(--font-display);
+    font-size: clamp(2.75rem, 6vw, 4.5rem);
+    font-weight: 740;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    text-wrap: balance;
+  }
+
+  .playlist-title {
+    display: -webkit-box;
+    overflow: hidden;
+    padding-bottom: 0.08em;
+    font-size: clamp(2.25rem, 4.4vw, 3.5rem);
+    line-height: 1.05;
+    overflow-wrap: anywhere;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+  }
+
+  /*
+   * The head of a playlist or album, under a lamp in the cover's dominant colour.
+   * It bleeds to the edges of the stage and fades out before the track list.
+   */
+  .hero {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 28px;
+    margin-inline: -2.5rem;
+    padding: 3.5rem 2.5rem 1.75rem;
+    background:
+      radial-gradient(
+        64% 118% at 14% 0%,
+        color-mix(in oklab, var(--glow) 28%, transparent),
+        transparent 72%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--glow) 17%, transparent),
+        color-mix(in oklab, var(--ground) 34%, transparent) 55%,
+        transparent
+      );
+    container-type: inline-size;
+  }
+
+  /* The filament, as on every other view. */
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 2.5rem;
+    width: 300px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--glow), transparent);
+  }
+
+  /* The large cover at the head of a playlist or album. */
+  .cover {
+    flex: none;
+    width: clamp(160px, 25cqi, 224px);
+    border-radius: var(--radius-row);
+    box-shadow: 0 24px 48px -24px rgb(4 3 9 / 0.9);
+  }
+
+  /*
+   * Placeholder covers: every title under its own lamp, ringed once like the mark.
+   * lib/art.ts picks the tone and where the light stands. The tone also names the
+   * dominant colour a page backdrop is drawn from.
+   */
+  .art {
+    --x: 20%;
+    --y: 16%;
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+    padding: 9%;
+    border-radius: var(--radius-row);
+    background:
+      radial-gradient(
+        circle at var(--x) var(--y),
+        transparent calc(36% - 1px),
+        rgb(236 232 255 / 0.22) 36% calc(36% + 1px),
+        transparent calc(36% + 2px)
+      ),
+      radial-gradient(
+        circle at var(--x) var(--y),
+        color-mix(in oklab, var(--glow) 76%, transparent),
+        transparent 66%
+      ),
+      linear-gradient(150deg, var(--ground), var(--color-night));
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    container-type: inline-size;
+    user-select: none;
+  }
+
+  .art > span {
+    color: var(--color-ink);
+    font-family: var(--font-display);
+    font-size: max(12px, 28cqi);
+    font-weight: 750;
+    letter-spacing: -0.03em;
+    line-height: 0.85;
+  }
+
+  [data-tone='0'] {
+    --glow: var(--color-ember);
+    --ground: #4a2612;
+  }
+
+  [data-tone='1'] {
+    --glow: var(--color-lume);
+    --ground: #47142b;
+  }
+
+  [data-tone='2'] {
+    --glow: #c04dd2;
+    --ground: #36143f;
+  }
+
+  [data-tone='3'] {
+    --glow: #9d83d6;
+    --ground: #281d44;
+  }
+
+  [data-tone='4'] {
+    --glow: #8fb56b;
+    --ground: #1f3019;
+  }
+
+  [data-tone='5'] {
+    --glow: #5aa8bd;
+    --ground: #102c35;
+  }
+
+  .art[data-light='1'] {
+    --x: 84%;
+    --y: 20%;
+  }
+
+  .art[data-light='2'] {
+    --x: 76%;
+    --y: 74%;
+  }
+
+  .art[data-light='3'] {
+    --x: 52%;
+    --y: -6%;
+  }
+
+  /* Shelves, grids and cards */
+  .shelf {
+    container-type: inline-size;
+  }
+
+  .shelf-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 32px;
+    margin-bottom: 4px;
+  }
+
+  .shelf-title {
+    min-width: 0;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 680;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+
+  /*
+   * Only whole cards: the container picks how many fit. A card pads 10px, so rows
+   * and grids hang out by that much to line the covers up with their heading.
+   */
+  .shelf-row {
+    --fit: 3;
+    display: grid;
+    grid-auto-columns: calc(100% / var(--fit));
+    grid-auto-flow: column;
+    margin-inline: -10px;
+    overflow: auto hidden;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .shelf-row > li {
+    scroll-snap-align: start;
+  }
+
+  @container (min-width: 600px) {
+    .shelf-row {
+      --fit: 4;
+    }
+  }
+
+  @container (min-width: 780px) {
+    .shelf-row {
+      --fit: 5;
+    }
+  }
+
+  @container (min-width: 1000px) {
+    .shelf-row {
+      --fit: 6;
+    }
+  }
+
+  @container (min-width: 1220px) {
+    .shelf-row {
+      --fit: 7;
+    }
+  }
+
+  @container (min-width: 1440px) {
+    .shelf-row {
+      --fit: 8;
+    }
+  }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    row-gap: 8px;
+    margin-inline: -10px;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    border-radius: var(--radius-frame);
+    user-select: none;
+  }
+
+  /* Inside a scrolling row an outer ring would be clipped. */
+  .card:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .card:hover {
+    background: var(--color-raise);
+  }
+
+  .card:active {
+    background: var(--color-lit);
+  }
+
+  .card-title {
+    overflow: hidden;
+    margin-top: 10px;
+    font-size: 15px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin-top: 3px;
+    color: var(--color-ink-faint);
+    font-size: 13px;
+  }
+
+  .step {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink);
+  }
+
+  .step:hover {
+    background: var(--color-lit);
+  }
+
+  .step[aria-disabled='true'] {
+    background: transparent;
+    color: var(--color-ink-faint);
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  /* Search */
+  .search-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 40rem;
+    height: 48px;
+    padding-inline: 18px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink-faint);
+  }
+
+  .search-field:focus-within {
+    color: var(--color-lume-hi);
+  }
+
+  /* The ring goes around the whole field, icon included. */
+  .search-field:has(input:focus-visible) {
+    outline: 2px solid var(--color-lume-hi);
+    outline-offset: 2px;
+  }
+
+  .search-field > input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: transparent;
+    color: var(--color-ink);
+    font-size: 15px;
+    outline: none;
+  }
+
+  .search-field > input::placeholder {
+    color: var(--color-ink-faint);
+  }
+
+  .chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    padding-inline: 16px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    color: var(--color-ink-soft);
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
+  .chip:hover {
+    background: var(--color-lit);
+    color: var(--color-ink);
+  }
+
+  .chip:has(input:checked) {
+    background: var(--color-lume-hi);
+    color: var(--color-night);
+  }
+
+  .chip:has(input:focus-visible) {
+    outline: 2px solid var(--color-lume-hi);
+    outline-offset: 2px;
+  }
+
+  /* Track list */
+  .tracks {
+    container-type: inline-size;
+  }
+
+  .track {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) 72px 48px;
+    align-items: center;
+    column-gap: 16px;
+    padding-block: 7px;
+  }
+
+  .track {
+    position: relative;
+  }
+
+  /* A row's play button covers it; the light shows through. */
+  .row-play {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-chip);
+    cursor: pointer;
+  }
+
+  .row-play:hover {
+    background: rgb(226 220 255 / 0.05);
+  }
+
+  .row-play:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .track + .track {
+    border-top: 1px solid var(--color-edge);
+  }
+
+  /* Too small for a corner: the initials sit in the middle. */
+  .track .art {
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: var(--radius-chip);
+  }
+
+  /* A narrow list drops the album column first. */
+  @container (max-width: 599px) {
+    .track {
+      grid-template-columns: 40px minmax(0, 1fr) 72px 48px;
+    }
+
+    .track-album {
+      display: none;
+    }
+  }
+
+  /* A playlist's Tracks. TrackTable sets each row's height and place. */
+  .track-table {
+    container-type: inline-size;
+  }
+
+  .track-line {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 56px;
+    align-items: center;
+    column-gap: 16px;
+    padding-right: 8px;
+  }
+
+  /*
+   * The column names stay put while the rows pass under them. Until then the
+   * backdrop shows through; stuck, they sit on a bar across the whole stage.
+   */
+  .track-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-inline: -2.5rem;
+    padding-inline: 2.5rem;
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .track-head[data-stuck='true'] {
+    background: var(--color-stage);
+  }
+
+  .track-head > .track-line {
+    height: 40px;
+    box-shadow: 0 1px 0 var(--color-edge);
+  }
+
+  .track-body {
+    position: relative;
+    margin-top: 6px;
+    /* Rows are placed by hand, so the browser must not nudge the scroll to follow them. */
+    overflow-anchor: none;
+  }
+
+  .track-row {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+  }
+
+  .track-number {
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  /* Stands in for a title that is still on its way. */
+  .track-blank {
+    display: block;
+    width: 38%;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--color-raise);
+  }
+
+  @container (max-width: 599px) {
+    .track-line {
+      grid-template-columns: 48px minmax(0, 1fr) 72px 56px;
+    }
+  }
+
+  .lamp {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 76px;
+    height: 76px;
+    border-radius: 999px;
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--color-lume) 24%, transparent), color-mix(in srgb, var(--color-iris) 8%, transparent));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-lume-hi) 16%, transparent);
+    color: var(--color-lume-hi);
+  }
+
+  .alert {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    max-width: 36rem;
+    margin-bottom: 24px;
+    padding: 12px 16px;
+    border-radius: var(--radius-row);
+    background: var(--color-lit);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ember) 50%, transparent);
+    overflow-wrap: anywhere;
+  }
+
+  .alert > svg {
+    flex: none;
+    color: var(--color-ember);
+  }
+
+  /* Queue panel */
+  .queue-panel {
+    grid-area: queue;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    padding: 16px 12px 12px;
+    user-select: none;
+  }
+
+  /* A narrow window has no room for three columns: the panel lies over the stage. */
+  @media (max-width: 1099px) {
+    .shell[data-queue='open'] {
+      grid-template-areas:
+        'sidebar stage'
+        'player player';
+      grid-template-columns: 264px minmax(0, 1fr);
+    }
+
+    .queue-panel {
+      grid-area: stage;
+      justify-self: end;
+      z-index: 2;
+      width: 320px;
+      box-shadow:
+        inset 0 0 0 1px var(--color-edge),
+        0 0 48px rgb(4 3 9 / 0.7);
+    }
+  }
+
+  .queue-label {
+    margin-bottom: 4px;
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .queue-scroll {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .queue-list {
+    position: relative;
+    /* Rows are placed by hand, so the browser must not nudge the scroll to follow them. */
+    overflow-anchor: none;
+  }
+
+  .queue-row {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 4px;
+    line-height: 1.25;
+  }
+
+  .queue-row[data-dragged='true'] {
+    opacity: 0.5;
+  }
+
+  /* Sits inside its row, so every row keeps the same height. */
+  .queue-heading {
+    overflow: hidden;
+    color: var(--color-lume-hi);
+    font-size: 11px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .queue-handle {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-chip);
+    color: var(--color-ink-faint);
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .queue-handle:hover {
+    background: var(--color-raise);
+    color: var(--color-ink);
+  }
+
+  .queue-handle:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .queue-drop {
+    position: absolute;
+    right: 0;
+    left: 0;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 999px;
+    background: var(--color-lume);
+    pointer-events: none;
+  }
+
+  /* Player */
+  .player {
+    grid-area: player;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 24px;
+    padding-inline: 16px;
+    user-select: none;
+  }
+
+  .art-slot {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 56px;
+    height: 56px;
+    border-radius: var(--radius-row);
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink-faint);
+  }
+
+  .transport {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    color: var(--color-ink-soft);
+  }
+
+  .transport-play {
+    width: 40px;
+    height: 40px;
+    background: var(--color-lume-hi);
+    color: var(--color-night);
+  }
+
+  .transport:disabled,
+  .transport[aria-disabled='true'] {
+    opacity: 0.38;
+    cursor: default;
+  }
+
+  /* The cover of the current Track, small: its initials sit in the middle. */
+  .now-art {
+    flex: none;
+    width: 56px;
+  }
+
+  .now-art .art {
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .seek {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    color: var(--color-ink-faint);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .slider {
+    flex: 1;
+    min-width: 0;
+    height: 16px;
+    accent-color: var(--color-lume-hi);
+    cursor: pointer;
+  }
+
+  .slider:disabled {
+    opacity: 0.38;
+    cursor: default;
+  }
+
+  .volume {
+    display: flex;
+    flex: 0 1 140px;
+    align-items: center;
+    gap: 8px;
+    color: var(--color-ink-faint);
+  }
+}
+
+/* One entrance when the window opens: the lamp comes on, then the room appears. */
+@media (prefers-reduced-motion: no-preference) {
+  .nav-link,
+  .card,
+  .chip,
+  .step {
+    transition:
+      background-color 150ms var(--ease-glide),
+      color 150ms var(--ease-glide);
+  }
+
+  .shelf-row {
+    scroll-behavior: smooth;
+  }
+
+  .beam {
+    animation: ignite 900ms var(--ease-glide) backwards;
+    transition:
+      translate 640ms var(--ease-glide),
+      opacity 640ms var(--ease-glide);
+  }
+
+  .rise {
+    animation: rise 460ms var(--ease-glide) backwards;
+    animation-delay: calc(140ms + var(--order, 0) * 35ms);
+  }
+
+  .page {
+    animation: rise 380ms var(--ease-glide) backwards;
+  }
+
+  .player {
+    animation: rise 520ms var(--ease-glide) 240ms backwards;
+  }
+}
+
+@keyframes ignite {
+  from {
+    opacity: 0;
+    scale: 0.6;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}

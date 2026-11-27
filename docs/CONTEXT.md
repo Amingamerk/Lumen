@@ -14,6 +14,37 @@ metadata; it holds no Stream URL. Queue, playlists, likes and history refer to T
 `SourceRef` is a pointer to one item on one service: `kind` + the service's own `id`.
 `SourceKind` is `YouTube` (YouTube Music), `SoundCloud` or `Spotify`.
 
+### Playlist, Album and Collection
+A playlist is an ordered list of Tracks that someone put together; an album is a release by its artists. Each
+comes from one `SourceKind`. **Collection** is the word for either one: both are shown as cards and opened on
+the playlist route.
+
+### Track slice
+Some consecutive rows of one Collection (`offset`, `limit`, at most 200) with the Collection's total. The
+whole list stays in Rust; the playlist route asks for the slices it is about to show.
+
+### Shelf
+One horizontal row of Collection cards on Home.
+
+### Search
+A query plus a source chip: `All`, `YouTube` or `SoundCloud` (Spotify shows up under `All`). Every word must
+appear in a Track's title, artists or album, a playlist's name, or an album's title or artists. A blank query
+matches everything. Rust does the matching and remembers the last query and chip.
+
+### Queue
+The ordered list of what plays. Starting a Collection or a search result replaces it with all of their
+Tracks. When Next or the end of a track passes the last entry, the **Recommender** appends an **autoplay**
+pick and keeps a few upcoming. The history is the entries before the current one. The whole Queue stays in
+Rust; the UI asks for the upcoming rows it shows.
+
+### Queue entry
+One place in the Queue: a Track plus a `key` that is unique and never reused, so the same Track twice is two
+entries. Reordering moves an upcoming entry before another, by key.
+
+### Engine
+What makes sound, behind the `Engine` trait: load, play or pause, seek, volume, position. It is simulated
+until libmpv arrives (Milestone 2).
+
 ### Source
 The metadata role of a service, behind the `Source` trait: `search` and `related` (radio seeds), returning
 Tracks. Library import also belongs to the source module. A Source never produces audio.
@@ -66,9 +97,11 @@ PROJECT.md section 3c.
 | UI (Svelte) | Rendering, user input | Call external services, hold player state or secrets |
 | `ipc` | Commands in, events out | Business logic |
 | `sources` | Service APIs, import, metadata -> Track | Play audio |
+| `catalog` | Domain shapes, the static fixtures, Home/Library/Search views, Track slices | Call services, store data |
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
-| `audio` | libmpv, playback state | Resolve URLs |
+| `recs` | Autoplay picks (static until Milestone 6) | Play audio |
+| `audio` | Engine, playback state, transport rules | Resolve URLs |
 | `library` | SQLite: Tracks, playlists, history, caches, Matches | Store secrets |
 
 ## Invariants

@@ -5,7 +5,7 @@ model: sonnet
 tools: Read, Grep, Glob
 ---
 
-You audit code that talks to YouTube Music, SoundCloud, Spotify or yt-dlp. The goal is that the owner's own accounts are not flagged. Read docs/PROJECT.md sections 3b and 3c and the Hard rules in CLAUDE.md first, then the diff.
+You audit code that talks to YouTube Music, SoundCloud, Spotify or yt-dlp. The goal is that the owner's own accounts are not flagged. Read docs/PROJECT.md sections 3b and 3c and the Hard rules in CLAUDE.md (skip CLAUDE.md if it is already in your context), then the diff. Open whole files only where the diff needs context.
 
 ## Checklist
 

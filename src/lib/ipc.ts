@@ -1,0 +1,204 @@
+// The only door to Rust. Types mirror src-tauri/src/state.rs and src-tauri/src/catalog/.
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
+
+export type SourceKind = 'youtube' | 'soundcloud' | 'spotify';
+
+export interface SourceTag {
+  source: SourceKind;
+  badge: 'YT' | 'SC' | 'SP';
+}
+
+export interface PlaylistSummary extends SourceTag {
+  id: string;
+  name: string;
+}
+
+/** A playlist or album as a card or a page header shows it. */
+export interface CollectionSummary extends SourceTag {
+  id: string;
+  kind: 'playlist' | 'album';
+  title: string;
+  /** A playlist's description, or an album's artists. */
+  subtitle: string;
+}
+
+/** A Collection as its page header shows it. */
+export interface CollectionDetail extends CollectionSummary {
+  trackCount: number;
+  /** The length of all its Tracks together. */
+  durationMs: number;
+}
+
+export interface TrackRow {
+  id: string;
+  title: string;
+  artists: string[];
+  album: string | null;
+  durationMs: number;
+  sources: SourceTag[];
+}
+
+/** Some consecutive rows of a Collection. The rest stay in Rust. */
+export interface TrackSlice {
+  total: number;
+  /** The position of the first row asked for, counted from 0. */
+  offset: number;
+  tracks: TrackRow[];
+}
+
+/** One horizontal row of cards on Home. */
+export interface Shelf {
+  id: string;
+  title: string;
+  items: CollectionSummary[];
+}
+
+export interface Library {
+  playlists: CollectionSummary[];
+  albums: CollectionSummary[];
+}
+
+export type SourceFilter = 'all' | 'youtube' | 'soundcloud';
+
+/** A search and what Rust found for it. */
+export interface SearchView {
+  query: string;
+  filter: SourceFilter;
+  tracks: TrackRow[];
+  collections: CollectionSummary[];
+}
+
+export type Route =
+  | { view: 'home' }
+  | { view: 'search' }
+  | { view: 'library' }
+  | { view: 'playlist'; id: string };
+
+export interface NavigationState {
+  route: Route;
+  queueOpen: boolean;
+  revision: number;
+}
+
+export interface AppSnapshot {
+  navigation: NavigationState;
+  playlists: PlaylistSummary[];
+}
+
+// Playback. Mirrors src-tauri/src/audio/state.rs.
+
+export type PlaybackStatus = 'idle' | 'playing' | 'paused';
+
+/** The current Queue entry. */
+export interface NowPlaying {
+  key: number;
+  track: TrackRow;
+  /** Whether the Recommender picked it. */
+  autoplay: boolean;
+}
+
+/** Everything about playback but the Queue's rows. */
+export interface PlayerState {
+  revision: number;
+  status: PlaybackStatus;
+  current: NowPlaying | null;
+  positionMs: number;
+  durationMs: number;
+  /** From 0 to 100. */
+  volume: number;
+  canNext: boolean;
+  /** How many entries come after the current one. */
+  upcoming: number;
+  queueRevision: number;
+}
+
+/** The clock moving on. It belongs to the state with the same revision. */
+export interface PlayerPosition {
+  revision: number;
+  positionMs: number;
+}
+
+export interface QueueItem {
+  key: number;
+  track: TrackRow;
+  autoplay: boolean;
+}
+
+/** Some consecutive upcoming entries. */
+export interface QueueSlice {
+  queueRevision: number;
+  offset: number;
+  total: number;
+  items: QueueItem[];
+}
+
+export interface Bridge {
+  getAppState(): Promise<AppSnapshot>;
+  navigate(route: Route): Promise<void>;
+  getHome(): Promise<Shelf[]>;
+  getLibrary(): Promise<Library>;
+  getCollection(id: string): Promise<CollectionDetail>;
+  /** Up to `limit` rows of a playlist or album, starting at `offset`. */
+  getTrackSlice(playlistId: string, offset: number, limit: number): Promise<TrackSlice>;
+  /** The search Rust remembers, with its results. */
+  getSearch(): Promise<SearchView>;
+  searchCatalog(query: string, filter: SourceFilter): Promise<SearchView>;
+  /** Resolves with a function that stops listening. */
+  onNavigationChanged(handler: (navigation: NavigationState) => void): Promise<() => void>;
+
+  getPlayerState(): Promise<PlayerState>;
+  /** Up to `limit` upcoming entries, starting at `offset`. */
+  getQueue(offset: number, limit: number): Promise<QueueSlice>;
+  // The answer to each of these arrives as an event.
+  playCollection(id: string, index: number): Promise<void>;
+  playSearchResult(trackId: string): Promise<void>;
+  togglePlay(): Promise<void>;
+  nextTrack(): Promise<void>;
+  previousTrack(): Promise<void>;
+  seek(positionMs: number): Promise<void>;
+  seekBy(deltaMs: number): Promise<void>;
+  setVolume(volume: number): Promise<void>;
+  changeVolume(delta: number): Promise<void>;
+  moveQueueEntry(key: number, before: number | null): Promise<void>;
+  toggleQueue(): Promise<void>;
+  onPlayerChanged(handler: (state: PlayerState) => void): Promise<() => void>;
+  onPlayerPosition(handler: (position: PlayerPosition) => void): Promise<() => void>;
+}
+
+/** Must match NAVIGATION_CHANGED in src-tauri/src/ipc/mod.rs. */
+const NAVIGATION_CHANGED = 'navigation-changed';
+/** Must match the names in src-tauri/src/ipc/player.rs. */
+const PLAYER_CHANGED = 'player-changed';
+const PLAYER_POSITION = 'player-position';
+
+export const tauriBridge: Bridge = {
+  getAppState: () => invoke<AppSnapshot>('get_app_state'),
+  navigate: (route) => invoke('navigate', { route }),
+  getHome: () => invoke<Shelf[]>('get_home'),
+  getLibrary: () => invoke<Library>('get_library'),
+  getCollection: (id) => invoke<CollectionDetail>('get_collection', { id }),
+  getTrackSlice: (playlistId, offset, limit) =>
+    invoke<TrackSlice>('get_track_slice', { playlistId, offset, limit }),
+  getSearch: () => invoke<SearchView>('get_search'),
+  searchCatalog: (query, filter) => invoke<SearchView>('search_catalog', { query, filter }),
+  onNavigationChanged: (handler) =>
+    listen<NavigationState>(NAVIGATION_CHANGED, (event) => handler(event.payload)),
+  getPlayerState: () => invoke<PlayerState>('get_player_state'),
+  getQueue: (offset, limit) => invoke<QueueSlice>('get_queue', { offset, limit }),
+  playCollection: (id, index) => invoke('play_collection', { id, index }),
+  playSearchResult: (trackId) => invoke('play_search_result', { trackId }),
+  togglePlay: () => invoke('toggle_play'),
+  nextTrack: () => invoke('next_track'),
+  previousTrack: () => invoke('previous_track'),
+  seek: (positionMs) => invoke('seek', { positionMs }),
+  seekBy: (deltaMs) => invoke('seek_by', { deltaMs }),
+  setVolume: (volume) => invoke('set_volume', { volume }),
+  changeVolume: (delta) => invoke('change_volume', { delta }),
+  moveQueueEntry: (key, before) => invoke('move_queue_entry', { key, before }),
+  toggleQueue: () => invoke('toggle_queue'),
+  onPlayerChanged: (handler) =>
+    listen<PlayerState>(PLAYER_CHANGED, (event) => handler(event.payload)),
+  onPlayerPosition: (handler) =>
+    listen<PlayerPosition>(PLAYER_POSITION, (event) => handler(event.payload)),
+};

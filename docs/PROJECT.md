@@ -276,15 +276,19 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 - **Player bar (bottom)**: artwork + title, controls, seek bar, volume, queue button.
 - **Queue panel** (right side, toggle) with drag-to-reorder.
 - Small **source badge** (YT / SC / SP) on each track.
-- Keyboard: Space play/pause, Ctrl+F search, Ctrl+Left/Right prev/next. Media keys work globally.
+- Keyboard: Space play/pause, Ctrl+F search, Ctrl+Left/Right prev/next, Shift+Left/Right seek 5 s back or
+  forward, Ctrl+Up/Down volume. Media keys work globally.
 - Mini-player mode later.
 
 ## 6. Project structure
 
 The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout". Rust code lives in
-`src-tauri/src/` split into `ipc/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`, `recs/`,
-`art/` and `media/`; the Svelte app lives in `src/`; spikes in `spikes/`; developer scripts in `scripts/`;
-docs in `docs/`.
+`src-tauri/src/` split into `ipc/`, `catalog/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`,
+`recs/`, `art/` and `media/`, plus `state.rs` for navigation, search and catalog state; the Svelte app lives
+in `src/`; spikes in `spikes/`; developer scripts in `scripts/`; docs in `docs/`. `catalog/` holds the domain
+shapes, the views built from them, search and Track slices (the playlist page gets only the rows it shows);
+its data is a static fixture, including a generated 5,000-Track playlist that Search leaves out, until the
+SQLite library replaces it in Milestone 3.
 
 ## 7. Milestones
 
