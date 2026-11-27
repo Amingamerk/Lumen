@@ -4,6 +4,7 @@ mod engine;
 mod player;
 mod simulated;
 mod state;
+pub mod ticker;
 
 pub use engine::{Engine, EngineEvent};
 pub use player::{Player, PlayerError};
@@ -11,3 +12,4 @@ pub use simulated::{Clock, SimulatedEngine, SystemClock};
 pub use state::{
     NowPlaying, PlaybackStatus, PlayerEvent, PlayerPosition, PlayerState, QueueItem, QueueSlice,
 };
+pub use ticker::Wake;

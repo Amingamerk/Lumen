@@ -1,7 +1,10 @@
 //! Navigation, search and catalog state. Rust owns it; the UI mirrors it
 //! through IPC.
 
+use std::sync::Arc;
+
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 use crate::catalog::{
     Catalog, CollectionDetail, Library, Playlist, SearchView, Shelf, SourceFilter, SourceKind,
@@ -41,8 +44,11 @@ pub enum Route {
 /// The current route plus a counter that grows with every change, so the UI can
 /// drop a snapshot that arrives after a newer event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NavigationState {
     pub route: Route,
+    /// Whether the queue panel is showing.
+    pub queue_open: bool,
     pub revision: u64,
 }
 
@@ -57,6 +63,8 @@ pub struct AppSnapshot {
 pub enum StateError {
     #[error("no playlist or album has the id “{id}”")]
     UnknownCollection { id: String },
+    #[error("the last search did not find the track {id}")]
+    NotInSearch { id: Uuid },
 }
 
 fn unknown_collection(id: &str) -> StateError {
@@ -73,7 +81,8 @@ struct SearchRequest {
 #[derive(Debug)]
 pub struct AppState {
     navigation: NavigationState,
-    catalog: Catalog,
+    /// Shared with the player, which has a lock of its own.
+    catalog: Arc<Catalog>,
     search: SearchRequest,
 }
 
@@ -82,9 +91,10 @@ impl Default for AppState {
         Self {
             navigation: NavigationState {
                 route: Route::Home,
+                queue_open: false,
                 revision: 0,
             },
-            catalog: Catalog::default(),
+            catalog: Arc::default(),
             search: SearchRequest::default(),
         }
     }
@@ -117,9 +127,21 @@ impl AppState {
         }
         self.navigation = NavigationState {
             route,
+            queue_open: self.navigation.queue_open,
             revision: self.navigation.revision + 1,
         };
         Ok(Some(self.navigation.clone()))
+    }
+
+    /// Shows or hides the queue panel.
+    pub fn toggle_queue(&mut self) -> NavigationState {
+        self.navigation.queue_open = !self.navigation.queue_open;
+        self.navigation.revision += 1;
+        self.navigation.clone()
+    }
+
+    pub fn catalog(&self) -> Arc<Catalog> {
+        Arc::clone(&self.catalog)
     }
 
     pub fn home(&self) -> Vec<Shelf> {
@@ -156,6 +178,17 @@ impl AppState {
             filter,
         };
         self.search_view()
+    }
+
+    /// What playing a result of the remembered search queues: all its Tracks,
+    /// and where `track_id` is among them.
+    pub fn search_queue(&self, track_id: Uuid) -> Result<(Vec<Uuid>, usize), StateError> {
+        let tracks: Vec<Uuid> = self.search_view().tracks.iter().map(|t| t.id).collect();
+        let start = tracks
+            .iter()
+            .position(|id| *id == track_id)
+            .ok_or(StateError::NotInSearch { id: track_id })?;
+        Ok((tracks, start))
     }
 
     /// The remembered search with its results.
@@ -229,6 +262,7 @@ mod tests {
             first,
             Some(NavigationState {
                 route: Route::Search,
+                queue_open: false,
                 revision: 1
             })
         );
@@ -236,6 +270,7 @@ mod tests {
             second,
             Some(NavigationState {
                 route: Route::Library,
+                queue_open: false,
                 revision: 2
             })
         );
@@ -406,6 +441,58 @@ mod tests {
     }
 
     #[test]
+    fn toggling_the_queue_flips_it_and_bumps_the_revision() {
+        let mut state = AppState::default();
+
+        let opened = state.toggle_queue();
+        let closed = state.toggle_queue();
+
+        assert_eq!((opened.queue_open, opened.revision), (true, 1));
+        assert_eq!((closed.queue_open, closed.revision), (false, 2));
+        assert_eq!(state.snapshot().navigation, closed);
+    }
+
+    #[test]
+    fn navigating_keeps_the_queue_open() {
+        let mut state = AppState::default();
+        state.toggle_queue();
+
+        let changed = state.navigate(Route::Library).unwrap();
+
+        assert_eq!(changed.map(|n| n.queue_open), Some(true));
+    }
+
+    #[test]
+    fn a_search_result_queues_the_remembered_results() {
+        let mut state = AppState::default();
+        let found: Vec<Uuid> = state
+            .search("night", SourceFilter::All)
+            .tracks
+            .iter()
+            .map(|t| t.id)
+            .collect();
+        assert!(found.len() > 1);
+
+        assert_eq!(state.search_queue(found[1]), Ok((found.clone(), 1)));
+    }
+
+    #[test]
+    fn a_track_outside_the_search_is_rejected() {
+        let mut state = AppState::default();
+        state.search("night", SourceFilter::All);
+        let id = Uuid::from_u128(999_999);
+
+        assert_eq!(state.search_queue(id), Err(StateError::NotInSearch { id }));
+    }
+
+    #[test]
+    fn shares_one_catalog_with_the_player() {
+        let state = AppState::default();
+
+        assert!(Arc::ptr_eq(&state.catalog(), &state.catalog()));
+    }
+
+    #[test]
     fn routes_serialize_with_a_view_tag() {
         let cases = [
             (Route::Home, json!({ "view": "home" })),
@@ -468,7 +555,7 @@ mod tests {
 
         assert_eq!(
             wire["navigation"],
-            json!({ "route": { "view": "home" }, "revision": 0 })
+            json!({ "route": { "view": "home" }, "queueOpen": false, "revision": 0 })
         );
         assert_eq!(
             wire["playlists"].as_array().map(Vec::len),
