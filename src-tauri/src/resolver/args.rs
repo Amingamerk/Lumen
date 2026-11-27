@@ -10,13 +10,13 @@ pub enum Clients {
     /// User-Agent.
     Default,
     /// Only clients without a built-in User-Agent, so `--user-agent` applies to
-    /// them.
+    /// them. Kept as the way back if a PO token provider is added (ADR 0003).
     #[cfg_attr(not(test), allow(dead_code))]
     PinnedUserAgent,
 }
 
-/// The one place the choice is made. The defaults are what spike #4 proved on a
-/// signed-in account; #60 settles whether `web_music,web` works too.
+/// The one place the choice is made. ADR 0003: signed in, `web_music,web` gets
+/// no audio-only format without a PO token, so Lumen keeps the defaults.
 pub const CLIENTS: Clients = Clients::Default;
 
 /// The paths one run needs.

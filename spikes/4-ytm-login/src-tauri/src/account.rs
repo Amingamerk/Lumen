@@ -1,7 +1,7 @@
 //! The one YouTube Music account: saving and clearing its session, and the single test run.
 //! Every session write and every call to YouTube goes through one lock and one [`Gate`].
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::PoisonError};
 
 use serde::Serialize;
 use tokio::sync::Mutex;
@@ -11,7 +11,8 @@ use crate::{
     cookies::Cookie,
     gate::{Gate, parse_retry_after},
     innertube::{BrowseError, PlaylistPage, liked_playlists},
-    resolver::{Clients, ResolveError, ResolveReport, Resolver, YtDlp, watch_url},
+    resolver::{Clients, LastStream, ResolveError, ResolveReport, Resolver, YtDlp, watch_url},
+    safe_report,
     session::{CaptureMethod, SecretStore, Session, SessionError, SessionStatus, SessionVault},
     transport::Transport,
 };
@@ -67,6 +68,8 @@ pub struct CheckReport {
     pub blocked: Option<String>,
     pub browse: Option<Result<PlaylistPage, String>>,
     pub resolve: Option<Result<ResolveReport, String>>,
+    /// The same run as text that is safe to copy into the findings.
+    pub safe_report: String,
 }
 
 pub struct Account<S, T, Y, C> {
@@ -76,6 +79,8 @@ pub struct Account<S, T, Y, C> {
     clock: C,
     jar_dir: PathBuf,
     gate: Mutex<Gate>,
+    /// Memory only: dropped with the session and at the start of the next run.
+    last_stream: std::sync::Mutex<Option<LastStream>>,
 }
 
 impl<S: SecretStore, T: Transport, Y: YtDlp, C: Clock> Account<S, T, Y, C> {
@@ -87,6 +92,7 @@ impl<S: SecretStore, T: Transport, Y: YtDlp, C: Clock> Account<S, T, Y, C> {
             clock,
             jar_dir,
             gate: Mutex::default(),
+            last_stream: Default::default(),
         }
     }
 
@@ -104,13 +110,30 @@ impl<S: SecretStore, T: Transport, Y: YtDlp, C: Clock> Account<S, T, Y, C> {
     ) -> Result<SessionStatus, SessionError> {
         let session = Session::new(cookies, user_agent, method, self.clock.now())?;
         let _only_writer = self.gate.lock().await;
+        self.keep(None);
         self.vault.save(&session)?;
         Ok(session.status())
     }
 
     pub async fn clear(&self) -> Result<(), SessionError> {
         let _only_writer = self.gate.lock().await;
+        self.keep(None);
         self.vault.clear()
+    }
+
+    /// The stream of the latest run, if that run resolved a playable one.
+    pub fn last_stream(&self) -> Option<LastStream> {
+        self.last_stream
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn keep(&self, stream: Option<LastStream>) {
+        *self
+            .last_stream
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = stream;
     }
 
     /// Returns once no run is in flight, so its cookie file is gone.
@@ -120,6 +143,12 @@ impl<S: SecretStore, T: Transport, Y: YtDlp, C: Clock> Account<S, T, Y, C> {
 
     /// One browse call, then one resolve. Stops at the first failure and never retries.
     pub async fn check(&self, track_url: &str, clients: Clients) -> CheckReport {
+        let mut report = self.run_check(track_url, clients).await;
+        report.safe_report = safe_report::text(clients, self.clock.now(), &report);
+        report
+    }
+
+    async fn run_check(&self, track_url: &str, clients: Clients) -> CheckReport {
         let blocked = |reason: String| CheckReport {
             blocked: Some(reason),
             ..CheckReport::default()
@@ -140,6 +169,7 @@ impl<S: SecretStore, T: Transport, Y: YtDlp, C: Clock> Account<S, T, Y, C> {
             return blocked(error.to_string());
         }
 
+        self.keep(None);
         let mut report = CheckReport::default();
         let browse = liked_playlists(&self.transport, &session, self.clock.now()).await;
         match browse {
@@ -158,7 +188,8 @@ impl<S: SecretStore, T: Transport, Y: YtDlp, C: Clock> Account<S, T, Y, C> {
             jar_dir: self.jar_dir.clone(),
         };
         report.resolve = Some(match resolver.resolve(&session, track_url, clients).await {
-            Ok(resolved) => {
+            Ok((resolved, stream)) => {
+                self.keep(stream);
                 if matches!(resolved.range_status, 200 | 206) {
                     gate.success();
                 } else {
@@ -312,6 +343,154 @@ mod tests {
         assert_eq!(account.transport.probes.lock().unwrap().len(), 1);
         assert_eq!(account.ytdlp.runs(), 1);
         assert!(!is_expired(&account).await);
+    }
+
+    #[tokio::test]
+    async fn keeps_the_last_resolved_stream_until_the_session_is_cleared_or_replaced() {
+        let (store, dir) = (MemoryStore::default(), tempfile::tempdir().unwrap());
+        let answers = [library(), response(206, ""), library(), response(206, "")];
+        let account = account(&store, &answers, stream(), &dir).await;
+        assert!(account.last_stream().is_none());
+
+        run(&account).await;
+        assert!(account.last_stream().is_some());
+        account.clear().await.unwrap();
+        assert!(account.last_stream().is_none());
+
+        let fresh = session();
+        account
+            .save(fresh.cookies.clone(), &fresh.user_agent, fresh.method)
+            .await
+            .unwrap();
+        pass_time(&account, 60);
+        run(&account).await;
+        assert!(account.last_stream().is_some());
+        account
+            .save(fresh.cookies, &fresh.user_agent, fresh.method)
+            .await
+            .unwrap();
+        assert!(account.last_stream().is_none());
+    }
+
+    #[tokio::test]
+    async fn a_failed_run_drops_the_earlier_stream_but_a_blocked_one_keeps_it() {
+        let (store, dir) = (MemoryStore::default(), tempfile::tempdir().unwrap());
+        let answers = [library(), response(206, ""), response(429, "")];
+        let account = account(&store, &answers, stream(), &dir).await;
+        run(&account).await;
+
+        assert!(run(&account).await.blocked.is_some());
+        assert!(account.last_stream().is_some());
+        pass_time(&account, 60);
+        run(&account).await;
+
+        assert!(account.last_stream().is_none());
+    }
+
+    #[tokio::test]
+    async fn the_safe_report_records_the_run_without_urls_cookies_or_account_data() {
+        let (store, dir) = (MemoryStore::default(), tempfile::tempdir().unwrap());
+        let library = response(
+            200,
+            r#"{"contents": {"gridRenderer": {"items": [{"musicTwoRowItemRenderer": {
+                "title": {"runs": [{"text": "My private mix"}]},
+                "navigationEndpoint": {"browseEndpoint": {"browseId": "VLPLsecret"}}}}]}}}"#,
+        );
+        let ytdlp = FakeYtDlp {
+            stderr: "[debug] [youtube] [jsc:deno] Running deno: deno run -".into(),
+            ..FakeYtDlp::printing(
+                json!({
+                    "format_id": "251", "acodec": "opus", "vcodec": "none", "abr": 129.5,
+                    "tbr": 130.5, "protocol": "https",
+                    "url": "https://r.googlevideo.com/v?expire=1700021600&c=WEB_REMIX&sig=fake-signature",
+                    "http_headers": {"User-Agent": "StreamAgent/1.0"}
+                })
+                .to_string(),
+            )
+        };
+        let account = account(&store, &[library, response(206, "")], ytdlp, &dir).await;
+
+        let report = account.check(TRACK, Clients::PinnedUserAgent).await;
+
+        assert!(
+            report
+                .browse
+                .as_ref()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .playlists
+                .len()
+                == 1
+        );
+        let lines: Vec<&str> = report.safe_report.lines().collect();
+        assert_eq!(
+            lines[..lines.len() - 1],
+            [
+                "mode: web_music,web",
+                "run_at: 1700000000",
+                "browse: ok",
+                "resolve: ok",
+                "client: WEB_REMIX",
+                "format_id: 251",
+                "audio_only: yes",
+                "vcodec: none",
+                "codec: opus",
+                "abr_kbps: 129.5",
+                "tbr_kbps: 130.5",
+                "protocol: https (HTTPS)",
+                "available_at: none",
+                "waited_s: 0",
+                "expires_at: 1700021600 (in 21600 s)",
+                "range_status: 206",
+                "user_agent_matches_login: no",
+                "deno_started: yes",
+                "warnings: none known",
+            ]
+        );
+        assert!(lines.last().unwrap().starts_with("resolve_ms: "));
+        let signed_in = session();
+        for secret in signed_in
+            .cookies
+            .iter()
+            .map(|cookie| cookie.value.as_str())
+            .chain([
+                signed_in.user_agent.as_str(),
+                "googlevideo",
+                "://",
+                "signature",
+            ])
+            .chain(["private mix", "PLsecret", "dQw4w9WgXcQ"])
+        {
+            assert!(!report.safe_report.contains(secret), "{secret}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_safe_report_names_failures_and_drops_urls_from_messages() {
+        let (store, dir) = (MemoryStore::default(), tempfile::tempdir().unwrap());
+        let ytdlp = FakeYtDlp::failing("ERROR: Requested format is not available");
+        let account = account(&store, &[library()], ytdlp, &dir).await;
+
+        let bad_url = account.check("https://example.org", Clients::Default).await;
+        let failed = run(&account).await;
+
+        assert!(
+            bad_url.safe_report.contains("mode: yt-dlp defaults\n"),
+            "{}",
+            bad_url.safe_report
+        );
+        assert!(
+            bad_url
+                .safe_report
+                .contains("blocked: enter a track URL like [url]")
+        );
+        assert!(!bad_url.safe_report.contains("://"));
+        assert!(
+            failed
+                .safe_report
+                .contains("resolve: error: yt-dlp: no audio format was available")
+        );
     }
 
     #[tokio::test]

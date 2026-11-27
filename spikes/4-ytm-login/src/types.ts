@@ -17,6 +17,9 @@ export type ResolveReport = {
   format_id: string;
   codec: string | null;
   abr_kbps: number | null;
+  tbr_kbps: number | null;
+  vcodec: string | null;
+  audio_only: boolean;
   protocol: string | null;
   client: string | null;
   available_at: number | null;
@@ -24,6 +27,7 @@ export type ResolveReport = {
   expires_at: number | null;
   resolve_ms: number;
   user_agent_matches_login: boolean;
+  deno_started: boolean;
   range_status: number;
   warnings: string[];
 };
@@ -34,6 +38,7 @@ export type CheckReport = {
   blocked: string | null;
   browse: Step<PlaylistPage> | null;
   resolve: Step<ResolveReport> | null;
+  safe_report: string;
 };
 
 export type Clients = 'Default' | 'PinnedUserAgent';

@@ -11,6 +11,8 @@ pub mod gate;
 pub mod http;
 pub mod innertube;
 pub mod jar;
+pub mod player;
 pub mod resolver;
+mod safe_report;
 pub mod session;
 pub mod transport;

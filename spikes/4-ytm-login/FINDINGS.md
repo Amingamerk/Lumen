@@ -20,6 +20,36 @@ authenticated `yt-dlp` resolve + Range check succeeded with HTTP 206.
 | Authenticated yt-dlp resolve, client, `available_at`, Range status | **Worked** (yt-dlp defaults: TVHTML5, format 251 opus 128.93 kbps https, HTTP 206, 0 s wait, ~6 h expiry, stream UA matched login) |
 | Cookie-import fallback works against YouTube | Not needed (WebView2 login succeeded directly; import path verified offline with fake cookies) |
 
+## Issue #60: client sets compared (2026-11-27)
+
+Run by the owner with the spike build at `8866185`, yt-dlp 2026.11.23 and Deno 2.9.8 (the versions #61
+pins), on a **free** account (not Premium). Three different tracks per mode, runs alternating, 35 s or
+more apart, no retries, no 429, captcha or rejected session. Every run: `browse` ok, Deno started, HTTP 206
+on the Range request, stream User-Agent equal to the login one, expiry about 6 h (21,591 to 21,594 s).
+Times are CET.
+
+| Run | Mode | Client | Format | Codec | Audio only | Bitrate | Protocol | `available_at` wait | Resolve | Warnings |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 22:23:35 | defaults | `TVHTML5` | 251 | opus | yes | 124.9 kbps | HTTPS | 3 s | 6,875 ms | none known |
+| 22:24:43 | `web_music,web` | `WEB_REMIX` | 18 | mp4a.40.2 + avc1.42001E | no | 191.7 kbps total | HTTPS | 4 s | 6,556 ms | formats skipped: PO token required |
+| 22:26:22 | defaults | `TVHTML5` | 251 | opus | yes | 128.4 kbps | HTTPS | 4 s | 6,745 ms | none known |
+| 22:26:57 | `web_music,web` | `WEB_REMIX` | 18 | mp4a.40.2 + avc1.42001E | no | 121.9 kbps total | HTTPS | 3 s | 6,229 ms | formats skipped: PO token required |
+| 22:27:50 | `web_music,web` | `WEB_REMIX` | 18 | mp4a.40.2 + avc1.42001E | no | 113.7 kbps total | HTTPS | 5 s | 6,258 ms | formats skipped: PO token required |
+| 22:28:30 | defaults | `TVHTML5` | 251 | opus | yes | 125.3 kbps | HTTPS | 4 s | 6,332 ms | none known |
+
+- **`web_music,web` offers no `bestaudio` format** on a free account: every audio-only format is skipped
+  for a missing GVS PO token. What is left is format 18, a combined 360p H.264 + AAC stream (113.7 to 191.7
+  kbps total, AAC share unknown). It plays, but downloads video for nothing, at lower audio quality. No HLS
+  format was chosen by `bestaudio/best`.
+- **The defaults deliver**: Opus 251 at about 125 kbps, audio only, no warnings, the same as spike #4 but
+  about half its resolve time (6.3 to 6.9 s against 12.3 s).
+- libmpv played a defaults stream (format 251) audibly through "Play 5 s in libmpv".
+- The stream fetch carried the login User-Agent in both modes. With the defaults, the extraction requests
+  of the TV and embedded clients still use their built-in User-Agents (see "yt-dlp when signed in").
+
+Decision: keep the yt-dlp default clients and accept the mixed identities during extraction.
+[ADR 0003](../../docs/adr/0003-ytdlp-client-set.md).
+
 ## Run it
 
 Needs `yt-dlp` and `deno` on `PATH`.
@@ -36,13 +66,26 @@ Checks: `pnpm run check`, `pnpm run build`, and in `src-tauri`: `cargo fmt --che
 `cargo test -- --ignored`: a round trip of **fake** data through the real Credential Manager, and the real
 yt-dlp against `127.0.0.1:1`.
 
+## Extensions for issue #60 (client sets)
+
+- Building also needs libmpv in `%LOCALAPPDATA%\Programs\libmpv` (or `LIBMPV_DIR`); `build.rs` copies
+  `libmpv-2.dll` beside the exe.
+- The format selector is now `bestaudio/best`, so a client set without an audio-only format shows its
+  HLS or combined fallback (`audio_only`, `vcodec`, total bitrate) instead of failing. Results above
+  were measured with `bestaudio`.
+- yt-dlp runs with `-v`. `deno_started` is true when a `[jsc:deno] Running deno:` debug line appears;
+  debug lines are ignored for warnings and never leave `resolver.rs`.
+- "Play 5 s in libmpv" plays the stream of the latest successful run. The URL stays in Rust memory.
+- "Copy safe report" copies the run as text without URLs, cookies or account data. Premium status is
+  not detected: note it by hand.
+
 ## Live login check (2026-11-26)
 
 | Check | Result |
 |---|---|
 | In-app WebView2 login | Succeeded (no Google block, session captured and saved) |
 | Authenticated `browse` (`FEmusic_liked_playlists`) | Succeeded: 12 playlists on first page (more exist), matched user's library |
-| `yt-dlp` resolve mode tested | `yt-dlp defaults` (`web_music,web` pinned-UA mode was not tested separately; carry into Milestone 2 to compare) |
+| `yt-dlp` resolve mode tested | `yt-dlp defaults` (`web_music,web` compared later, see issue #60 section) |
 | Client | `TVHTML5` |
 | Format | `251`, `opus`, `128.93 kbps`, `https` |
 | `available_at` | `2026-11-26 23:13:43 CET` (waited `0 s`) |
@@ -158,9 +201,8 @@ From `yt_dlp/extractor/youtube` at tag 2026.11.23:
 
 Live check (2026-11-26): `yt-dlp defaults` resolved cleanly via `TVHTML5` (format 251 opus 128.93 kbps https,
 HTTP 206, 0 s wait, ~6 h expiry) and the stream Range request used the login User-Agent. The
-UA-consistent `web_music,web` option was not tested separately; **decision for Milestone 2:** test
-`web_music,web` first and use it if it delivers, otherwise choose between a PO token provider and accepting
-the mixed identities during `yt-dlp` extraction.
+UA-consistent `web_music,web` option was compared in issue #60 (above): on a free account it gets no
+audio-only format without a PO token, so Lumen keeps the defaults ([ADR 0003](../../docs/adr/0003-ytdlp-client-set.md)).
 
 ## Account-safety behaviour
 
