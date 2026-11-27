@@ -282,9 +282,11 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 ## 6. Project structure
 
 The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout". Rust code lives in
-`src-tauri/src/` split into `ipc/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`, `recs/`,
-`art/` and `media/`, plus `state.rs` for navigation and sidebar state; the Svelte app lives in `src/`; spikes
-in `spikes/`; developer scripts in `scripts/`; docs in `docs/`.
+`src-tauri/src/` split into `ipc/`, `catalog/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`,
+`recs/`, `art/` and `media/`, plus `state.rs` for navigation, search and catalog state; the Svelte app lives
+in `src/`; spikes in `spikes/`; developer scripts in `scripts/`; docs in `docs/`. `catalog/` holds the domain
+shapes, the views built from them and search; its data is a static fixture until the SQLite library replaces
+it in Milestone 3.
 
 ## 7. Milestones
 
