@@ -42,6 +42,7 @@ A milestone is done when it builds, works in the real app, and RAM is within bud
 
 - Rust: `cargo clippy` clean, `thiserror` for module errors, `anyhow` at the top level.
 - Use the `rust-analyzer-lsp` plugin for Rust code navigation and diagnostics.
+- Load the LSP tool (ToolSearch for LSP) before renaming or tracing Rust symbols.
 - Backend and CSV changes start with a failing test.
 - Run typecheck and both test suites (Rust and frontend) before reporting a step done, each under a time limit with trimmed output (`set -o pipefail; timeout 20m cargo test -q 2>&1 | tail -n 40`; full list in [docs/agents/workflow.md](docs/agents/workflow.md)).
 - After each step: run the app, check it works, check RAM. Close the app afterwards; a running `lumen.exe` blocks the next build.
