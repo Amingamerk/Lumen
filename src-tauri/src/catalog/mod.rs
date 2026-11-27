@@ -13,7 +13,7 @@ mod slice;
 #[cfg(test)]
 pub use fixtures::LONG_PLAYLIST_ID;
 pub use search::{SearchView, SourceFilter};
-pub use slice::{CollectionDetail, TrackSlice};
+pub use slice::{CollectionDetail, MAX_SLICE, TrackSlice};
 
 /// The service a Track or Collection comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -239,12 +239,23 @@ impl Catalog {
         self
     }
 
-    fn track(&self, id: Uuid) -> Option<&Track> {
+    /// A catalog holding only these Tracks.
+    #[cfg(test)]
+    pub fn of(tracks: Vec<Track>) -> Self {
+        Self::new(tracks, Vec::new(), Vec::new(), &[])
+    }
+
+    /// The Tracks a Recommender may pick from: the ones Search looks through.
+    pub fn recommendable(&self) -> &[Track] {
+        &self.tracks[..self.searchable]
+    }
+
+    pub fn track(&self, id: Uuid) -> Option<&Track> {
         self.positions.get(&id).map(|&at| &self.tracks[at])
     }
 
     /// The Tracks of a playlist or album, in its order.
-    fn listed(&self, id: &str) -> Option<&[Uuid]> {
+    pub fn listed(&self, id: &str) -> Option<&[Uuid]> {
         let playlist = self.playlists.iter().find(|p| p.id == id);
         playlist.map(|p| p.tracks.as_slice()).or_else(|| {
             self.albums

@@ -1,9 +1,13 @@
 //! Lumen's Rust core. Application state lives here; the webview only renders it.
 
+#[allow(dead_code, unused_imports)]
+mod audio;
 mod catalog;
 mod ipc;
 #[allow(dead_code)]
 mod queue;
+#[allow(dead_code)]
+mod recs;
 mod state;
 
 /// Builds the app and runs its event loop until the last window closes.
