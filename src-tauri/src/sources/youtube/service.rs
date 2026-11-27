@@ -3,7 +3,7 @@
 
 use std::future::Future;
 use std::path::PathBuf;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::Serialize;
 use serde_json::Value;
@@ -12,6 +12,7 @@ use tokio::sync::watch;
 use super::account::{Account, AccountStatus, Generation, LoginAttempt, Unusable};
 use super::client::{self, Fault};
 use super::gate::{Gate, GateClock, GateError, GateView, Kind, PauseReason, Verdict};
+use super::search::Cache;
 use super::session::Session;
 use super::transport::{Request, Transport};
 use crate::secrets::{SecretError, SecretStore};
@@ -93,6 +94,8 @@ pub struct YouTube<S, T, C> {
     /// Private, so every request goes through [`Self::through_gate`].
     transport: T,
     gate: Gate<C>,
+    /// What recent searches found.
+    searches: Mutex<Cache>,
     /// The check, and the session it is about.
     check: Mutex<(Generation, Check)>,
     status: watch::Sender<ServiceStatus>,
@@ -119,6 +122,7 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
             account,
             transport,
             gate,
+            searches: Mutex::default(),
             check: Mutex::default(),
             status,
             announce: Box::new(announce),
@@ -127,6 +131,15 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
 
     pub fn account(&self) -> &Account<S> {
         &self.account
+    }
+
+    pub(super) fn gate(&self) -> &Gate<C> {
+        &self.gate
+    }
+
+    pub(super) fn searches(&self) -> MutexGuard<'_, Cache> {
+        // A panic elsewhere must not lose search for good.
+        self.searches.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Stores the session a login captured, as [`Account::complete_login`]
@@ -281,7 +294,7 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
 
     /// Builds one request, sends it once and judges the reply. The only place
     /// a request goes out.
-    async fn send<R>(
+    pub(super) async fn send<R>(
         &self,
         name: &'static str,
         session: Session,
