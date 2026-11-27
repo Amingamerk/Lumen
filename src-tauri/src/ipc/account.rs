@@ -1,6 +1,6 @@
 //! The YouTube Music login window and the account commands.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::webview::PageLoadEvent;
@@ -10,11 +10,11 @@ use tauri::{
 };
 use tokio::sync::oneshot;
 
+use super::youtube::Service;
 use super::{IpcError, MAIN_WINDOW, lock};
-use crate::secrets::WindowsStore;
+use crate::secrets::SecretError;
 use crate::sources::youtube::{
-    Account, AccountStatus, CREDENTIAL_SERVICE, Cookie, LoginAttempt, ORIGIN, PageIdentity,
-    Session, is_signed_in,
+    AccountStatus, Cookie, LoginAttempt, ORIGIN, PageIdentity, Session, is_signed_in,
 };
 
 /// Events sent to the UI. Mirrored in `src/lib/ipc.ts`.
@@ -42,19 +42,23 @@ const READ_FAILED: &str =
     "Lumen could not read the sign-in. Close the sign-in window and try again.";
 const SAVE_FAILED: &str = "Lumen could not save the sign-in to Windows Credential Manager.";
 
-/// The account behind its commands.
+/// YouTube Music, and with it the account, behind the commands.
 pub struct AccountHandle {
-    account: Account<WindowsStore>,
+    youtube: Arc<Service>,
     /// Held while the login window is looked up and built, so there is one.
     opening: Mutex<()>,
 }
 
-impl Default for AccountHandle {
-    fn default() -> Self {
+impl AccountHandle {
+    pub fn new(youtube: Arc<Service>) -> Self {
         Self {
-            account: Account::new(WindowsStore::new(CREDENTIAL_SERVICE)),
+            youtube,
             opening: Mutex::default(),
         }
+    }
+
+    pub fn youtube(&self) -> &Arc<Service> {
+        &self.youtube
     }
 }
 
@@ -65,7 +69,7 @@ impl Default for AccountHandle {
 pub async fn get_account_status(
     handle: State<'_, AccountHandle>,
 ) -> Result<AccountStatus, IpcError> {
-    Ok(handle.account.status()?)
+    Ok(handle.youtube.account().status()?)
 }
 
 /// Opens the login window, or focuses the one already open. The stored session
@@ -80,7 +84,7 @@ pub async fn sign_in<R: Runtime>(
         window.unminimize()?;
         return Ok(window.set_focus()?);
     }
-    let attempt = handle.account.begin_login();
+    let attempt = handle.youtube.account().begin_login();
     open_login(&app, attempt)?;
     Ok(())
 }
@@ -91,7 +95,7 @@ pub async fn disconnect<R: Runtime>(
     handle: State<'_, AccountHandle>,
 ) -> Result<(), IpcError> {
     // This also cancels the open window's attempt, so it cannot save again.
-    let cleared = handle.account.disconnect(|status| announce(&app, status));
+    let cleared = handle.youtube.disconnect(|status| announce(&app, status));
     // The window goes even if clearing failed: it can no longer sign in.
     close_login(&app)?;
     Ok(cleared?)
@@ -105,7 +109,7 @@ pub fn close_login<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     }
 }
 
-fn announce<R: Runtime>(app: &AppHandle<R>, status: AccountStatus) {
+pub fn announce<R: Runtime>(app: &AppHandle<R>, status: AccountStatus) {
     // A failure means the window is gone: nobody is left to tell.
     let _ = app.emit_to(MAIN_WINDOW, ACCOUNT_CHANGED, status);
 }
@@ -156,22 +160,43 @@ async fn capture_after_load<R: Runtime>(app: AppHandle<R>, attempt: LoginAttempt
     }
 }
 
-fn store<R: Runtime>(app: &AppHandle<R>, attempt: LoginAttempt, session: &Session) {
-    let stored = app
-        .state::<AccountHandle>()
-        .account
-        .complete_login(attempt, session, |status| announce(app, status));
+/// What follows an attempt to store a captured session.
+#[derive(Debug, PartialEq)]
+enum AfterLogin {
+    /// Another look stored it, or the attempt was cancelled.
+    Nothing,
+    /// Close the window, then confirm the session once.
+    Verify,
+    /// Say that saving failed, then close the window.
+    Report,
+}
+
+fn after_login(stored: &Result<bool, SecretError>) -> AfterLogin {
     match stored {
-        // Another look stored it, or the attempt was cancelled.
-        Ok(false) => return,
-        Ok(true) => {}
-        Err(_) => {
+        Ok(true) => AfterLogin::Verify,
+        Ok(false) => AfterLogin::Nothing,
+        Err(_) => AfterLogin::Report,
+    }
+}
+
+fn store<R: Runtime>(app: &AppHandle<R>, attempt: LoginAttempt, session: &Session) {
+    let youtube = Arc::clone(app.state::<AccountHandle>().youtube());
+    let stored = youtube.complete_login(attempt, session, |status| announce(app, status));
+    let next = after_login(&stored);
+    match next {
+        AfterLogin::Nothing => return,
+        AfterLogin::Verify => {}
+        AfterLogin::Report => {
             let _ = app.emit_to(MAIN_WINDOW, SIGN_IN_FAILED, SAVE_FAILED);
         }
     }
     // Destroyed, not closed: the page gets no say, and the memory comes back.
     // If that fails, the user can still close the window by hand.
     let _ = close_login(app);
+    if next == AfterLogin::Verify {
+        // The outcome reaches the UI as a status event.
+        tauri::async_runtime::spawn(async move { youtube.verify().await });
+    }
 }
 
 async fn look<R: Runtime>(window: WebviewWindow<R>) -> Look {
@@ -246,6 +271,14 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+
+    #[test]
+    fn only_a_newly_stored_login_is_verified() {
+        assert_eq!(after_login(&Ok(true)), AfterLogin::Verify);
+        // Stored by another look, or cancelled.
+        assert_eq!(after_login(&Ok(false)), AfterLogin::Nothing);
+        assert_eq!(after_login(&Err(SecretError::Store)), AfterLogin::Report);
+    }
 
     #[test]
     fn only_youtube_music_over_https_counts_as_the_music_page() {

@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod account;
 pub mod player;
+pub mod youtube;
 
 use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};

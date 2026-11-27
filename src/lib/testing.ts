@@ -12,6 +12,7 @@ import type {
   QueueSlice,
   Route,
   SearchView,
+  ServiceStatus,
   Shelf,
   SourceFilter,
   TrackRow,
@@ -22,6 +23,7 @@ import { AppStore } from './stores/app.svelte';
 import { CatalogStore } from './stores/catalog.svelte';
 import { PlayerStore } from './stores/player.svelte';
 import { QueueStore } from './stores/queue.svelte';
+import { YoutubeStore } from './stores/youtube.svelte';
 
 /** Every store the app takes, mirroring the same fake. */
 export function appStores(bridge: Bridge) {
@@ -31,7 +33,12 @@ export function appStores(bridge: Bridge) {
     player: new PlayerStore(bridge),
     queue: new QueueStore(bridge),
     account: new AccountStore(bridge),
+    youtube: new YoutubeStore(bridge),
   };
+}
+
+export function serviceStatus(overrides: Partial<ServiceStatus> = {}): ServiceStatus {
+  return { revision: 1, gate: { state: 'ready' }, check: 'unchecked', ...overrides };
 }
 
 export function playerState(overrides: Partial<PlayerState> = {}): PlayerState {
@@ -217,6 +224,7 @@ export function fakeBridge({ announce = true } = {}) {
   let revision = 0;
   const accountHandlers = new Set<(status: AccountStatus) => void>();
   const signInFailureHandlers = new Set<(reason: string) => void>();
+  const youtubeHandlers = new Set<(status: ServiceStatus) => void>();
 
   function catalogCall(name: string) {
     bridge.calls.push(name);
@@ -318,6 +326,29 @@ export function fakeBridge({ announce = true } = {}) {
       signInFailureHandlers.add(handler);
       return () => {
         signInFailureHandlers.delete(handler);
+      };
+    },
+    /** What `getYoutubeStatus` answers. */
+    youtubeStatus: serviceStatus({ revision: 0 }),
+    beforeYoutubeStatus: null as (() => Promise<unknown>) | null,
+    get youtubeListeners() {
+      return youtubeHandlers.size;
+    },
+    emitYoutube(status: ServiceStatus) {
+      for (const handler of youtubeHandlers) handler(status);
+    },
+    async getYoutubeStatus(): Promise<ServiceStatus> {
+      bridge.calls.push('getYoutubeStatus');
+      const status = bridge.youtubeStatus;
+      await bridge.beforeYoutubeStatus?.();
+      return status;
+    },
+    resumeYoutube: () => command('resumeYoutube'),
+    async onYoutubeStatusChanged(handler: (status: ServiceStatus) => void) {
+      bridge.calls.push('onYoutubeStatusChanged');
+      youtubeHandlers.add(handler);
+      return () => {
+        youtubeHandlers.delete(handler);
       };
     },
     requested: [] as Route[],

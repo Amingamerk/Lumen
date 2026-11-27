@@ -14,17 +14,26 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
+# Reads the HTTP-date form of `Retry-After`.
+httpdate = "1"
 # The `keyring` project's core and Windows store, used directly: `keyring`'s own
 # `Entry` cannot set a credential's persistence.
 keyring-core = "1"
 # libmpv-2.dll comes from scripts/fetch-pinned-binaries.ps1; build.rs links it.
 libmpv2 = { version = "7", default-features = false }
+# The Windows TLS stack, and the Windows system proxy as the login window uses it;
+# no cookie store or retries of its own.
+reqwest = { version = "0.13", default-features = false, features = ["gzip", "http2", "native-tls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# `SAPISIDHASH`, the web client's request signature.
+sha1 = "0.11"
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
 thiserror = "2"
-tokio = { version = "1", features = ["sync", "time"] }
+# The calendar date in the web client's version.
+time = "0.3"
+tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
 uuid = { version = "1", features = ["serde"] }
 windows-native-keyring-store = "1"
 

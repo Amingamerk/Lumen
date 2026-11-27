@@ -67,7 +67,7 @@ lumen/
 │  │  ├─ catalog/        domain shapes, static fixtures, views, search, track slices
 │  │  ├─ audio/          libmpv wrapper, playback state
 │  │  ├─ queue/          queue, shuffle, repeat, pre-resolve
-│  │  ├─ sources/        Source trait + youtube, soundcloud, spotify
+│  │  ├─ sources/        Source trait + youtube (session, safety gate, web client), soundcloud, spotify
 │  │  ├─ resolver/       Resolver trait + yt-dlp backend
 │  │  ├─ library/        SQLite (rusqlite), migrations
 │  │  ├─ recs/           recommendation engine

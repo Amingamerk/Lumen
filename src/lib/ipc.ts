@@ -141,6 +141,32 @@ export interface QueueSlice {
 
 export type AccountStatus = 'connected' | 'expired' | 'disconnected';
 
+// The gate and the session check. Mirrors
+// src-tauri/src/sources/youtube/service.rs.
+
+export type PauseReason =
+  | 'botCheck'
+  | 'repeatedFailures'
+  | 'stateUnreadable'
+  | 'stateUnwritable'
+  | 'expiryUnsaved';
+
+/** Whether YouTube requests may go out. */
+export type GateView =
+  | { state: 'ready' }
+  | { state: 'coolingDown'; untilMs: number }
+  | { state: 'paused'; reason: PauseReason };
+
+/** Whether the stored session has been seen to work. */
+export type SessionCheck = 'unchecked' | 'checking' | 'verified' | 'offline' | 'unexpected';
+
+export interface ServiceStatus {
+  /** Rises with every change, so an older answer can be dropped. */
+  revision: number;
+  gate: GateView;
+  check: SessionCheck;
+}
+
 export interface Bridge {
   getAppState(): Promise<AppSnapshot>;
   navigate(route: Route): Promise<void>;
@@ -180,6 +206,11 @@ export interface Bridge {
   onAccountChanged(handler: (status: AccountStatus) => void): Promise<() => void>;
   /** Why a sign-in window could not be read or its session saved. */
   onSignInFailed(handler: (reason: string) => void): Promise<() => void>;
+
+  getYoutubeStatus(): Promise<ServiceStatus>;
+  /** Ends a pause. Sends nothing to YouTube. The outcome arrives as an event. */
+  resumeYoutube(): Promise<void>;
+  onYoutubeStatusChanged(handler: (status: ServiceStatus) => void): Promise<() => void>;
 }
 
 /** Must match NAVIGATION_CHANGED in src-tauri/src/ipc/mod.rs. */
@@ -190,6 +221,8 @@ const PLAYER_POSITION = 'player-position';
 /** Must match the names in src-tauri/src/ipc/account.rs. */
 const ACCOUNT_CHANGED = 'account-changed';
 const SIGN_IN_FAILED = 'sign-in-failed';
+/** Must match the name in src-tauri/src/ipc/youtube.rs. */
+const YOUTUBE_STATUS_CHANGED = 'youtube-status-changed';
 
 export const tauriBridge: Bridge = {
   getAppState: () => invoke<AppSnapshot>('get_app_state'),
@@ -227,4 +260,8 @@ export const tauriBridge: Bridge = {
     listen<AccountStatus>(ACCOUNT_CHANGED, (event) => handler(event.payload)),
   onSignInFailed: (handler) =>
     listen<string>(SIGN_IN_FAILED, (event) => handler(event.payload)),
+  getYoutubeStatus: () => invoke<ServiceStatus>('get_youtube_status'),
+  resumeYoutube: () => invoke('resume_youtube'),
+  onYoutubeStatusChanged: (handler) =>
+    listen<ServiceStatus>(YOUTUBE_STATUS_CHANGED, (event) => handler(event.payload)),
 };

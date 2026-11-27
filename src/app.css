@@ -226,6 +226,35 @@
     font-size: 13px;
   }
 
+  .account-note,
+  .gate-notice {
+    margin-top: 8px;
+    color: var(--color-ink-soft);
+    font-size: 13px;
+    line-height: 1.45;
+    user-select: text;
+  }
+
+  /* A block the user has to wait out or end stands apart. */
+  .gate-notice[data-blocked] {
+    padding: 10px 12px;
+    border-radius: var(--radius-row);
+    background: var(--color-raise);
+    box-shadow: inset 3px 0 0 var(--color-ember);
+  }
+
+  /* Lighter than the notice it sits on. */
+  .gate-notice .chip {
+    margin-top: 8px;
+    background: var(--color-lit);
+    color: var(--color-ink);
+  }
+
+  .account .gate-notice .chip:hover {
+    background: var(--color-lume-hi);
+    color: var(--color-night);
+  }
+
   /* Source tints */
   [data-source='youtube'] {
     --source: var(--color-youtube);

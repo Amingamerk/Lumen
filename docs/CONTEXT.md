@@ -99,11 +99,33 @@ Credential Manager. Rejected credentials (401, 403, logged-out or anonymous repl
 require a new login. A SoundCloud 401/403 first gets one `client_id` re-scrape and one retry. A 403 on a
 Stream URL does not expire the Session.
 
+For YouTube Music, a Session with no unexpired cookie to sign a request with is also expired, and nothing is
+sent. A late reply for a Session that has been replaced changes nothing. If the expired flag cannot be saved,
+the Session is still not sent again and the gate pauses. A new login confirms the Session with one library
+browse; there is no automatic retry.
+
+### Verified
+A Session that YouTube Music has answered as logged in since Lumen started (`logged_in=1`). Kept in memory
+only and tied to that one Session, so after a restart the account reads Connected until a request succeeds.
+The other outcomes of the check are unchecked, checking, offline and unexpected.
+
 ### Account-safety gate
 The single per-service checkpoint every service request passes: serialization, minimum spacing, backoff with
 jitter, `429` / `Retry-After` cool-down, pause on captcha or repeated errors, and no requests on an expired
 Session. A `yt-dlp` run passes the gate as one unit; the requests inside it are not paced by Lumen. Rules:
 PROJECT.md section 3c.
+
+The YouTube gate (the only one so far) is ready, cooling down or paused:
+
+- One run at a time, at least 1 s after the previous run ended, and 5 s between two `yt-dlp` runs.
+- A `429` cools down for 60 s, doubling to 1 h while no request succeeds, or for the `Retry-After` time if that
+  is longer. Jitter only lengthens a wait. A bot check cools down the same way and also pauses.
+- The third failure in a row pauses. A connection that never opened (DNS, refused, unreachable) counts nothing.
+- A pause ends only with Resume, which sends nothing and keeps a running cool-down.
+- The state is saved in `%LOCALAPPDATA%\dev.lumen.player\youtube-gate.json` and survives a restart. A file
+  that cannot be read or written pauses.
+- A `Retry-After` can ask for a very long cool-down, and the UI has no way to shorten it. Deleting
+  `youtube-gate.json` while Lumen is closed is the only override.
 
 ## Boundaries
 

@@ -13,6 +13,7 @@
   import { CatalogStore } from './lib/stores/catalog.svelte';
   import { PlayerStore } from './lib/stores/player.svelte';
   import { QueueStore } from './lib/stores/queue.svelte';
+  import { YoutubeStore } from './lib/stores/youtube.svelte';
   import Home from './routes/Home.svelte';
   import Library from './routes/Library.svelte';
   import Playlist from './routes/Playlist.svelte';
@@ -24,6 +25,7 @@
     player?: PlayerStore;
     queue?: QueueStore;
     account?: AccountStore;
+    youtube?: YoutubeStore;
   }
 
   let {
@@ -32,13 +34,19 @@
     player = new PlayerStore(tauriBridge),
     queue = new QueueStore(tauriBridge),
     account = new AccountStore(tauriBridge),
+    youtube = new YoutubeStore(tauriBridge),
   }: Props = $props();
 
   const route = $derived(store.navigation?.route);
   const pageKey = $derived(route?.view === 'playlist' ? `playlist/${route.id}` : route?.view);
   const queueOpen = $derived(store.navigation?.queueOpen ?? false);
   const error = $derived(
-    store.error ?? catalog.error ?? player.error ?? queue.error ?? account.error,
+    store.error ??
+      catalog.error ??
+      player.error ??
+      queue.error ??
+      account.error ??
+      youtube.error,
   );
 
   /** Cards open albums and playlists alike; Rust decides whether it can. */
@@ -75,7 +83,7 @@
   }
 
   onMount(() => {
-    const connections = [store.connect(), player.connect(), account.connect()];
+    const connections = [store.connect(), player.connect(), account.connect(), youtube.connect()];
     return () => {
       for (const connection of connections) void connection.then((disconnect) => disconnect());
     };
@@ -92,8 +100,10 @@
     {route}
     onnavigate={(next) => store.navigate(next)}
     account={account.status}
+    youtube={youtube.status}
     onsignin={() => void account.signIn()}
     ondisconnect={() => void account.disconnect()}
+    onresume={() => void youtube.resume()}
   />
 
   <MainFrame view={route?.view} {pageKey}>
