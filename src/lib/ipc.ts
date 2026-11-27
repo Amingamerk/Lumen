@@ -77,12 +77,60 @@ export type Route =
 
 export interface NavigationState {
   route: Route;
+  queueOpen: boolean;
   revision: number;
 }
 
 export interface AppSnapshot {
   navigation: NavigationState;
   playlists: PlaylistSummary[];
+}
+
+// Playback. Mirrors src-tauri/src/audio/state.rs.
+
+export type PlaybackStatus = 'idle' | 'playing' | 'paused';
+
+/** The current Queue entry. */
+export interface NowPlaying {
+  key: number;
+  track: TrackRow;
+  /** Whether the Recommender picked it. */
+  autoplay: boolean;
+}
+
+/** Everything about playback but the Queue's rows. */
+export interface PlayerState {
+  revision: number;
+  status: PlaybackStatus;
+  current: NowPlaying | null;
+  positionMs: number;
+  durationMs: number;
+  /** From 0 to 100. */
+  volume: number;
+  canNext: boolean;
+  /** How many entries come after the current one. */
+  upcoming: number;
+  queueRevision: number;
+}
+
+/** The clock moving on. It belongs to the state with the same revision. */
+export interface PlayerPosition {
+  revision: number;
+  positionMs: number;
+}
+
+export interface QueueItem {
+  key: number;
+  track: TrackRow;
+  autoplay: boolean;
+}
+
+/** Some consecutive upcoming entries. */
+export interface QueueSlice {
+  queueRevision: number;
+  offset: number;
+  total: number;
+  items: QueueItem[];
 }
 
 export interface Bridge {
@@ -98,10 +146,31 @@ export interface Bridge {
   searchCatalog(query: string, filter: SourceFilter): Promise<SearchView>;
   /** Resolves with a function that stops listening. */
   onNavigationChanged(handler: (navigation: NavigationState) => void): Promise<() => void>;
+
+  getPlayerState(): Promise<PlayerState>;
+  /** Up to `limit` upcoming entries, starting at `offset`. */
+  getQueue(offset: number, limit: number): Promise<QueueSlice>;
+  // The answer to each of these arrives as an event.
+  playCollection(id: string, index: number): Promise<void>;
+  playSearchResult(trackId: string): Promise<void>;
+  togglePlay(): Promise<void>;
+  nextTrack(): Promise<void>;
+  previousTrack(): Promise<void>;
+  seek(positionMs: number): Promise<void>;
+  seekBy(deltaMs: number): Promise<void>;
+  setVolume(volume: number): Promise<void>;
+  changeVolume(delta: number): Promise<void>;
+  moveQueueEntry(key: number, before: number | null): Promise<void>;
+  toggleQueue(): Promise<void>;
+  onPlayerChanged(handler: (state: PlayerState) => void): Promise<() => void>;
+  onPlayerPosition(handler: (position: PlayerPosition) => void): Promise<() => void>;
 }
 
 /** Must match NAVIGATION_CHANGED in src-tauri/src/ipc/mod.rs. */
 const NAVIGATION_CHANGED = 'navigation-changed';
+/** Must match the names in src-tauri/src/ipc/player.rs. */
+const PLAYER_CHANGED = 'player-changed';
+const PLAYER_POSITION = 'player-position';
 
 export const tauriBridge: Bridge = {
   getAppState: () => invoke<AppSnapshot>('get_app_state'),
@@ -115,4 +184,21 @@ export const tauriBridge: Bridge = {
   searchCatalog: (query, filter) => invoke<SearchView>('search_catalog', { query, filter }),
   onNavigationChanged: (handler) =>
     listen<NavigationState>(NAVIGATION_CHANGED, (event) => handler(event.payload)),
+  getPlayerState: () => invoke<PlayerState>('get_player_state'),
+  getQueue: (offset, limit) => invoke<QueueSlice>('get_queue', { offset, limit }),
+  playCollection: (id, index) => invoke('play_collection', { id, index }),
+  playSearchResult: (trackId) => invoke('play_search_result', { trackId }),
+  togglePlay: () => invoke('toggle_play'),
+  nextTrack: () => invoke('next_track'),
+  previousTrack: () => invoke('previous_track'),
+  seek: (positionMs) => invoke('seek', { positionMs }),
+  seekBy: (deltaMs) => invoke('seek_by', { deltaMs }),
+  setVolume: (volume) => invoke('set_volume', { volume }),
+  changeVolume: (delta) => invoke('change_volume', { delta }),
+  moveQueueEntry: (key, before) => invoke('move_queue_entry', { key, before }),
+  toggleQueue: () => invoke('toggle_queue'),
+  onPlayerChanged: (handler) =>
+    listen<PlayerState>(PLAYER_CHANGED, (event) => handler(event.payload)),
+  onPlayerPosition: (handler) =>
+    listen<PlayerPosition>(PLAYER_POSITION, (event) => handler(event.payload)),
 };

@@ -29,9 +29,17 @@ export class AppStore {
     return disconnect;
   }
 
-  async navigate(route: Route): Promise<void> {
+  navigate(route: Route): Promise<void> {
+    return this.#send(() => this.#bridge.navigate(route));
+  }
+
+  toggleQueue(): Promise<void> {
+    return this.#send(() => this.#bridge.toggleQueue());
+  }
+
+  async #send(command: () => Promise<void>): Promise<void> {
     try {
-      await this.#bridge.navigate(route);
+      await command();
       this.error = null;
     } catch (error) {
       this.error = describeError(error);

@@ -11,9 +11,10 @@
   interface Props {
     catalog: CatalogStore;
     onopen: (id: string) => void;
+    onplay: (trackId: string) => void;
   }
 
-  let { catalog, onopen }: Props = $props();
+  let { catalog, onopen, onplay }: Props = $props();
 
   const chips: { value: SourceFilter; label: string }[] = [
     { value: 'all', label: 'All' },
@@ -96,7 +97,7 @@
       {#if results.tracks.length}
         <section aria-labelledby="search-tracks">
           <h2 id="search-tracks" class="shelf-title mb-3">Tracks</h2>
-          <TrackList tracks={results.tracks} labelledby="search-tracks" />
+          <TrackList tracks={results.tracks} labelledby="search-tracks" {onplay} />
         </section>
       {/if}
       {#if results.collections.length}

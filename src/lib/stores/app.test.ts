@@ -31,19 +31,19 @@ describe('AppStore', () => {
     expect(bridge.requested).toEqual([{ view: 'library' }]);
     expect(store.navigation?.route).toEqual({ view: 'home' });
 
-    bridge.emit({ route: { view: 'library' }, revision: 1 });
+    bridge.emit({ route: { view: 'library' }, queueOpen: false, revision: 1 });
 
     expect(store.navigation?.route).toEqual({ view: 'library' });
   });
 
   it('ignores a snapshot that is older than an event it already has', async () => {
     const bridge = fakeBridge();
-    bridge.beforeSnapshot = () => bridge.emit({ route: { view: 'search' }, revision: 4 });
+    bridge.beforeSnapshot = () => bridge.emit({ route: { view: 'search' }, queueOpen: false, revision: 4 });
     const store = new AppStore(bridge);
 
     await store.connect();
 
-    expect(store.navigation).toEqual({ route: { view: 'search' }, revision: 4 });
+    expect(store.navigation).toEqual({ route: { view: 'search' }, queueOpen: false, revision: 4 });
     expect(store.playlists).toHaveLength(snapshot().playlists.length);
   });
 

@@ -2,9 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import App from './App.svelte';
-import { AppStore } from './lib/stores/app.svelte';
-import { CatalogStore } from './lib/stores/catalog.svelte';
-import { fakeBridge } from './lib/testing';
+import { appStores, fakeBridge } from './lib/testing';
 
 /** Matches ROW_HEIGHT; the viewport fits ten rows. */
 const ROW = 56;
@@ -23,7 +21,7 @@ function inMain(selector: string): HTMLElement {
 async function openPlaylist(count: number, bridge = fakeBridge()) {
   bridge.trackCounts['night-shift'] = count;
   const view = render(App, {
-    props: { store: new AppStore(bridge), catalog: new CatalogStore(bridge) },
+    props: appStores(bridge),
   });
   await fireEvent.click(
     await screen.findByRole('link', { name: /^night shift, from/i }),

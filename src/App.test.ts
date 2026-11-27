@@ -1,17 +1,10 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import App from './App.svelte';
-import { AppStore } from './lib/stores/app.svelte';
-import { CatalogStore } from './lib/stores/catalog.svelte';
-import { fakeBridge } from './lib/testing';
-
-const stores = (bridge: ReturnType<typeof fakeBridge>) => ({
-  store: new AppStore(bridge),
-  catalog: new CatalogStore(bridge),
-});
+import { appStores, fakeBridge } from './lib/testing';
 
 async function openApp(bridge = fakeBridge()) {
-  const view = render(App, { props: stores(bridge) });
+  const view = render(App, { props: appStores(bridge) });
   // Home cards name playlists too, so wait for the sidebar's own link.
   await screen.findByRole('link', { name: 'Night shift, from YouTube Music' });
   return { ...view, bridge };
@@ -52,7 +45,7 @@ describe('app shell', () => {
     const bridge = fakeBridge();
     bridge.playlists = [];
 
-    render(App, { props: stores(bridge) });
+    render(App, { props: appStores(bridge) });
 
     expect(await sidebar().findByText('No playlists yet')).toBeTruthy();
   });
@@ -81,16 +74,6 @@ describe('app shell', () => {
     expect(screen.getByRole('main').textContent).toContain('From SoundCloud');
   });
 
-  it('keeps the player controls inert until playback exists', async () => {
-    await openApp();
-    const player = within(screen.getByRole('region', { name: 'Player' }));
-
-    expect(player.getByText('Nothing is playing')).toBeTruthy();
-    for (const name of ['Previous', 'Play', 'Next']) {
-      expect(player.getByRole<HTMLButtonElement>('button', { name }).disabled).toBe(true);
-    }
-  });
-
   it('never uses an HTML audio element', async () => {
     const { container } = await openApp();
 
@@ -112,7 +95,7 @@ describe('app shell', () => {
     const bridge = fakeBridge();
     bridge.failSnapshot = new Error('ipc unavailable');
 
-    render(App, { props: stores(bridge) });
+    render(App, { props: appStores(bridge) });
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('ipc unavailable');

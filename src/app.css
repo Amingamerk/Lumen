@@ -655,6 +655,26 @@
     padding-block: 7px;
   }
 
+  .track {
+    position: relative;
+  }
+
+  /* A row's play button covers it; the light shows through. */
+  .row-play {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-chip);
+    cursor: pointer;
+  }
+
+  .row-play:hover {
+    background: rgb(226 220 255 / 0.05);
+  }
+
+  .row-play:focus-visible {
+    outline-offset: -2px;
+  }
+
   .track + .track {
     border-top: 1px solid var(--color-edge);
   }
@@ -821,8 +841,22 @@
     color: var(--color-night);
   }
 
-  .transport:disabled {
+  .transport:disabled,
+  .transport[aria-disabled='true'] {
     opacity: 0.38;
+    cursor: default;
+  }
+
+  /* The cover of the current Track, small: its initials sit in the middle. */
+  .now-art {
+    flex: none;
+    width: 56px;
+  }
+
+  .now-art .art {
+    align-items: center;
+    justify-content: center;
+    padding: 0;
   }
 
   .seek {
@@ -835,11 +869,25 @@
     font-variant-numeric: tabular-nums;
   }
 
-  .rail {
+  .slider {
     flex: 1;
-    height: 4px;
-    border-radius: 999px;
-    background: var(--color-lit);
+    min-width: 0;
+    height: 16px;
+    accent-color: var(--color-lume-hi);
+    cursor: pointer;
+  }
+
+  .slider:disabled {
+    opacity: 0.38;
+    cursor: default;
+  }
+
+  .volume {
+    display: flex;
+    flex: 0 1 140px;
+    align-items: center;
+    gap: 8px;
+    color: var(--color-ink-faint);
   }
 }
 

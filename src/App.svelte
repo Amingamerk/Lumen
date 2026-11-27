@@ -7,6 +7,8 @@
   import { tauriBridge } from './lib/ipc';
   import { AppStore } from './lib/stores/app.svelte';
   import { CatalogStore } from './lib/stores/catalog.svelte';
+  import { PlayerStore } from './lib/stores/player.svelte';
+  import { QueueStore } from './lib/stores/queue.svelte';
   import Home from './routes/Home.svelte';
   import Library from './routes/Library.svelte';
   import Playlist from './routes/Playlist.svelte';
@@ -15,21 +17,30 @@
   interface Props {
     store?: AppStore;
     catalog?: CatalogStore;
+    player?: PlayerStore;
+    queue?: QueueStore;
   }
 
-  let { store = new AppStore(tauriBridge), catalog = new CatalogStore(tauriBridge) }: Props =
-    $props();
+  let {
+    store = new AppStore(tauriBridge),
+    catalog = new CatalogStore(tauriBridge),
+    player = new PlayerStore(tauriBridge),
+    queue = new QueueStore(tauriBridge),
+  }: Props = $props();
 
   const route = $derived(store.navigation?.route);
   const pageKey = $derived(route?.view === 'playlist' ? `playlist/${route.id}` : route?.view);
-  const error = $derived(store.error ?? catalog.error);
+  const queueOpen = $derived(store.navigation?.queueOpen ?? false);
+  const error = $derived(store.error ?? catalog.error ?? player.error ?? queue.error);
 
   /** Cards open albums and playlists alike; Rust decides whether it can. */
   const openCollection = (id: string) => void store.navigate({ view: 'playlist', id });
 
   onMount(() => {
-    const connection = store.connect();
-    return () => void connection.then((disconnect) => disconnect());
+    const connections = [store.connect(), player.connect()];
+    return () => {
+      for (const connection of connections) void connection.then((disconnect) => disconnect());
+    };
   });
 </script>
 
@@ -53,13 +64,18 @@
     {#if route?.view === 'home'}
       <Home {catalog} onopen={openCollection} />
     {:else if route?.view === 'search'}
-      <Search {catalog} onopen={openCollection} />
+      <Search
+        {catalog}
+        onopen={openCollection}
+        onplay={(trackId) => void player.playSearchResult(trackId)}
+      />
     {:else if route?.view === 'library'}
       <Library {catalog} onopen={openCollection} />
     {:else if route?.view === 'playlist'}
-      <Playlist {catalog} id={route.id} />
+      {@const id = route.id}
+      <Playlist {catalog} {id} onplay={(index) => void player.playCollection(id, index)} />
     {/if}
   </MainFrame>
 
-  <PlayerBar />
+  <PlayerBar {player} {queueOpen} ontogglequeue={() => void store.toggleQueue()} />
 </div>

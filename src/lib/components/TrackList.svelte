@@ -1,5 +1,6 @@
-<!-- Rows are not selectable yet: playback arrives with the player. -->
+<!-- Tracks as rows. A click anywhere on a row plays it. -->
 <script lang="ts">
+  import { releasePointerFocus } from '../focus';
   import { formatDuration } from '../format';
   import type { TrackRow } from '../ipc';
   import CoverArt from './CoverArt.svelte';
@@ -9,9 +10,10 @@
     tracks: TrackRow[];
     /** The id of the heading that names the list. */
     labelledby: string;
+    onplay: (trackId: string) => void;
   }
 
-  let { tracks, labelledby }: Props = $props();
+  let { tracks, labelledby, onplay }: Props = $props();
 </script>
 
 <ul class="tracks" aria-labelledby={labelledby}>
@@ -35,6 +37,16 @@
       <p class="text-ink-faint text-right text-[13px] tabular-nums">
         {formatDuration(track.durationMs)}
       </p>
+      <!-- Lies over the whole row. -->
+      <button
+        type="button"
+        class="row-play"
+        aria-label="Play {track.title} by {artists}"
+        onclick={(event) => {
+          releasePointerFocus(event);
+          onplay(track.id);
+        }}
+      ></button>
     </li>
   {/each}
 </ul>

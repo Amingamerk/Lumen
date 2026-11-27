@@ -12,7 +12,14 @@
   import { SOURCE_NAMES } from '../lib/sources';
   import type { CatalogStore } from '../lib/stores/catalog.svelte';
 
-  let { catalog, id }: { catalog: CatalogStore; id: string } = $props();
+  interface Props {
+    catalog: CatalogStore;
+    id: string;
+    /** Plays the Collection from this position, counted from 0. */
+    onplay: (index: number) => void;
+  }
+
+  let { catalog, id, onplay }: Props = $props();
 
   /** The store may still hold the page visited before this one. */
   const collection = $derived(catalog.collection?.id === id ? catalog.collection : null);
@@ -61,7 +68,7 @@
     {:else}
       <section aria-labelledby="playlist-tracks">
         <h2 id="playlist-tracks" class="sr-only">Tracks</h2>
-        <TrackTable {tracks} labelledby="playlist-tracks" />
+        <TrackTable {tracks} labelledby="playlist-tracks" {onplay} />
       </section>
     {/if}
   </div>
