@@ -7,6 +7,8 @@ mod client;
 mod cookies;
 mod gate;
 mod http;
+#[allow(dead_code)]
+mod search;
 mod service;
 mod session;
 mod transport;

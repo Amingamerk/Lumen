@@ -34,7 +34,8 @@ thiserror = "2"
 # The calendar date in the web client's version.
 time = "0.3"
 tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
-uuid = { version = "1", features = ["serde"] }
+# Version 5 gives a live YouTube Music song the same id every time it is found.
+uuid = { version = "1", features = ["serde", "v5"] }
 windows-native-keyring-store = "1"
 
 # The lean settings the Milestone 0 RAM baseline was measured with, minus
