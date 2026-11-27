@@ -294,7 +294,10 @@ fn a_playback_failure_puts_the_player_in_the_error_state() {
     let failed = changed(player.on_engine_event(EngineEvent::Failed));
 
     assert_eq!(failed.status, PlaybackStatus::Error);
-    assert_eq!(failed.error.as_deref(), Some("Lumen could not play “tone”."));
+    assert_eq!(
+        failed.error.as_deref(),
+        Some("Lumen could not play “tone”.")
+    );
     assert!(!engine.fake().playing);
     for event in [
         EngineEvent::Failed,
@@ -358,7 +361,11 @@ fn a_stream_url_and_its_headers_never_reach_the_ui_or_a_log() {
     engine.fake().refuse = Some(EngineError::Unplayable);
     let refused = player.play_media(stream(), row());
     note(serde_json::to_string(&refused).unwrap());
-    note(format!("{:?} {}", EngineError::Unplayable, EngineError::Unplayable));
+    note(format!(
+        "{:?} {}",
+        EngineError::Unplayable,
+        EngineError::Unplayable
+    ));
 
     for text in seen {
         assert!(!text.contains(MARKER), "{text}");

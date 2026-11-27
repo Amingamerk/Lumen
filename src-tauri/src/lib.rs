@@ -19,6 +19,7 @@ pub fn run() -> Result<(), tauri::Error> {
     let args = std::env::args_os()
         .skip(1)
         .map(|arg| arg.to_string_lossy().into_owned());
+    let play_file = audio::play_file_arg(std::env::args_os().skip(1));
     tauri::Builder::default()
         // First, so a second launch exits before it sets anything up.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
@@ -33,7 +34,7 @@ pub fn run() -> Result<(), tauri::Error> {
         })
         .manage(ipc::account::AccountHandle::default())
         .manage(ipc::SharedState::new(state::AppState::from_args(args)))
-        .setup(|app| Ok(ipc::player::start(app.handle())?))
+        .setup(move |app| Ok(ipc::player::start(app.handle(), play_file)?))
         .invoke_handler(tauri::generate_handler![
             ipc::get_app_state,
             ipc::navigate,
