@@ -211,6 +211,9 @@ Processes at each peak (MB):
   95.1, 94.3 and 95.5 MB idle and 97.5, 97.4 and 99.3 MB with the playlist; they are not in the medians.
 - Run command, once the app is open: `pwsh -File scripts/measure-ram.ps1 -ProcessName lumen`, or add
   `-WaitSeconds 0 -SampleSeconds 35` for a peak.
+- Since the Milestone 3 check, `pwsh -File scripts/ram-run.ps1` repeats this whole order over three launches and
+  prints the table with medians (`-Login` adds the login window). It resolves once per launch instead of three
+  times. Tests: `pwsh -File scripts/ram-run.test.ps1`.
 
 ### Milestone 2 machine, toolchain and build
 
