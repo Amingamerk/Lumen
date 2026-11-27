@@ -9,8 +9,11 @@ mod state;
 
 /// Builds the app and runs its event loop until the last window closes.
 pub fn run() -> Result<(), tauri::Error> {
+    let args = std::env::args_os()
+        .skip(1)
+        .map(|arg| arg.to_string_lossy().into_owned());
     tauri::Builder::default()
-        .manage(ipc::SharedState::default())
+        .manage(ipc::SharedState::new(state::AppState::from_args(args)))
         .setup(|app| Ok(ipc::player::start(app.handle())?))
         .invoke_handler(tauri::generate_handler![
             ipc::get_app_state,
