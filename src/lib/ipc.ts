@@ -133,6 +133,11 @@ export interface QueueSlice {
   items: QueueItem[];
 }
 
+// The account. Mirrors src-tauri/src/sources/youtube/account.rs. The webview
+// never learns more about the session than this.
+
+export type AccountStatus = 'connected' | 'expired' | 'disconnected';
+
 export interface Bridge {
   getAppState(): Promise<AppSnapshot>;
   navigate(route: Route): Promise<void>;
@@ -164,6 +169,14 @@ export interface Bridge {
   toggleQueue(): Promise<void>;
   onPlayerChanged(handler: (state: PlayerState) => void): Promise<() => void>;
   onPlayerPosition(handler: (position: PlayerPosition) => void): Promise<() => void>;
+
+  getAccountStatus(): Promise<AccountStatus>;
+  /** Opens the sign-in window, or focuses it. The outcome arrives as an event. */
+  signIn(): Promise<void>;
+  disconnect(): Promise<void>;
+  onAccountChanged(handler: (status: AccountStatus) => void): Promise<() => void>;
+  /** Why a sign-in window could not be read or its session saved. */
+  onSignInFailed(handler: (reason: string) => void): Promise<() => void>;
 }
 
 /** Must match NAVIGATION_CHANGED in src-tauri/src/ipc/mod.rs. */
@@ -171,6 +184,9 @@ const NAVIGATION_CHANGED = 'navigation-changed';
 /** Must match the names in src-tauri/src/ipc/player.rs. */
 const PLAYER_CHANGED = 'player-changed';
 const PLAYER_POSITION = 'player-position';
+/** Must match the names in src-tauri/src/ipc/account.rs. */
+const ACCOUNT_CHANGED = 'account-changed';
+const SIGN_IN_FAILED = 'sign-in-failed';
 
 export const tauriBridge: Bridge = {
   getAppState: () => invoke<AppSnapshot>('get_app_state'),
@@ -201,4 +217,11 @@ export const tauriBridge: Bridge = {
     listen<PlayerState>(PLAYER_CHANGED, (event) => handler(event.payload)),
   onPlayerPosition: (handler) =>
     listen<PlayerPosition>(PLAYER_POSITION, (event) => handler(event.payload)),
+  getAccountStatus: () => invoke<AccountStatus>('get_account_status'),
+  signIn: () => invoke('sign_in'),
+  disconnect: () => invoke('disconnect'),
+  onAccountChanged: (handler) =>
+    listen<AccountStatus>(ACCOUNT_CHANGED, (event) => handler(event.payload)),
+  onSignInFailed: (handler) =>
+    listen<string>(SIGN_IN_FAILED, (event) => handler(event.payload)),
 };

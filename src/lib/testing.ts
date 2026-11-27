@@ -1,5 +1,6 @@
 // Test double for the Rust side. Only imported by tests.
 import type {
+  AccountStatus,
   AppSnapshot,
   Bridge,
   CollectionDetail,
@@ -16,6 +17,7 @@ import type {
   TrackRow,
   TrackSlice,
 } from './ipc';
+import { AccountStore } from './stores/account.svelte';
 import { AppStore } from './stores/app.svelte';
 import { CatalogStore } from './stores/catalog.svelte';
 import { PlayerStore } from './stores/player.svelte';
@@ -28,6 +30,7 @@ export function appStores(bridge: Bridge) {
     catalog: new CatalogStore(bridge),
     player: new PlayerStore(bridge),
     queue: new QueueStore(bridge),
+    account: new AccountStore(bridge),
   };
 }
 
@@ -209,6 +212,8 @@ export function fakeBridge({ announce = true } = {}) {
   const playerHandlers = new Set<(state: PlayerState) => void>();
   const positionHandlers = new Set<(position: PlayerPosition) => void>();
   let revision = 0;
+  const accountHandlers = new Set<(status: AccountStatus) => void>();
+  const signInFailureHandlers = new Set<(reason: string) => void>();
 
   function catalogCall(name: string) {
     bridge.calls.push(name);
@@ -277,6 +282,41 @@ export function fakeBridge({ announce = true } = {}) {
     changeVolume: (delta: number) => command('changeVolume', delta),
     moveQueueEntry: (key: number, before: number | null) => command('moveQueueEntry', key, before),
     toggleQueue: () => command('toggleQueue'),
+    /** What `getAccountStatus` answers. */
+    accountStatus: 'disconnected' as AccountStatus,
+    beforeAccountStatus: null as (() => Promise<unknown>) | null,
+    get accountListeners() {
+      return accountHandlers.size + signInFailureHandlers.size;
+    },
+    emitAccount(status: AccountStatus) {
+      for (const handler of accountHandlers) handler(status);
+    },
+    emitSignInFailed(reason: string) {
+      for (const handler of signInFailureHandlers) handler(reason);
+    },
+    async getAccountStatus(): Promise<AccountStatus> {
+      bridge.calls.push('getAccountStatus');
+      // Read before waiting, as an answer already on its way would be.
+      const status = bridge.accountStatus;
+      await bridge.beforeAccountStatus?.();
+      return status;
+    },
+    signIn: () => command('signIn'),
+    disconnect: () => command('disconnect'),
+    async onAccountChanged(handler: (status: AccountStatus) => void) {
+      bridge.calls.push('onAccountChanged');
+      accountHandlers.add(handler);
+      return () => {
+        accountHandlers.delete(handler);
+      };
+    },
+    async onSignInFailed(handler: (reason: string) => void) {
+      bridge.calls.push('onSignInFailed');
+      signInFailureHandlers.add(handler);
+      return () => {
+        signInFailureHandlers.delete(handler);
+      };
+    },
     requested: [] as Route[],
     searches: [] as { query: string; filter: SourceFilter }[],
     remembered: { query: '', filter: 'all' as SourceFilter },

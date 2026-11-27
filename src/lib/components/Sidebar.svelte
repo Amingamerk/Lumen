@@ -2,8 +2,9 @@
   import BooksIcon from 'phosphor-svelte/lib/BooksIcon';
   import HouseIcon from 'phosphor-svelte/lib/HouseIcon';
   import MagnifyingGlassIcon from 'phosphor-svelte/lib/MagnifyingGlassIcon';
-  import type { PlaylistSummary, Route } from '../ipc';
+  import type { AccountStatus, PlaylistSummary, Route } from '../ipc';
   import { SOURCE_NAMES } from '../sources';
+  import AccountControl from './AccountControl.svelte';
   import BrandMark from './BrandMark.svelte';
   import SourceBadge from './SourceBadge.svelte';
 
@@ -11,9 +12,13 @@
     playlists: PlaylistSummary[];
     route: Route | undefined;
     onnavigate: (route: Route) => void;
+    /** `null` until Rust has said. */
+    account: AccountStatus | null;
+    onsignin: () => void;
+    ondisconnect: () => void;
   }
 
-  let { playlists, route, onnavigate }: Props = $props();
+  let { playlists, route, onnavigate, account, onsignin, ondisconnect }: Props = $props();
 
   const destinations = [
     { view: 'home', label: 'Home', Icon: HouseIcon },
@@ -75,4 +80,8 @@
       {/if}
     {/each}
   </ul>
+
+  {#if account}
+    <AccountControl status={account} {onsignin} {ondisconnect} />
+  {/if}
 </nav>
