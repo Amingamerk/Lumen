@@ -31,7 +31,6 @@
 <nav class="sidebar surface" aria-label="Main">
   <div class="brand">
     <BrandMark />
-    <span class="wordmark" translate="no">Lumen</span>
   </div>
 
   <ul class="flex flex-col gap-1">
