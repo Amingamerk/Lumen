@@ -64,15 +64,23 @@ Session data is stored in Windows Credential Manager. Never commit it.
 
 ## Build
 
-libmpv, `yt-dlp` and Deno are not needed until playback lands in milestone 2.
+Fetch the pinned libmpv, yt-dlp and Deno binaries before building. The command verifies
+every cached file too, so it is safe to run again.
 
 ```powershell
 git clone https://github.com/Amingamerk/Lumen.git
 cd Lumen
 pnpm install
+./scripts/fetch-pinned-binaries.ps1
 pnpm tauri dev      # run in development
 pnpm tauri build --no-bundle    # release executable in src-tauri/target/release
 ```
+
+To update a pinned dependency, publish or select a permanent source URL, independently
+verify its SHA-256, then update its version, URL and hash in
+`scripts/pinned-binaries.json`. Update `THIRD-PARTY-NOTICES.md` for any version or
+license change, run the fetcher twice from an empty `src-tauri/binaries/`, and run the
+script tests before opening the change.
 
 Checks, as CI runs them:
 

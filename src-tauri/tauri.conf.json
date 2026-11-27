@@ -40,6 +40,7 @@
   },
   "bundle": {
     "active": false,
+    "externalBin": ["binaries/yt-dlp", "binaries/deno"],
     "icon": ["icons/icon.ico", "icons/icon.png"]
   }
 }
