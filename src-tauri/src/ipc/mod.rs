@@ -2,9 +2,12 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+pub mod player;
+
 use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Runtime, State};
 
+use crate::audio::{PlayerError, PlayerPosition, PlayerState};
 use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, SourceFilter, TrackSlice};
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
 
@@ -17,6 +20,8 @@ pub type SharedState = Mutex<AppState>;
 pub enum IpcError {
     #[error(transparent)]
     State(#[from] StateError),
+    #[error(transparent)]
+    Player(#[from] PlayerError),
     #[error("could not notify the window: {0}")]
     Emit(#[from] tauri::Error),
 }
@@ -31,17 +36,27 @@ impl Serialize for IpcError {
 /// Where state changes are announced. A seam so tests need no running window.
 pub trait EventSink {
     fn navigation_changed(&self, navigation: &NavigationState) -> Result<(), IpcError>;
+    fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError>;
+    fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError>;
 }
 
 impl<R: Runtime> EventSink for AppHandle<R> {
     fn navigation_changed(&self, navigation: &NavigationState) -> Result<(), IpcError> {
         Ok(self.emit(NAVIGATION_CHANGED, navigation)?)
     }
+
+    fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError> {
+        Ok(self.emit(player::PLAYER_CHANGED, state)?)
+    }
+
+    fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
+        Ok(self.emit(player::PLAYER_POSITION, position)?)
+    }
 }
 
 /// A panic elsewhere must not take the whole UI down with a poisoned lock.
-fn lock(state: &SharedState) -> MutexGuard<'_, AppState> {
-    state.lock().unwrap_or_else(PoisonError::into_inner)
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Applies a route change and announces it if anything changed.
@@ -56,6 +71,19 @@ fn navigate_and_notify(
         sink.navigation_changed(&navigation)?;
     }
     Ok(())
+}
+
+fn toggle_queue_and_notify(state: &SharedState, sink: &impl EventSink) -> Result<(), IpcError> {
+    let navigation = lock(state).toggle_queue();
+    sink.navigation_changed(&navigation)
+}
+
+#[tauri::command]
+pub fn toggle_queue<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SharedState>,
+) -> Result<(), IpcError> {
+    toggle_queue_and_notify(&state, &app)
 }
 
 #[tauri::command]
@@ -123,12 +151,27 @@ mod tests {
 
     use super::*;
 
+    /// Keeps what would have gone to the window.
     #[derive(Default)]
-    struct RecordingSink(RefCell<Vec<NavigationState>>);
+    pub(super) struct RecordingSink {
+        pub(super) navigations: RefCell<Vec<NavigationState>>,
+        pub(super) states: RefCell<Vec<PlayerState>>,
+        pub(super) positions: RefCell<Vec<PlayerPosition>>,
+    }
 
     impl EventSink for RecordingSink {
         fn navigation_changed(&self, navigation: &NavigationState) -> Result<(), IpcError> {
-            self.0.borrow_mut().push(navigation.clone());
+            self.navigations.borrow_mut().push(navigation.clone());
+            Ok(())
+        }
+
+        fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError> {
+            self.states.borrow_mut().push(state.clone());
+            Ok(())
+        }
+
+        fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
+            self.positions.borrow_mut().push(*position);
             Ok(())
         }
     }
@@ -141,9 +184,10 @@ mod tests {
         navigate_and_notify(&state, Route::Search, &sink).unwrap();
 
         assert_eq!(
-            *sink.0.borrow(),
+            *sink.navigations.borrow(),
             [NavigationState {
                 route: Route::Search,
+                queue_open: false,
                 revision: 1
             }]
         );
@@ -156,7 +200,7 @@ mod tests {
 
         navigate_and_notify(&state, Route::Home, &sink).unwrap();
 
-        assert!(sink.0.borrow().is_empty());
+        assert!(sink.navigations.borrow().is_empty());
     }
 
     #[test]
@@ -173,7 +217,24 @@ mod tests {
         );
 
         assert!(matches!(result, Err(IpcError::State(_))));
-        assert!(sink.0.borrow().is_empty());
+        assert!(sink.navigations.borrow().is_empty());
+    }
+
+    #[test]
+    fn toggling_the_queue_is_announced_as_navigation() {
+        let state = SharedState::default();
+        let sink = RecordingSink::default();
+
+        toggle_queue_and_notify(&state, &sink).unwrap();
+
+        assert_eq!(
+            *sink.navigations.borrow(),
+            [NavigationState {
+                route: Route::Home,
+                queue_open: true,
+                revision: 1
+            }]
+        );
     }
 
     #[test]
@@ -194,12 +255,17 @@ mod tests {
             route: Route::Playlist {
                 id: "p1".to_owned(),
             },
+            queue_open: true,
             revision: 3,
         };
 
         assert_eq!(
             serde_json::to_value(&navigation).unwrap(),
-            json!({ "route": { "view": "playlist", "id": "p1" }, "revision": 3 })
+            json!({
+                "route": { "view": "playlist", "id": "p1" },
+                "queueOpen": true,
+                "revision": 3
+            })
         );
     }
 }

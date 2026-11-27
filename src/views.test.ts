@@ -2,9 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
-import { AppStore } from './lib/stores/app.svelte';
-import { CatalogStore } from './lib/stores/catalog.svelte';
-import { fakeBridge, library, searchView } from './lib/testing';
+import { appStores, fakeBridge, library, searchView } from './lib/testing';
 
 const sidebar = () => within(screen.getByRole('navigation', { name: 'Main' }));
 const main = () => within(screen.getByRole('main'));
@@ -14,7 +12,7 @@ const section = (name: string) => within(main().getByRole('region', { name }));
 
 async function openApp(bridge = fakeBridge()) {
   const view = render(App, {
-    props: { store: new AppStore(bridge), catalog: new CatalogStore(bridge) },
+    props: appStores(bridge),
   });
   await screen.findByRole('link', { name: 'Night shift, from YouTube Music' });
   return { ...view, bridge };

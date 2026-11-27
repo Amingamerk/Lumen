@@ -31,6 +31,20 @@ A query plus a source chip: `All`, `YouTube` or `SoundCloud` (Spotify shows up u
 appear in a Track's title, artists or album, a playlist's name, or an album's title or artists. A blank query
 matches everything. Rust does the matching and remembers the last query and chip.
 
+### Queue
+The ordered list of what plays. Starting a Collection or a search result replaces it with all of their
+Tracks. When Next or the end of a track passes the last entry, the **Recommender** appends an **autoplay**
+pick and keeps a few upcoming. The history is the entries before the current one. The whole Queue stays in
+Rust; the UI asks for the upcoming rows it shows.
+
+### Queue entry
+One place in the Queue: a Track plus a `key` that is unique and never reused, so the same Track twice is two
+entries. Reordering moves an upcoming entry before another, by key.
+
+### Engine
+What makes sound, behind the `Engine` trait: load, play or pause, seek, volume, position. It is simulated
+until libmpv arrives (Milestone 2).
+
 ### Source
 The metadata role of a service, behind the `Source` trait: `search` and `related` (radio seeds), returning
 Tracks. Library import also belongs to the source module. A Source never produces audio.
@@ -86,7 +100,8 @@ PROJECT.md section 3c.
 | `catalog` | Domain shapes, the static fixtures, Home/Library/Search views, Track slices | Call services, store data |
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
-| `audio` | libmpv, playback state | Resolve URLs |
+| `recs` | Autoplay picks (static until Milestone 6) | Play audio |
+| `audio` | Engine, playback state, transport rules | Resolve URLs |
 | `library` | SQLite: Tracks, playlists, history, caches, Matches | Store secrets |
 
 ## Invariants

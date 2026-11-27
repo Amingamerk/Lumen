@@ -6,6 +6,9 @@ import type {
   CollectionSummary,
   Library,
   NavigationState,
+  PlayerPosition,
+  PlayerState,
+  QueueSlice,
   Route,
   SearchView,
   Shelf,
@@ -13,10 +16,67 @@ import type {
   TrackRow,
   TrackSlice,
 } from './ipc';
+import { AppStore } from './stores/app.svelte';
+import { CatalogStore } from './stores/catalog.svelte';
+import { PlayerStore } from './stores/player.svelte';
+import { QueueStore } from './stores/queue.svelte';
+
+/** Every store the app takes, mirroring the same fake. */
+export function appStores(bridge: Bridge) {
+  return {
+    store: new AppStore(bridge),
+    catalog: new CatalogStore(bridge),
+    player: new PlayerStore(bridge),
+    queue: new QueueStore(bridge),
+  };
+}
+
+export function playerState(overrides: Partial<PlayerState> = {}): PlayerState {
+  return {
+    revision: 1,
+    status: 'playing',
+    current: { key: 1, track: tracks()[0], autoplay: false },
+    positionMs: 0,
+    durationMs: 201_000,
+    volume: 80,
+    canNext: true,
+    upcoming: 3,
+    queueRevision: 1,
+    ...overrides,
+  };
+}
+
+export function idleState(): PlayerState {
+  return playerState({
+    revision: 0,
+    status: 'idle',
+    current: null,
+    durationMs: 0,
+    canNext: false,
+    upcoming: 0,
+    queueRevision: 0,
+  });
+}
+
+/** Upcoming entries numbered from 1; entry `n` has the key `n + 9`. */
+export function queueSlice(
+  offset: number,
+  limit: number,
+  total: number,
+  queueRevision = 1,
+): QueueSlice {
+  const { tracks: rows } = trackSlice(offset, limit, total);
+  return {
+    queueRevision,
+    offset,
+    total,
+    items: rows.map((track, at) => ({ key: offset + at + 10, track, autoplay: false })),
+  };
+}
 
 export function snapshot(): AppSnapshot {
   return {
-    navigation: { route: { view: 'home' }, revision: 0 },
+    navigation: { route: { view: 'home' }, queueOpen: false, revision: 0 },
     playlists: [
       { id: 'night-shift', name: 'Night shift', source: 'youtube', badge: 'YT' },
       { id: 'tunnel-mixes', name: 'Tunnel mixes', source: 'soundcloud', badge: 'SC' },
@@ -146,6 +206,8 @@ type Answer = (query: string, filter: SourceFilter) => SearchView | Promise<Sear
 /** Records what the UI asks for and, unless told not to, answers like Rust does. */
 export function fakeBridge({ announce = true } = {}) {
   const handlers = new Set<(navigation: NavigationState) => void>();
+  const playerHandlers = new Set<(state: PlayerState) => void>();
+  const positionHandlers = new Set<(position: PlayerPosition) => void>();
   let revision = 0;
 
   function catalogCall(name: string) {
@@ -153,8 +215,68 @@ export function fakeBridge({ announce = true } = {}) {
     if (bridge.failCatalog) throw bridge.failCatalog;
   }
 
+  /** Records a player command. Like Rust, it answers only through events. */
+  async function command(name: string, ...args: unknown[]): Promise<void> {
+    bridge.commands.push([name, ...args]);
+    if (bridge.failCommands) throw bridge.failCommands;
+    await bridge.beforeReply?.(name);
+  }
+
   const bridge = {
     calls: [] as string[],
+    commands: [] as unknown[][],
+    failCommands: null as string | null,
+    beforeReply: null as ((name: string) => Promise<void> | undefined) | null,
+    /** What `getPlayerState` answers. */
+    snapshotState: idleState(),
+    queueRequests: [] as { offset: number; limit: number }[],
+    /** What `getQueue` answers. */
+    answerQueue: ((offset: number, limit: number) => queueSlice(offset, limit, 3)) as (
+      offset: number,
+      limit: number,
+    ) => QueueSlice | Promise<QueueSlice>,
+    get playerListeners() {
+      return playerHandlers.size + positionHandlers.size;
+    },
+    emitPlayer(state: PlayerState) {
+      for (const handler of playerHandlers) handler(state);
+    },
+    emitPosition(position: PlayerPosition) {
+      for (const handler of positionHandlers) handler(position);
+    },
+    async onPlayerChanged(handler: (state: PlayerState) => void) {
+      bridge.calls.push('onPlayerChanged');
+      playerHandlers.add(handler);
+      return () => {
+        playerHandlers.delete(handler);
+      };
+    },
+    async onPlayerPosition(handler: (position: PlayerPosition) => void) {
+      bridge.calls.push('onPlayerPosition');
+      positionHandlers.add(handler);
+      return () => {
+        positionHandlers.delete(handler);
+      };
+    },
+    async getPlayerState(): Promise<PlayerState> {
+      bridge.calls.push('getPlayerState');
+      return bridge.snapshotState;
+    },
+    async getQueue(offset: number, limit: number): Promise<QueueSlice> {
+      bridge.queueRequests.push({ offset, limit });
+      return bridge.answerQueue(offset, limit);
+    },
+    playCollection: (id: string, index: number) => command('playCollection', id, index),
+    playSearchResult: (trackId: string) => command('playSearchResult', trackId),
+    togglePlay: () => command('togglePlay'),
+    nextTrack: () => command('nextTrack'),
+    previousTrack: () => command('previousTrack'),
+    seek: (positionMs: number) => command('seek', positionMs),
+    seekBy: (deltaMs: number) => command('seekBy', deltaMs),
+    setVolume: (volume: number) => command('setVolume', volume),
+    changeVolume: (delta: number) => command('changeVolume', delta),
+    moveQueueEntry: (key: number, before: number | null) => command('moveQueueEntry', key, before),
+    toggleQueue: () => command('toggleQueue'),
     requested: [] as Route[],
     searches: [] as { query: string; filter: SourceFilter }[],
     remembered: { query: '', filter: 'all' as SourceFilter },
@@ -189,7 +311,7 @@ export function fakeBridge({ announce = true } = {}) {
       bridge.requested.push(route);
       // Rust rejects with a plain string.
       if (bridge.failNavigate) throw bridge.failNavigate;
-      if (announce) bridge.emit({ route, revision: ++revision });
+      if (announce) bridge.emit({ route, queueOpen: false, revision: ++revision });
     },
     async getHome(): Promise<Shelf[]> {
       catalogCall('getHome');

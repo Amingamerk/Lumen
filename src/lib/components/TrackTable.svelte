@@ -4,6 +4,7 @@
 -->
 <script lang="ts">
   import type { Attachment } from 'svelte/attachments';
+  import { releasePointerFocus } from '../focus';
   import { formatDuration, formatNumber } from '../format';
   import type { TrackWindow } from '../stores/trackWindow.svelte';
   import { rowRange } from '../virtual';
@@ -13,9 +14,11 @@
     tracks: TrackWindow;
     /** The id of the heading that names the list. */
     labelledby: string;
+    /** Called with a row's position in the whole list, counted from 0. */
+    onplay: (position: number) => void;
   }
 
-  let { tracks, labelledby }: Props = $props();
+  let { tracks, labelledby, onplay }: Props = $props();
 
   const ROW_HEIGHT = 56;
   const OVERSCAN = 8;
@@ -94,6 +97,16 @@
               {track.title}
             </span>
             <span class="text-ink-faint block truncate text-[13px]" title={artists}>{artists}</span>
+            <!-- Lies over the whole row. -->
+            <button
+              type="button"
+              class="row-play"
+              aria-label="Play {track.title} by {artists}"
+              onclick={(event) => {
+                releasePointerFocus(event);
+                onplay(position);
+              }}
+            ></button>
           </span>
           <span class="track-album text-ink-soft truncate" role="cell" title={track.album}>
             {track.album}
