@@ -14,13 +14,17 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
+# The `keyring` project's core and Windows store, used directly: `keyring`'s own
+# `Entry` cannot set a credential's persistence.
+keyring-core = "1"
 serde = { version = "1", features = ["derive"] }
-tauri = { version = "2", features = [] }
-thiserror = "2"
-uuid = { version = "1", features = ["serde"] }
-
-[dev-dependencies]
 serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+thiserror = "2"
+tokio = { version = "1", features = ["sync", "time"] }
+uuid = { version = "1", features = ["serde"] }
+windows-native-keyring-store = "1"
 
 # The lean settings the Milestone 0 RAM baseline was measured with, minus
 # `panic = "abort"`: unwinding must stay on so RAII cleanup guards run.

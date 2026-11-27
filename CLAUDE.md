@@ -63,6 +63,7 @@ lumen/
 │  │  ├─ main.rs
 │  │  ├─ ipc/            Tauri commands and event emitters
 │  │  ├─ state.rs        navigation, search and catalog state
+│  │  ├─ secrets.rs      Credential Manager storage, split into chunks
 │  │  ├─ catalog/        domain shapes, static fixtures, views, search, track slices
 │  │  ├─ audio/          libmpv wrapper, playback state
 │  │  ├─ queue/          queue, shuffle, repeat, pre-resolve

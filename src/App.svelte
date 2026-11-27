@@ -7,6 +7,7 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import { tauriBridge } from './lib/ipc';
   import { shortcutFor } from './lib/shortcuts';
+  import { AccountStore } from './lib/stores/account.svelte';
   import { AppStore } from './lib/stores/app.svelte';
   import { CatalogStore } from './lib/stores/catalog.svelte';
   import { PlayerStore } from './lib/stores/player.svelte';
@@ -21,6 +22,7 @@
     catalog?: CatalogStore;
     player?: PlayerStore;
     queue?: QueueStore;
+    account?: AccountStore;
   }
 
   let {
@@ -28,12 +30,15 @@
     catalog = new CatalogStore(tauriBridge),
     player = new PlayerStore(tauriBridge),
     queue = new QueueStore(tauriBridge),
+    account = new AccountStore(tauriBridge),
   }: Props = $props();
 
   const route = $derived(store.navigation?.route);
   const pageKey = $derived(route?.view === 'playlist' ? `playlist/${route.id}` : route?.view);
   const queueOpen = $derived(store.navigation?.queueOpen ?? false);
-  const error = $derived(store.error ?? catalog.error ?? player.error ?? queue.error);
+  const error = $derived(
+    store.error ?? catalog.error ?? player.error ?? queue.error ?? account.error,
+  );
 
   /** Cards open albums and playlists alike; Rust decides whether it can. */
   const openCollection = (id: string) => void store.navigate({ view: 'playlist', id });
@@ -69,7 +74,7 @@
   }
 
   onMount(() => {
-    const connections = [store.connect(), player.connect()];
+    const connections = [store.connect(), player.connect(), account.connect()];
     return () => {
       for (const connection of connections) void connection.then((disconnect) => disconnect());
     };
@@ -81,7 +86,14 @@
 <a class="skip-link" href="#main">Skip to content</a>
 
 <div class="shell" data-queue={queueOpen ? 'open' : undefined}>
-  <Sidebar playlists={store.playlists} {route} onnavigate={(next) => store.navigate(next)} />
+  <Sidebar
+    playlists={store.playlists}
+    {route}
+    onnavigate={(next) => store.navigate(next)}
+    account={account.status}
+    onsignin={() => void account.signIn()}
+    ondisconnect={() => void account.disconnect()}
+  />
 
   <MainFrame view={route?.view} {pageKey}>
     {#if error}

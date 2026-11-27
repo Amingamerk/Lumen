@@ -2,14 +2,19 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
+pub mod account;
 pub mod player;
 
 use serde::{Serialize, Serializer};
-use tauri::{AppHandle, Emitter, Runtime, State};
+use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::audio::{PlayerError, PlayerPosition, PlayerState};
 use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, SourceFilter, TrackSlice};
+use crate::secrets::SecretError;
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
+
+/// The label of the app's own window, set in `tauri.conf.json`.
+pub const MAIN_WINDOW: &str = "main";
 
 /// Event sent after the route changes. Mirrored in `src/lib/ipc.ts`.
 pub const NAVIGATION_CHANGED: &str = "navigation-changed";
@@ -22,8 +27,10 @@ pub enum IpcError {
     State(#[from] StateError),
     #[error(transparent)]
     Player(#[from] PlayerError),
-    #[error("could not notify the window: {0}")]
-    Emit(#[from] tauri::Error),
+    #[error(transparent)]
+    Secret(#[from] SecretError),
+    #[error("the window failed: {0}")]
+    Window(#[from] tauri::Error),
 }
 
 /// The webview receives the message as a plain string.
@@ -51,6 +58,16 @@ impl<R: Runtime> EventSink for AppHandle<R> {
 
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError> {
         Ok(self.emit(player::PLAYER_POSITION, position)?)
+    }
+}
+
+/// Brings the app's window to the front, as a second launch asks for.
+pub fn focus_main_window<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+        // Best effort: the second launch has already exited either way.
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 }
 
