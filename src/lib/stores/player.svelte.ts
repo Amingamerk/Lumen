@@ -1,6 +1,13 @@
 import { describeError } from '../errors';
 import type { Bridge, PlayerPosition, PlayerState } from '../ipc';
 
+/** Something to tell the user. A new object each time it should be said. */
+export interface Notice {
+  message: string;
+  /** A refused command is over with the next one; a failure with the failed state. */
+  from: 'command' | 'playback';
+}
+
 /**
  * A read-only mirror of the player Rust owns. A command changes nothing here:
  * the answer arrives as an event.
@@ -9,12 +16,15 @@ export class PlayerStore {
   state = $state.raw<PlayerState | null>(null);
   /** The clock, which moves without a new `state`. */
   positionMs = $state.raw(0);
-  /** Why the last request to Rust failed, if it did. */
+  /** Why mirroring could not start, if it could not. */
   error = $state.raw<string | null>(null);
+  notice = $state.raw<Notice | null>(null);
 
   readonly #bridge: Bridge;
   // `state` again, outside the reactive graph, for ordering what arrives.
   #revision = -1;
+  /** The playback failure already given notice of. */
+  #failure: string | null = null;
 
   constructor(bridge: Bridge) {
     this.#bridge = bridge;
@@ -43,6 +53,8 @@ export class PlayerStore {
   }
 
   togglePlay() {
+    // Trying again after a failure: if it fails again, say so again.
+    if (this.state?.status === 'error') this.#failure = null;
     return this.#send(() => this.#bridge.togglePlay());
   }
 
@@ -75,13 +87,18 @@ export class PlayerStore {
     return this.#send(() => this.#bridge.moveQueueEntry(key, before));
   }
 
+  dismissNotice() {
+    this.notice = null;
+  }
+
   async #send(command: () => Promise<void>): Promise<boolean> {
     try {
       await command();
       this.error = null;
+      if (this.notice?.from === 'command') this.notice = null;
       return true;
     } catch (error) {
-      this.error = describeError(error);
+      this.notice = { message: describeError(error), from: 'command' };
       return false;
     }
   }
@@ -91,6 +108,15 @@ export class PlayerStore {
     this.#revision = next.revision;
     this.state = next;
     this.positionMs = next.positionMs;
+    this.#noticeFailure(next);
+  }
+
+  #noticeFailure({ error, current }: PlayerState) {
+    const failure = error === null ? null : `${current?.key}/${error}`;
+    if (failure === this.#failure) return;
+    this.#failure = failure;
+    if (error !== null) this.notice = { message: error, from: 'playback' };
+    else if (this.notice?.from === 'playback') this.notice = null;
   }
 
   #tick(position: PlayerPosition) {

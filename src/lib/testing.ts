@@ -43,8 +43,10 @@ export function playerState(overrides: Partial<PlayerState> = {}): PlayerState {
     durationMs: 201_000,
     volume: 80,
     canNext: true,
+    canPrevious: true,
     upcoming: 3,
     queueRevision: 1,
+    error: null,
     ...overrides,
   };
 }
@@ -56,6 +58,7 @@ export function idleState(): PlayerState {
     current: null,
     durationMs: 0,
     canNext: false,
+    canPrevious: false,
     upcoming: 0,
     queueRevision: 0,
   });

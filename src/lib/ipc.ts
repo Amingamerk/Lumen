@@ -88,7 +88,7 @@ export interface AppSnapshot {
 
 // Playback. Mirrors src-tauri/src/audio/state.rs.
 
-export type PlaybackStatus = 'idle' | 'playing' | 'paused';
+export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
 
 /** The current Queue entry. */
 export interface NowPlaying {
@@ -108,9 +108,12 @@ export interface PlayerState {
   /** From 0 to 100. */
   volume: number;
   canNext: boolean;
+  canPrevious: boolean;
   /** How many entries come after the current one. */
   upcoming: number;
   queueRevision: number;
+  /** Why playback failed, in words for the user. Set in the error state only. */
+  error: string | null;
 }
 
 /** The clock moving on. It belongs to the state with the same revision. */

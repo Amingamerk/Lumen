@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { NowPlaying } from '../ipc';
 import { fakeBridge, playerState } from '../testing';
 import { PlayerStore } from './player.svelte';
 
@@ -86,16 +87,81 @@ describe('player store', () => {
     expect(player.positionMs).toBe(2000);
   });
 
-  it('keeps and clears errors', async () => {
+  it('gives notice of a refused command until one succeeds', async () => {
     const { bridge, player } = await connected();
     bridge.failCommands = 'no queue entry has the key 9';
 
     await player.moveQueueEntry(9, null);
-    expect(player.error).toBe('no queue entry has the key 9');
+    expect(player.notice?.message).toBe('no queue entry has the key 9');
+    expect(player.error).toBeNull();
 
     bridge.failCommands = null;
     await player.togglePlay();
-    expect(player.error).toBeNull();
+    expect(player.notice).toBeNull();
+  });
+
+  it('gives a new notice for the same refusal again', async () => {
+    const { bridge, player } = await connected();
+    bridge.failCommands = 'sample track, cannot be played';
+    await player.togglePlay();
+    const first = player.notice;
+    player.dismissNotice();
+    expect(player.notice).toBeNull();
+
+    await player.togglePlay();
+
+    expect(player.notice?.message).toBe('sample track, cannot be played');
+    expect(player.notice).not.toBe(first);
+  });
+
+  it('gives notice of a playback failure once, which a command leaves up', async () => {
+    const { bridge, player } = await connected();
+    const failed = { status: 'error' as const, error: 'Lumen could not play “tone”.' };
+
+    bridge.emitPlayer(playerState({ revision: 2, ...failed }));
+    const first = player.notice;
+    expect(first?.message).toBe(failed.error);
+    await player.setVolume(10);
+    bridge.emitPlayer(playerState({ revision: 3, volume: 10, ...failed }));
+    expect(player.notice).toBe(first);
+
+    bridge.emitPlayer(playerState({ revision: 4 }));
+    expect(player.notice).toBeNull();
+  });
+
+  it('gives notice again when another track fails', async () => {
+    const { bridge, player } = await connected();
+    const state = playerState({ revision: 2, status: 'error', error: 'broken' });
+    bridge.emitPlayer(state);
+    player.dismissNotice();
+
+    const current = { ...(state.current as NowPlaying), key: 2 };
+    bridge.emitPlayer({ ...state, revision: 3, current });
+
+    expect(player.notice?.message).toBe('broken');
+  });
+
+  it('says a failure again when Play is pressed and it fails again', async () => {
+    const { bridge, player } = await connected();
+    const failed = playerState({ revision: 2, status: 'error', error: 'missing' });
+    bridge.emitPlayer(failed);
+    player.dismissNotice();
+
+    await player.togglePlay();
+    bridge.emitPlayer({ ...failed, revision: 3 });
+
+    expect(player.notice?.message).toBe('missing');
+  });
+
+  it('keeps why it could not connect', async () => {
+    const bridge = fakeBridge();
+    bridge.getPlayerState = async () => {
+      throw 'ipc unavailable';
+    };
+
+    const { player } = await connected(bridge);
+
+    expect(player.error).toBe('ipc unavailable');
   });
 
   it('stops listening', async () => {

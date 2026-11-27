@@ -5,6 +5,7 @@
   import PlayerBar from './lib/components/PlayerBar.svelte';
   import QueuePanel from './lib/components/QueuePanel.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
+  import Toast from './lib/components/Toast.svelte';
   import { tauriBridge } from './lib/ipc';
   import { shortcutFor } from './lib/shortcuts';
   import { AccountStore } from './lib/stores/account.svelte';
@@ -131,3 +132,10 @@
 
   <PlayerBar {player} {queueOpen} ontogglequeue={() => void store.toggleQueue()} />
 </div>
+
+<!-- A new notice is a new element, so it is announced again. -->
+{#key player.notice}
+  {#if player.notice}
+    <Toast message={player.notice.message} ondismiss={() => player.dismissNotice()} />
+  {/if}
+{/key}
