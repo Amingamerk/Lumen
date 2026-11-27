@@ -228,9 +228,19 @@ mod tests {
         args.iter().map(OsString::from).collect()
     }
 
-    /// A child whose own child writes `marker` after about two seconds.
+    /// A child whose own child writes `marker` after about three seconds.
     fn grandchild_writing(marker: &Path) -> Vec<OsString> {
-        let script = format!("ping -n 3 127.0.0.1 >nul & echo x>{}", marker.display());
+        let script = format!("ping -n 4 127.0.0.1 >nul && echo x>{}", marker.display());
+        args(&["/d", "/c", "cmd", "/d", "/c", &script])
+    }
+
+    /// Writes `ready` as soon as the grandchild starts, then writes `marker` after about three seconds.
+    fn grandchild_ready_then_writing(ready: &Path, marker: &Path) -> Vec<OsString> {
+        let script = format!(
+            "echo r>{} && ping -n 4 127.0.0.1 >nul && echo x>{}",
+            ready.display(),
+            marker.display()
+        );
         args(&["/d", "/c", "cmd", "/d", "/c", &script])
     }
 
@@ -310,12 +320,19 @@ mod tests {
     #[tokio::test]
     async fn a_shutdown_kills_the_whole_tree_and_refuses_new_runs() {
         let dir = tempfile::tempdir().unwrap();
+        let ready = dir.path().join("ready");
         let marker = dir.path().join("marker");
         let sidecars = Arc::new(Sidecars::default());
         let running = sidecars.clone();
-        let script = grandchild_writing(&marker);
+        let script = grandchild_ready_then_writing(&ready, &marker);
         let run = tokio::spawn(async move { running.execute(&cmd(), script, TIMEOUT).await });
-        tokio::time::sleep(Duration::from_millis(700)).await;
+        for _ in 0..200 {
+            if ready.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(ready.exists(), "grandchild did not start in time");
 
         sidecars.shut_down();
 

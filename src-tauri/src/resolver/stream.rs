@@ -139,6 +139,8 @@ fn classify_failure(stderr: &str) -> ResolveError {
         ResolveError::BotCheck
     } else if has(&["too many requests", "rate-limited"]) {
         ResolveError::RateLimited
+    } else if has(&["sign in to confirm your age"]) {
+        ResolveError::Unavailable
     } else if has(&[
         "http error 401",
         "http error 403",

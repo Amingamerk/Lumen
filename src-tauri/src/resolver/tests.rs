@@ -350,6 +350,10 @@ async fn failures_become_fixed_categories_that_quote_nothing() {
             Unavailable,
         ),
         (
+            "ERROR: x: Sign in to confirm your age. This video may be inappropriate for some users.",
+            Unavailable,
+        ),
+        (
             "ERROR: MARKER https://rr1.googlevideo.com/?ip=MARKER-IP",
             Failed,
         ),
