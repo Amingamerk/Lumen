@@ -6,18 +6,26 @@
   import Sidebar from './lib/components/Sidebar.svelte';
   import { tauriBridge } from './lib/ipc';
   import { AppStore } from './lib/stores/app.svelte';
+  import { CatalogStore } from './lib/stores/catalog.svelte';
   import Home from './routes/Home.svelte';
   import Library from './routes/Library.svelte';
   import Playlist from './routes/Playlist.svelte';
   import Search from './routes/Search.svelte';
 
-  let { store = new AppStore(tauriBridge) }: { store?: AppStore } = $props();
+  interface Props {
+    store?: AppStore;
+    catalog?: CatalogStore;
+  }
+
+  let { store = new AppStore(tauriBridge), catalog = new CatalogStore(tauriBridge) }: Props =
+    $props();
 
   const route = $derived(store.navigation?.route);
-  const playlist = $derived(
-    route?.view === 'playlist' ? store.playlists.find((p) => p.id === route.id) : undefined,
-  );
   const pageKey = $derived(route?.view === 'playlist' ? `playlist/${route.id}` : route?.view);
+  const error = $derived(store.error ?? catalog.error);
+
+  /** Cards open albums and playlists alike; Rust decides whether it can. */
+  const openCollection = (id: string) => void store.navigate({ view: 'playlist', id });
 
   onMount(() => {
     const connection = store.connect();
@@ -31,25 +39,25 @@
   <Sidebar playlists={store.playlists} {route} onnavigate={(next) => store.navigate(next)} />
 
   <MainFrame view={route?.view} {pageKey}>
-    {#if store.error}
+    {#if error}
       <div class="alert" role="alert">
         <WarningCircleIcon size={20} weight="fill" aria-hidden="true" />
         {#if store.navigation}
-          <p>That did not work. Try again, or restart Lumen. Details: {store.error}</p>
+          <p>That did not work. Try again, or restart Lumen. Details: {error}</p>
         {:else}
-          <p>Lumen could not load. Restart Lumen to try again. Details: {store.error}</p>
+          <p>Lumen could not load. Restart Lumen to try again. Details: {error}</p>
         {/if}
       </div>
     {/if}
 
     {#if route?.view === 'home'}
-      <Home />
+      <Home {catalog} onopen={openCollection} />
     {:else if route?.view === 'search'}
-      <Search />
+      <Search {catalog} onopen={openCollection} />
     {:else if route?.view === 'library'}
-      <Library />
-    {:else if playlist}
-      <Playlist {playlist} />
+      <Library {catalog} onopen={openCollection} />
+    {:else if route?.view === 'playlist'}
+      <Playlist {catalog} id={route.id} />
     {/if}
   </MainFrame>
 

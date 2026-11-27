@@ -1,15 +1,10 @@
 <script lang="ts">
-  import type { PlaylistSummary } from '../ipc';
+  import type { SourceTag } from '../ipc';
   import { SOURCE_NAMES } from '../sources';
 
-  let { playlist }: { playlist: PlaylistSummary } = $props();
+  let { source, badge }: SourceTag = $props();
 </script>
 
-<span
-  class="badge"
-  data-source={playlist.source}
-  title={SOURCE_NAMES[playlist.source]}
-  translate="no"
->
-  {playlist.badge}
+<span class="badge" data-source={source} title={SOURCE_NAMES[source]} translate="no">
+  {badge}
 </span>

@@ -2,11 +2,18 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it } from 'vitest';
 import App from './App.svelte';
 import { AppStore } from './lib/stores/app.svelte';
+import { CatalogStore } from './lib/stores/catalog.svelte';
 import { fakeBridge } from './lib/testing';
 
+const stores = (bridge: ReturnType<typeof fakeBridge>) => ({
+  store: new AppStore(bridge),
+  catalog: new CatalogStore(bridge),
+});
+
 async function openApp(bridge = fakeBridge()) {
-  const view = render(App, { props: { store: new AppStore(bridge) } });
-  await screen.findByRole('link', { name: /night shift/i });
+  const view = render(App, { props: stores(bridge) });
+  // Home cards name playlists too, so wait for the sidebar's own link.
+  await screen.findByRole('link', { name: 'Night shift, from YouTube Music' });
   return { ...view, bridge };
 }
 
@@ -43,7 +50,7 @@ describe('app shell', () => {
     const bridge = fakeBridge();
     bridge.playlists = [];
 
-    render(App, { props: { store: new AppStore(bridge) } });
+    render(App, { props: stores(bridge) });
 
     expect(await sidebar().findByText('No playlists yet')).toBeTruthy();
   });
@@ -103,7 +110,7 @@ describe('app shell', () => {
     const bridge = fakeBridge();
     bridge.failSnapshot = new Error('ipc unavailable');
 
-    render(App, { props: { store: new AppStore(bridge) } });
+    render(App, { props: stores(bridge) });
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('ipc unavailable');

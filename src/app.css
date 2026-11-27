@@ -292,24 +292,345 @@
     line-clamp: 3;
   }
 
+  /* The large cover at the head of a playlist or album. */
   .cover {
-    display: grid;
     flex: none;
-    place-items: center;
     width: 176px;
-    height: 176px;
+    border-radius: var(--radius-row);
+    box-shadow: 0 24px 48px -24px rgb(10 3 5 / 0.9);
+  }
+
+  /*
+   * Placeholder covers: every title under its own lamp, ringed once like the mark.
+   * lib/art.ts picks the tone and where the light stands.
+   */
+  .art {
+    --x: 20%;
+    --y: 16%;
+    display: flex;
+    align-items: flex-end;
+    width: 100%;
+    aspect-ratio: 1;
+    overflow: hidden;
+    padding: 9%;
     border-radius: var(--radius-row);
     background:
       radial-gradient(
-        circle at 22% 12%,
-        color-mix(in oklab, var(--source) 44%, transparent),
-        transparent 62%
+        circle at var(--x) var(--y),
+        transparent calc(36% - 1px),
+        rgb(255 236 220 / 0.22) 36% calc(36% + 1px),
+        transparent calc(36% + 2px)
       ),
-      linear-gradient(145deg, var(--color-lit), var(--color-night));
-    box-shadow:
-      inset 0 0 0 1px var(--color-edge),
-      0 24px 48px -24px rgb(10 3 5 / 0.9);
+      radial-gradient(
+        circle at var(--x) var(--y),
+        color-mix(in oklab, var(--glow) 76%, transparent),
+        transparent 66%
+      ),
+      linear-gradient(150deg, var(--ground), var(--color-night));
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    container-type: inline-size;
+    user-select: none;
+  }
+
+  .art > span {
     color: var(--color-ink);
+    font-family: var(--font-display);
+    font-size: max(12px, 28cqi);
+    font-weight: 750;
+    letter-spacing: -0.03em;
+    line-height: 0.85;
+  }
+
+  .art[data-tone='0'] {
+    --glow: #ffb347;
+    --ground: #4a2a12;
+  }
+
+  .art[data-tone='1'] {
+    --glow: #ff8f62;
+    --ground: #4a1d17;
+  }
+
+  .art[data-tone='2'] {
+    --glow: #dd6f94;
+    --ground: #3f172b;
+  }
+
+  .art[data-tone='3'] {
+    --glow: #9d83d6;
+    --ground: #281d44;
+  }
+
+  .art[data-tone='4'] {
+    --glow: #8fb56b;
+    --ground: #1f3019;
+  }
+
+  .art[data-tone='5'] {
+    --glow: #5aa8bd;
+    --ground: #102c35;
+  }
+
+  .art[data-light='1'] {
+    --x: 84%;
+    --y: 20%;
+  }
+
+  .art[data-light='2'] {
+    --x: 76%;
+    --y: 74%;
+  }
+
+  .art[data-light='3'] {
+    --x: 52%;
+    --y: -6%;
+  }
+
+  /* Shelves, grids and cards */
+  .shelf {
+    container-type: inline-size;
+  }
+
+  .shelf-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 32px;
+    margin-bottom: 4px;
+  }
+
+  .shelf-title {
+    min-width: 0;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 680;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+    text-wrap: balance;
+  }
+
+  /*
+   * Only whole cards: the container picks how many fit. A card pads 10px, so rows
+   * and grids hang out by that much to line the covers up with their heading.
+   */
+  .shelf-row {
+    --fit: 3;
+    display: grid;
+    grid-auto-columns: calc(100% / var(--fit));
+    grid-auto-flow: column;
+    margin-inline: -10px;
+    overflow: auto hidden;
+    overscroll-behavior-x: contain;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+
+  .shelf-row > li {
+    scroll-snap-align: start;
+  }
+
+  @container (min-width: 600px) {
+    .shelf-row {
+      --fit: 4;
+    }
+  }
+
+  @container (min-width: 780px) {
+    .shelf-row {
+      --fit: 5;
+    }
+  }
+
+  @container (min-width: 1000px) {
+    .shelf-row {
+      --fit: 6;
+    }
+  }
+
+  @container (min-width: 1220px) {
+    .shelf-row {
+      --fit: 7;
+    }
+  }
+
+  @container (min-width: 1440px) {
+    .shelf-row {
+      --fit: 8;
+    }
+  }
+
+  .card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+    row-gap: 8px;
+    margin-inline: -10px;
+  }
+
+  .card {
+    display: flex;
+    flex-direction: column;
+    padding: 10px;
+    border-radius: var(--radius-frame);
+    user-select: none;
+  }
+
+  /* Inside a scrolling row an outer ring would be clipped. */
+  .card:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .card:hover {
+    background: var(--color-raise);
+  }
+
+  .card:active {
+    background: var(--color-lit);
+  }
+
+  .card-title {
+    overflow: hidden;
+    margin-top: 10px;
+    font-size: 15px;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .card-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    margin-top: 3px;
+    color: var(--color-ink-faint);
+    font-size: 13px;
+  }
+
+  .step {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink);
+  }
+
+  .step:hover {
+    background: var(--color-lit);
+  }
+
+  .step[aria-disabled='true'] {
+    background: transparent;
+    color: var(--color-ink-faint);
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  /* Search */
+  .search-field {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    max-width: 40rem;
+    height: 48px;
+    padding-inline: 18px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink-faint);
+  }
+
+  .search-field:focus-within {
+    color: var(--color-lume-hi);
+  }
+
+  /* The ring goes around the whole field, icon included. */
+  .search-field:has(input:focus-visible) {
+    outline: 2px solid var(--color-lume-hi);
+    outline-offset: 2px;
+  }
+
+  .search-field > input {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+    background: transparent;
+    color: var(--color-ink);
+    font-size: 15px;
+    outline: none;
+  }
+
+  .search-field > input::placeholder {
+    color: var(--color-ink-faint);
+  }
+
+  .chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 34px;
+    padding-inline: 16px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    color: var(--color-ink-soft);
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
+  .chip:hover {
+    background: var(--color-lit);
+    color: var(--color-ink);
+  }
+
+  .chip:has(input:checked) {
+    background: var(--color-lume-hi);
+    color: var(--color-night);
+  }
+
+  .chip:has(input:focus-visible) {
+    outline: 2px solid var(--color-lume-hi);
+    outline-offset: 2px;
+  }
+
+  /* Track list */
+  .tracks {
+    container-type: inline-size;
+  }
+
+  .track {
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) 72px 48px;
+    align-items: center;
+    column-gap: 16px;
+    padding-block: 7px;
+  }
+
+  .track + .track {
+    border-top: 1px solid var(--color-edge);
+  }
+
+  /* Too small for a corner: the initials sit in the middle. */
+  .track .art {
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: var(--radius-chip);
+  }
+
+  /* A narrow list drops the album column first. */
+  @container (max-width: 599px) {
+    .track {
+      grid-template-columns: 40px minmax(0, 1fr) 72px 48px;
+    }
+
+    .track-album {
+      display: none;
+    }
   }
 
   .lamp {
@@ -405,10 +726,17 @@
 
 /* One entrance when the window opens: the lamp comes on, then the room appears. */
 @media (prefers-reduced-motion: no-preference) {
-  .nav-link {
+  .nav-link,
+  .card,
+  .chip,
+  .step {
     transition:
       background-color 150ms var(--ease-glide),
       color 150ms var(--ease-glide);
+  }
+
+  .shelf-row {
+    scroll-behavior: smooth;
   }
 
   .brand-mark g {

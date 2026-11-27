@@ -66,7 +66,7 @@
           onclick={(event) => open(event, { view: 'playlist', id: playlist.id })}
         >
           <span class="min-w-0 truncate">{playlist.name}</span>
-          <SourceBadge {playlist} />
+          <SourceBadge source={playlist.source} badge={playlist.badge} />
         </a>
       </li>
     {:else}
