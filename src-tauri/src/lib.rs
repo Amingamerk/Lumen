@@ -9,7 +9,7 @@ mod secrets;
 mod sources;
 mod state;
 
-use tauri::{Manager, WindowEvent};
+use tauri::{Manager, RunEvent, WindowEvent};
 
 /// Builds the app and runs its event loop until the last window closes.
 ///
@@ -61,5 +61,11 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::account::sign_in,
             ipc::account::disconnect,
         ])
-        .run(tauri::generate_context!())
+        .build(tauri::generate_context!())?
+        .run(|app, event| {
+            if matches!(event, RunEvent::Exit) {
+                ipc::player::stop(app);
+            }
+        });
+    Ok(())
 }

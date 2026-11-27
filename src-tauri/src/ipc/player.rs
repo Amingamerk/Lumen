@@ -2,15 +2,16 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Manager, Runtime, State};
 use uuid::Uuid;
 
 use super::{EventSink, IpcError, SharedState, lock};
 use crate::audio::{
-    Engine, EngineEvent, MpvEngine, Player, PlayerError, PlayerEvent, PlayerState, QueueSlice,
-    file_media,
+    Engine, EngineEvent, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError, PlayerEvent,
+    PlayerState, QueueSlice, file_media,
 };
 use crate::catalog::Catalog;
 use crate::recs::StaticRecommender;
@@ -41,27 +42,83 @@ impl PlayerHandle {
     }
 }
 
+/// How long [`AudioThread::stop`] waits for mpv to shut down.
+const STOP_PATIENCE: Duration = Duration::from_secs(2);
+
+/// The thread that reads mpv's events. It holds the player, and with it the
+/// engine, so dropping the engine cannot end it: [`AudioThread::stop`] does.
+pub struct AudioThread {
+    shutdown: MpvShutdown,
+    thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl AudioThread {
+    fn new(shutdown: MpvShutdown, thread: JoinHandle<()>) -> Self {
+        Self {
+            shutdown,
+            thread: Mutex::new(Some(thread)),
+        }
+    }
+
+    /// Tells mpv to quit and waits a little for the thread to end. Whether it
+    /// ended; if not, the process exit ends it.
+    pub fn stop(&self) -> bool {
+        self.shutdown.shut_down();
+        let Some(thread) = lock(&self.thread).take() else {
+            return true;
+        };
+        let started = Instant::now();
+        while !thread.is_finished() {
+            if started.elapsed() >= STOP_PATIENCE {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        thread.join().is_ok()
+    }
+}
+
 /// Sets the player up over libmpv, plays `file` if the launch asked for one,
 /// and starts listening to mpv.
 pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::Result<()> {
     let catalog = lock(app.state::<SharedState>().inner()).catalog();
-    let (engine, mut events) = MpvEngine::new()?;
+    let (engine, events) = MpvEngine::new()?;
+    let shutdown = engine.shutdown_handle();
     let handle = PlayerHandle::new(catalog, Box::new(engine));
     if let Some(path) = file {
         handle.play_file(path);
     }
     let player = Arc::clone(&handle.player);
     app.manage(handle);
-    let app = app.clone();
+    let sink = app.clone();
+    let thread = listen(events, move |event| {
+        // A failure means the window is gone: nobody is left to tell.
+        let _ = relay(&player, event, &sink);
+    })?;
+    app.manage(AudioThread::new(shutdown, thread));
+    Ok(())
+}
+
+/// Ends playback before the app exits, so mpv shuts down cleanly.
+pub fn stop<R: Runtime>(app: &AppHandle<R>) {
+    if let Some(audio) = app.try_state::<AudioThread>() {
+        audio.stop();
+    }
+}
+
+/// Hands each event mpv reports to `heard`, on a thread of its own, until mpv
+/// shuts down.
+fn listen(
+    mut events: MpvEvents,
+    mut heard: impl FnMut(EngineEvent) + Send + 'static,
+) -> std::io::Result<JoinHandle<()>> {
     thread::Builder::new()
         .name("mpv-events".to_owned())
         .spawn(move || {
             while let Some(event) = events.wait() {
-                // A failure means the window is gone: nobody is left to tell.
-                let _ = relay(&player, event, &app);
+                heard(event);
             }
-        })?;
-    Ok(())
+        })
 }
 
 /// Gives the player what the engine heard, and tells the UI what came of it.
@@ -227,6 +284,22 @@ mod tests {
         let engine = FakeEngine::default();
         let handle = PlayerHandle::new(Arc::default(), Box::new(engine.clone()));
         (handle, engine)
+    }
+
+    #[test]
+    fn stopping_ends_the_event_thread_while_it_holds_the_player() {
+        let (engine, events) = MpvEngine::silent().expect("libmpv-2.dll starts");
+        let shutdown = engine.shutdown_handle();
+        let handle = PlayerHandle::new(Arc::default(), Box::new(engine));
+        let player = Arc::clone(&handle.player);
+        let thread = listen(events, move |_| {
+            let _ = lock(&player).state();
+        })
+        .unwrap();
+        let audio = AudioThread::new(shutdown, thread);
+
+        assert!(audio.stop(), "the event thread is still running");
+        drop(handle);
     }
 
     fn play(handle: &PlayerHandle, sink: &RecordingSink) -> Result<(), IpcError> {

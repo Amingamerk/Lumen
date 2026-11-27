@@ -319,6 +319,23 @@ fn refuses_headers_that_could_smuggle_in_more_and_samples() {
 }
 
 #[test]
+fn the_events_end_on_shutdown_while_the_engine_lives() {
+    let (engine, mut events) = engine();
+    let shutdown = engine.shutdown_handle();
+
+    shutdown.shut_down();
+
+    let waiter = std::thread::spawn(move || while events.wait().is_some() {});
+    let started = Instant::now();
+    while !waiter.is_finished() {
+        assert!(started.elapsed() < PATIENCE, "mpv never shut down");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    waiter.join().unwrap();
+    drop(engine);
+}
+
+#[test]
 fn the_events_end_when_the_engine_is_dropped() {
     let (engine, mut events) = engine();
 

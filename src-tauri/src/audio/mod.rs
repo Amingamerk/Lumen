@@ -22,7 +22,7 @@ pub use engine::{Engine, EngineError, EngineEvent, Media};
 #[cfg(test)]
 pub use fake::FakeEngine;
 pub use local::{file_media, play_file_arg};
-pub use mpv::MpvEngine;
+pub use mpv::{MpvEngine, MpvEvents, MpvShutdown};
 pub use player::{Player, PlayerError};
 #[cfg(test)]
 pub use simulated::{SimulatedEngine, SystemClock};

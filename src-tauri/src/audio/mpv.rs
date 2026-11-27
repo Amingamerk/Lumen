@@ -141,6 +141,22 @@ impl MpvEngine {
     fn timeline(&self) -> MutexGuard<'_, Timeline> {
         lock(&self.timeline)
     }
+
+    /// Ends [`MpvEvents`] without dropping the engine. Whoever reads the events
+    /// can then let go of the player that owns it.
+    pub fn shutdown_handle(&self) -> MpvShutdown {
+        MpvShutdown(Arc::clone(&self.mpv))
+    }
+}
+
+/// Tells mpv to quit, so its event thread can end.
+pub struct MpvShutdown(Arc<Mpv>);
+
+impl MpvShutdown {
+    pub fn shut_down(&self) {
+        // mpv refuses only when it is already shutting down.
+        let _ = self.0.command("quit", &[]);
+    }
 }
 
 impl Engine for MpvEngine {
@@ -183,7 +199,8 @@ impl Engine for MpvEngine {
 }
 
 impl Drop for MpvEngine {
-    /// Ends [`MpvEvents`], which holds the other reference to mpv.
+    /// Ends [`MpvEvents`], which holds another reference to mpv. In the app the
+    /// event thread keeps the engine alive, so it ends through [`MpvShutdown`].
     fn drop(&mut self) {
         let _ = self.mpv.command("quit", &[]);
     }
