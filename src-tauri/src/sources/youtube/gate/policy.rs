@@ -3,6 +3,8 @@
 
 use std::time::UNIX_EPOCH;
 
+use serde::{Deserialize, Serialize};
+
 const FIRST_BACKOFF_MS: u64 = 60_000;
 const MAX_BACKOFF_MS: u64 = 3_600_000;
 const MAX_FAILURES: u32 = 3;
@@ -24,7 +26,8 @@ pub enum Verdict {
     Neutral,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum PauseReason {
     BotCheck,
     RepeatedFailures,
