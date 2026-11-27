@@ -30,6 +30,9 @@ tokio = { version = "1", features = ["sync", "time"] }
 uuid = { version = "1", features = ["serde"] }
 windows-native-keyring-store = "1"
 
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt"] }
+
 # The lean settings the Milestone 0 RAM baseline was measured with, minus
 # `panic = "abort"`: unwinding must stay on so RAII cleanup guards run.
 [profile.release]
