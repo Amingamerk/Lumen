@@ -239,7 +239,8 @@ async fn a_refusal_by_youtube_expires_the_session_and_ends_the_recovery() {
     let rig = playing().await;
     rig.fail();
     let request = rig.due();
-    *rig.ytdlp.stderr.lock().unwrap() = Some("ERROR: x: HTTP Error 403: Forbidden");
+    *rig.ytdlp.stderr.lock().unwrap() =
+        Some("ERROR: [youtube] x: Unable to download API page: HTTP Error 403: Forbidden");
 
     rig.fetch(request).await;
 

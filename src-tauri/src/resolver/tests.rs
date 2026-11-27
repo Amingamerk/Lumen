@@ -342,8 +342,28 @@ async fn failures_become_fixed_categories_that_quote_nothing() {
     let cases = [
         ("ERROR: x: HTTP Error 429: Too Many Requests", RateLimited),
         ("ERROR: x: Sign in to confirm you're not a bot.", BotCheck),
-        ("ERROR: x: HTTP Error 401: Unauthorized", AuthRejected),
-        ("ERROR: x: HTTP Error 403: Forbidden", AuthRejected),
+        (
+            "ERROR: [youtube] x: Unable to download API page: HTTP Error 401: Unauthorized",
+            AuthRejected,
+        ),
+        (
+            "ERROR: [youtube] x: Unable to download API page: HTTP Error 403: Forbidden",
+            AuthRejected,
+        ),
+        (
+            "ERROR: [youtube] x: Sign in to view this video",
+            AuthRejected,
+        ),
+        (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            Failed,
+        ),
+        (
+            "ERROR: [youtube] x: HTTP Error 403: Forbidden (https://rr1.googlevideo.com/videoplayback?ip=MARKER-IP)",
+            Failed,
+        ),
+        ("ERROR: x: HTTP Error 403: Forbidden", Failed),
+        ("ERROR: x: HTTP Error 401: Unauthorized", Failed),
         ("ERROR: x: Requested format is not available.", NoFormat),
         ("ERROR: x: Video unavailable", Unavailable),
         (
@@ -418,7 +438,9 @@ async fn unavailable_songs_never_pause_but_three_failures_do() {
 #[tokio::test]
 async fn each_serious_answer_gets_the_gates_reaction() {
     let limited = fixture(failing("ERROR: x: HTTP Error 429: Too Many Requests"));
-    let rejected = fixture(failing("ERROR: x: HTTP Error 401"));
+    let rejected = fixture(failing(
+        "ERROR: [youtube] x: Unable to download API page: HTTP Error 401: Unauthorized",
+    ));
 
     let _ = limited.resolve().await;
     let _ = rejected.resolve().await;

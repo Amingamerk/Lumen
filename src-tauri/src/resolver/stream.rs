@@ -128,26 +128,57 @@ fn warning_sign(stderr: &str) -> Option<ResolveError> {
     }
 }
 
+/// Whether a lowercase yt-dlp `error:` line proves YouTube rejected the
+/// session. Stream-host (`googlevideo.com`) or generic 401/403 lines stay
+/// retryable failures so a dead media CDN URL cannot expire a working account.
+fn is_youtube_auth_rejected(line: &str) -> bool {
+    if line.contains("googlevideo.com") || line.contains("unable to download video data") {
+        return false;
+    }
+    if [
+        "sign in to",
+        "login_required",
+        "account cookies are no longer valid",
+    ]
+    .iter()
+    .any(|marker| line.contains(marker))
+    {
+        return true;
+    }
+    let is_http_auth = line.contains("http error 401") || line.contains("http error 403");
+    is_http_auth
+        && [
+            "unable to download api page",
+            "unable to download webpage",
+            "youtubei",
+            "music.youtube.com",
+            "youtube.com",
+        ]
+        .iter()
+        .any(|context| line.contains(context))
+}
+
 /// Only `error:` lines count: warnings mention HTTP 403 on healthy runs.
 fn classify_failure(stderr: &str) -> ResolveError {
-    let errors: String = stderr
+    let error_lines: Vec<&str> = stderr
         .lines()
         .filter(|line| line.starts_with("error:"))
-        .flat_map(|line| [line, "\n"])
         .collect();
-    let has = |markers: &[&str]| markers.iter().any(|m| errors.contains(m));
+    let has = |markers: &[&str]| {
+        markers
+            .iter()
+            .any(|m| error_lines.iter().any(|line| line.contains(m)))
+    };
     if has(&["captcha"]) {
         ResolveError::BotCheck
     } else if has(&["too many requests", "rate-limited"]) {
         ResolveError::RateLimited
     } else if has(&["sign in to confirm your age"]) {
         ResolveError::Unavailable
-    } else if has(&[
-        "http error 401",
-        "http error 403",
-        "sign in to",
-        "login_required",
-    ]) {
+    } else if error_lines
+        .iter()
+        .any(|line| is_youtube_auth_rejected(line))
+    {
         ResolveError::AuthRejected
     } else if has(&["requested format is not available"]) {
         ResolveError::NoFormat
