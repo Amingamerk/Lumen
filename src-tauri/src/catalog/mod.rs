@@ -154,6 +154,20 @@ impl From<&Album> for CollectionSummary {
     }
 }
 
+impl TrackRow {
+    /// A row for audio that is not in the catalog: a title and nothing else.
+    pub fn untagged(title: String) -> Self {
+        Self {
+            id: Uuid::nil(),
+            title,
+            artists: Vec::new(),
+            album: None,
+            duration_ms: 0,
+            sources: Vec::new(),
+        }
+    }
+}
+
 impl From<&Track> for TrackRow {
     fn from(track: &Track) -> Self {
         let mut sources: Vec<SourceTag> = Vec::new();

@@ -6,8 +6,8 @@ use std::time::Duration;
 use uuid::Uuid;
 
 use super::{
-    Clock, Engine, EngineEvent, NowPlaying, PlaybackStatus, PlayerEvent, PlayerPosition,
-    PlayerState, QueueItem, QueueSlice, SimulatedEngine,
+    Engine, EngineError, EngineEvent, Media, NowPlaying, PlaybackStatus, PlayerEvent,
+    PlayerPosition, PlayerState, QueueItem, QueueSlice,
 };
 use crate::catalog::{Catalog, MAX_SLICE, TrackRow};
 use crate::queue::{Entry, Queue, QueueError};
@@ -19,6 +19,11 @@ pub const RESTART_THRESHOLD: Duration = Duration::from_secs(3);
 /// How many Recommender picks wait in the Queue once autoplay has started.
 pub const AUTOPLAY_AHEAD: usize = 5;
 
+#[cfg(test)]
+use super::SimulatedEngine;
+#[cfg(test)]
+use super::simulated::Clock;
+
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum PlayerError {
     #[error("no playlist or album has the id “{id}”")]
@@ -27,6 +32,25 @@ pub enum PlayerError {
     UnknownTrack { id: Uuid },
     #[error(transparent)]
     Queue(#[from] QueueError),
+    #[error("sample track, cannot be played")]
+    SampleTrack,
+}
+
+/// How far the current media has come.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Phase {
+    Loading,
+    Open,
+    Ended,
+    /// With the words the user is told.
+    Failed(String),
+}
+
+/// Real audio, which stands outside the Queue until Milestone 4.
+struct Direct {
+    key: u32,
+    media: Media,
+    row: TrackRow,
 }
 
 pub struct Player<E: Engine> {
@@ -34,11 +58,17 @@ pub struct Player<E: Engine> {
     catalog: Arc<Catalog>,
     recommender: Box<dyn Recommender>,
     queue: Queue,
+    /// Set while real audio is loaded. The Queue is empty then.
+    direct: Option<Direct>,
+    phase: Phase,
+    /// Whether it should be playing, also while still loading.
     playing: bool,
     volume: u8,
     revision: u64,
     /// The whole second of the track the UI last heard about.
     reported_second: u64,
+    /// The duration the UI last heard about.
+    reported_duration_ms: u32,
 }
 
 /// Commands that may have nothing to change return `None` when they do not.
@@ -50,15 +80,18 @@ impl<E: Engine> Player<E> {
             catalog,
             recommender,
             queue: Queue::default(),
+            direct: None,
+            phase: Phase::Open,
             playing: false,
             volume: DEFAULT_VOLUME,
             revision: 0,
             reported_second: 0,
+            reported_duration_ms: 0,
         }
     }
 
     pub fn state(&self) -> PlayerState {
-        let current = self.queue.current().and_then(|entry| {
+        let queued = self.queue.current().and_then(|entry| {
             let (key, track, autoplay) = self.row(entry)?;
             Some(NowPlaying {
                 key,
@@ -66,23 +99,60 @@ impl<E: Engine> Player<E> {
                 autoplay,
             })
         });
-        let status = match current {
-            None => PlaybackStatus::Idle,
-            Some(_) if self.playing => PlaybackStatus::Playing,
-            Some(_) => PlaybackStatus::Paused,
+        let duration_ms = millis(self.engine.duration());
+        let current = match &self.direct {
+            Some(direct) => {
+                let mut track = direct.row.clone();
+                if duration_ms > 0 {
+                    track.duration_ms = duration_ms;
+                }
+                Some(NowPlaying {
+                    key: direct.key,
+                    track,
+                    autoplay: false,
+                })
+            }
+            None => queued,
         };
+        let status = match &self.phase {
+            _ if current.is_none() => PlaybackStatus::Idle,
+            Phase::Failed(_) => PlaybackStatus::Error,
+            Phase::Ended => PlaybackStatus::Ended,
+            _ if !self.playing => PlaybackStatus::Paused,
+            Phase::Loading => PlaybackStatus::Loading,
+            Phase::Open => PlaybackStatus::Playing,
+        };
+        let queued = self.queue.current().is_some();
         let upcoming = self.queue.upcoming().len();
         PlayerState {
             revision: self.revision,
             status,
-            position_ms: millis(self.engine.position()),
-            duration_ms: millis(self.engine.duration()),
+            // The engine's last word can fall just short of the end.
+            position_ms: match self.phase {
+                Phase::Ended => duration_ms,
+                _ => millis(self.engine.position()),
+            },
+            duration_ms,
             volume: self.volume,
-            can_next: current.is_some() && (upcoming > 0 || self.recommendation().is_some()),
+            can_next: queued && (upcoming > 0 || self.recommendation().is_some()),
+            can_previous: queued,
             upcoming,
             queue_revision: self.queue.revision(),
+            error: match &self.phase {
+                Phase::Failed(message) => Some(message.clone()),
+                _ => None,
+            },
             current,
         }
+    }
+
+    /// Plays a file or stream by itself: the Queue is emptied, so nothing comes
+    /// before or after it. A failure to load it shows in the state.
+    pub fn play_media(&mut self, media: Media, row: TrackRow) -> PlayerState {
+        let key = self.queue.clear();
+        self.direct = Some(Direct { key, media, row });
+        self.load(Duration::ZERO, true);
+        self.commit()
     }
 
     /// Queues the whole playlist or album and plays the Track at `index`.
@@ -104,14 +174,25 @@ impl<E: Engine> Player<E> {
         if let Some(&id) = tracks.iter().find(|id| self.catalog.track(**id).is_none()) {
             return Err(PlayerError::UnknownTrack { id });
         }
+        if !self.engine.plays_samples() {
+            return Err(PlayerError::SampleTrack);
+        }
         self.queue.replace(tracks, start)?;
+        self.direct = None;
         self.play_current();
         Ok(self.commit())
     }
 
+    /// After the end or a failure, playing starts the media over.
     pub fn toggle_play(&mut self) -> Option<PlayerState> {
-        self.queue.current()?;
-        self.set_playing(!self.playing);
+        if !self.has_current() {
+            return None;
+        }
+        if matches!(self.phase, Phase::Ended | Phase::Failed(_)) {
+            self.load(Duration::ZERO, true);
+        } else {
+            self.set_playing(!self.playing);
+        }
         Some(self.commit())
     }
 
@@ -136,13 +217,23 @@ impl<E: Engine> Player<E> {
     }
 
     pub fn seek(&mut self, position_ms: i64) -> Option<PlayerState> {
-        self.queue.current()?;
-        let target = Duration::from_millis(u64::try_from(position_ms).unwrap_or(0))
-            .min(self.engine.duration());
-        if millis(target) == millis(self.engine.position()) {
+        // Media that is still opening, or never did, has nowhere to go.
+        if !self.has_current() || matches!(self.phase, Phase::Loading | Phase::Failed(_)) {
             return None;
         }
-        self.engine.seek(target);
+        let target = Duration::from_millis(u64::try_from(position_ms).unwrap_or(0))
+            .min(self.engine.duration());
+        if self.phase == Phase::Ended {
+            if target == self.engine.duration() {
+                return None;
+            }
+            // The engine let go of it at the end: open it again there.
+            self.load(target, false);
+        } else if millis(target) == millis(self.engine.position()) {
+            return None;
+        } else {
+            self.engine.seek(target);
+        }
         Some(self.commit())
     }
 
@@ -200,11 +291,31 @@ impl<E: Engine> Player<E> {
     }
 
     pub fn on_engine_event(&mut self, event: EngineEvent) -> Option<PlayerEvent> {
-        self.queue.current()?;
+        if !self.has_current() || matches!(self.phase, Phase::Failed(_)) {
+            return None;
+        }
         match event {
+            EngineEvent::Loaded => {
+                if self.phase != Phase::Loading {
+                    return None;
+                }
+                self.phase = Phase::Open;
+                Some(PlayerEvent::Changed(self.commit()))
+            }
+            EngineEvent::Duration => {
+                if self.phase == Phase::Ended
+                    || millis(self.engine.duration()) == self.reported_duration_ms
+                {
+                    return None;
+                }
+                Some(PlayerEvent::Changed(self.commit()))
+            }
             EngineEvent::Progress => {
                 let position = self.engine.position();
-                if position.as_secs() == self.reported_second {
+                if self.phase != Phase::Open
+                    || !self.playing
+                    || position.as_secs() == self.reported_second
+                {
                     return None;
                 }
                 self.reported_second = position.as_secs();
@@ -214,12 +325,24 @@ impl<E: Engine> Player<E> {
                 }))
             }
             EngineEvent::Ended => {
-                if self.advance() {
+                if self.phase == Phase::Ended {
+                    return None;
+                }
+                if self.direct.is_some() {
+                    // Real audio stops here. Nothing advances by itself.
+                    self.set_playing(false);
+                    self.phase = Phase::Ended;
+                } else if self.advance() {
                     self.play_current();
                 } else {
                     // Nothing to go on with: stay here, ready to play it again.
-                    self.load_current();
+                    self.load(Duration::ZERO, false);
                 }
+                Some(PlayerEvent::Changed(self.commit()))
+            }
+            EngineEvent::Failed => {
+                self.set_playing(false);
+                self.phase = self.failure(EngineError::Unplayable);
                 Some(PlayerEvent::Changed(self.commit()))
             }
         }
@@ -231,7 +354,12 @@ impl<E: Engine> Player<E> {
     fn commit(&mut self) -> PlayerState {
         self.revision += 1;
         self.reported_second = self.engine.position().as_secs();
+        self.reported_duration_ms = millis(self.engine.duration());
         self.state()
+    }
+
+    fn has_current(&self) -> bool {
+        self.direct.is_some() || self.queue.current().is_some()
     }
 
     fn set_playing(&mut self, playing: bool) {
@@ -239,8 +367,11 @@ impl<E: Engine> Player<E> {
         self.engine.set_playing(playing);
     }
 
-    /// Gives the engine the current entry, paused at its start.
-    fn load_current(&mut self) {
+    /// The real audio, or the current Queue entry's sample.
+    fn current_media(&self) -> Media {
+        if let Some(direct) = &self.direct {
+            return direct.media.clone();
+        }
         let duration = self
             .queue
             .current()
@@ -248,13 +379,50 @@ impl<E: Engine> Player<E> {
             .map_or(Duration::ZERO, |track| {
                 Duration::from_millis(track.duration_ms.into())
             });
-        self.playing = false;
-        self.engine.load(duration);
+        Media::Sample { duration }
+    }
+
+    /// Gives the engine the current media at `start`.
+    fn load(&mut self, start: Duration, playing: bool) {
+        let media = self.current_media();
+        match self.engine.load(&media, start) {
+            Ok(()) => {
+                // A sample has nothing to open.
+                self.phase = match media {
+                    Media::Sample { .. } => Phase::Open,
+                    Media::File(_) | Media::Stream { .. } => Phase::Loading,
+                };
+                self.set_playing(playing);
+            }
+            Err(error) => {
+                self.set_playing(false);
+                self.phase = self.failure(error);
+            }
+        }
+    }
+
+    /// What the user is told: the title, never where the audio came from.
+    fn failure(&self, error: EngineError) -> Phase {
+        let title = match &self.direct {
+            Some(direct) => Some(direct.row.title.as_str()),
+            None => self
+                .queue
+                .current()
+                .and_then(|entry| self.catalog.track(entry.track))
+                .map(|track| track.title.as_str()),
+        };
+        let verb = match error {
+            EngineError::NotFound => "find",
+            EngineError::Unplayable => "play",
+        };
+        Phase::Failed(format!(
+            "Lumen could not {verb} “{}”.",
+            title.unwrap_or("this track")
+        ))
     }
 
     fn play_current(&mut self) {
-        self.load_current();
-        self.set_playing(true);
+        self.load(Duration::ZERO, true);
     }
 
     /// Makes the following entry current, adding a pick first if there is none.
@@ -308,6 +476,8 @@ fn millis(time: Duration) -> u32 {
     u32::try_from(time.as_millis()).unwrap_or(u32::MAX)
 }
 
+/// How the Queue tests move the simulated clock along.
+#[cfg(test)]
 impl<C: Clock> Player<SimulatedEngine<C>> {
     pub fn next_wake(&self) -> Option<Duration> {
         self.engine.next_wake()
