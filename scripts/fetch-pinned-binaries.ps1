@@ -89,7 +89,13 @@ function Sync-PinnedArtifacts([string]$Manifest, [string]$Dir, [switch]$Verify) 
     if (-not $stampMatches -and -not $Verify) { Remove-PinnedOutputs $Dir '' }
     foreach ($item in $artifacts) {
         $path = Join-Path $Dir $item.file
-        if (Test-Path -LiteralPath $path) { Assert-PinnedHash $path $item $Dir; continue }
+        if (Test-Path -LiteralPath $path) {
+            # Without a matching stamp the cached file may belong to an older pin: replace it.
+            if (-not $stampMatches -and -not $Verify -and (Get-Sha256 $path) -ne $item.sha256.ToLowerInvariant()) {
+                Write-Host "Pin changed for $($item.name); replacing the cached file"
+                Remove-Item -LiteralPath $path -Force
+            } else { Assert-PinnedHash $path $item $Dir; continue }
+        }
         if ($Verify) { throw "Missing $($item.name): $path" }
         $tmp = "$path.download"
         try {
@@ -130,7 +136,7 @@ function Expand-PinnedLibmpv([string]$Dir) {
             if (-not $seven) { throw 'tar.exe and 7z.exe are both unavailable.' }
             & $seven.Source x (Join-Path $Dir 'libmpv.7z') "-o$Dir" -y
         }
-        if ($LASTEXITCODE -ne 0) { throw 'tar.exe failed to extract the libmpv archive.' }
+        if ($LASTEXITCODE -ne 0) { throw 'Failed to extract the libmpv archive.' }
     }
     if (Test-Path -LiteralPath $lib) { return }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'

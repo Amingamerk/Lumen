@@ -22,6 +22,9 @@ Test-Case 'bad download hash removes every usable output' {
 Test-Case 'tampered cached file fails and cleans up' {
     $d = New-TestDir; try { $source = Join-Path $d 'source.bin'; [IO.File]::WriteAllText($source, 'good'); $hash = (Get-FileHash $source -Algorithm SHA256).Hash; $manifest = Join-Path $d 'manifest.json'; New-TestManifest $source $hash | Set-Content $manifest; $dest = Join-Path $d 'out'; & $PSScriptRoot/fetch-pinned-binaries.ps1 -ManifestPath $manifest -DestDir $dest; [IO.File]::WriteAllText((Join-Path $dest 'sample.bin'), 'tampered'); Assert-Throws { & $PSScriptRoot/fetch-pinned-binaries.ps1 -ManifestPath $manifest -DestDir $dest -VerifyOnly }; Assert (-not (Test-Path "$dest/sample.bin")) 'tampered cache survived' } finally { Remove-Item $d -Recurse -Force }
 }
+Test-Case 'changed pin replaces the cached artifact' {
+    $d = New-TestDir; try { $old = Join-Path $d 'old.bin'; [IO.File]::WriteAllText($old, 'old'); $new = Join-Path $d 'new.bin'; [IO.File]::WriteAllText($new, 'new'); $manifest = Join-Path $d 'manifest.json'; $dest = Join-Path $d 'out'; New-TestManifest $old (Get-FileHash $old -Algorithm SHA256).Hash | Set-Content $manifest; & $PSScriptRoot/fetch-pinned-binaries.ps1 -ManifestPath $manifest -DestDir $dest; [IO.File]::WriteAllText((Join-Path $dest 'mpv.lib'), 'derived'); New-TestManifest $new (Get-FileHash $new -Algorithm SHA256).Hash | Set-Content $manifest; & $PSScriptRoot/fetch-pinned-binaries.ps1 -ManifestPath $manifest -DestDir $dest; Assert ([IO.File]::ReadAllText((Join-Path $dest 'sample.bin')) -eq 'new') 'old pin kept'; Assert (-not (Test-Path "$dest/mpv.lib")) 'stale derived output kept' } finally { Remove-Item $d -Recurse -Force }
+}
 Test-Case 'mpv export parsing keeps only exports once' {
     $exports = @(Get-MpvExports @('  1    0 00001000 mpv_create', '  2    1 00001020 mpv_create', 'noise mpv_get_time_us extra'))
     Assert (($exports -join ',') -eq 'mpv_create,mpv_get_time_us') 'exports were not parsed'
