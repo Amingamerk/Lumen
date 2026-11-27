@@ -19,6 +19,10 @@ A playlist is an ordered list of Tracks that someone put together; an album is a
 comes from one `SourceKind`. **Collection** is the word for either one: both are shown as cards and opened on
 the playlist route.
 
+### Track slice
+Some consecutive rows of one Collection (`offset`, `limit`, at most 200) with the Collection's total. The
+whole list stays in Rust; the playlist route asks for the slices it is about to show.
+
 ### Shelf
 One horizontal row of Collection cards on Home.
 
@@ -79,7 +83,7 @@ PROJECT.md section 3c.
 | UI (Svelte) | Rendering, user input | Call external services, hold player state or secrets |
 | `ipc` | Commands in, events out | Business logic |
 | `sources` | Service APIs, import, metadata -> Track | Play audio |
-| `catalog` | Domain shapes, the static fixtures, Home/Library/Search views | Call services, store data |
+| `catalog` | Domain shapes, the static fixtures, Home/Library/Search views, Track slices | Call services, store data |
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
 | `audio` | libmpv, playback state | Resolve URLs |

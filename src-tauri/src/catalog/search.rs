@@ -41,8 +41,7 @@ impl Catalog {
     pub fn search(&self, query: &str, filter: SourceFilter) -> SearchView {
         let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
 
-        let tracks = self
-            .tracks
+        let tracks = self.tracks[..self.searchable]
             .iter()
             .filter(|track| track.sources.iter().any(|r| filter.accepts(r.kind)))
             .filter(|track| {
@@ -129,8 +128,8 @@ mod tests {
         );
         duet.artists.push("Mira Sol".to_owned());
 
-        Catalog {
-            tracks: vec![
+        Catalog::new(
+            vec![
                 track(1, "Harbor Lights", "Mira Sol", "Low Tide", &[YouTube]),
                 track(
                     2,
@@ -142,22 +141,22 @@ mod tests {
                 track(3, "Lamplighter", "Juno Park", "Low Tide", &[Spotify]),
                 duet,
             ],
-            playlists: vec![Playlist {
+            vec![Playlist {
                 id: "harbor-walks".to_owned(),
                 name: "Harbor walks".to_owned(),
                 description: "For the quay".to_owned(),
                 source: SoundCloud,
                 tracks: vec![Uuid::from_u128(2)],
             }],
-            albums: vec![Album {
+            vec![Album {
                 id: "low-tide".to_owned(),
                 title: "Low Tide".to_owned(),
                 artists: vec!["Mira Sol".to_owned()],
                 source: YouTube,
                 tracks: vec![Uuid::from_u128(1)],
             }],
-            shelves: &[],
-        }
+            &[],
+        )
     }
 
     fn titles(view: &SearchView) -> Vec<&str> {

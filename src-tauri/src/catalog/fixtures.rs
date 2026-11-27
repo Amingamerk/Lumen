@@ -6,6 +6,9 @@ use super::{Album, Catalog, Playlist, ShelfPlan, SourceKind, SourceRef, Track};
 
 use SourceKind::{SoundCloud, Spotify, YouTube};
 
+/// The generated playlist that proves long lists are windowed.
+pub const LONG_PLAYLIST_ID: &str = "long-haul";
+
 const ON_YOUTUBE: &[SourceKind] = &[YouTube];
 const ON_SOUNDCLOUD: &[SourceKind] = &[SoundCloud];
 const ON_YOUTUBE_AND_SOUNDCLOUD: &[SourceKind] = &[YouTube, SoundCloud];
@@ -183,11 +186,85 @@ pub(super) fn catalog() -> Catalog {
         })
         .collect();
 
-    Catalog {
-        tracks,
-        playlists,
-        albums,
-        shelves: HOME_SHELVES,
+    let (long_playlist, long_tracks) = long_playlist();
+    Catalog::new(tracks, playlists, albums, HOME_SHELVES)
+        .with_unsearched(long_playlist, long_tracks)
+}
+
+const LONG_PLAYLIST_LENGTH: u128 = 5_000;
+/// Generated Track ids start here, clear of the hand-written ones.
+const FIRST_LONG_ID: u128 = 10_000;
+
+const FIRST_WORDS: &[&str] = &[
+    "Amber", "Quiet", "Copper", "Northern", "Paper", "Salt", "Evening", "Hollow", "Glass",
+    "Winter", "Borrowed", "Slow", "Distant", "Velvet", "Open", "Last", "Silver", "Second",
+    "Harbor",
+];
+const SECOND_WORDS: &[&str] = &[
+    "Lantern", "Tide", "Window", "Signal", "Orchard", "Platform", "Weather", "Static", "Ferry",
+    "Garden", "Current", "Rooftop", "Meadow", "Station", "Ember", "Compass", "Letters",
+];
+const LONG_ARTISTS: &[&str] = &[
+    "Mira Sol",
+    "The Quiet Pier",
+    "Juno Park",
+    "Paper Lanterns",
+    "Søren Vale",
+    "Kestrel Row",
+    "Ines Marlow",
+    "Tomo Hadi",
+    "Low Orbit Choir",
+    "Cold Harbour Radio",
+    "Ada Fenwick",
+];
+
+/// 5,000 Spotify Tracks built from the word lists, the same ones every time.
+/// Generating them keeps the binary and start-up small.
+fn long_playlist() -> (Playlist, Vec<Track>) {
+    let tracks: Vec<Track> = (0..LONG_PLAYLIST_LENGTH).map(long_track).collect();
+    let playlist = Playlist {
+        id: LONG_PLAYLIST_ID.to_owned(),
+        name: "The long haul".to_owned(),
+        description: "Five thousand tracks, end to end".to_owned(),
+        source: Spotify,
+        tracks: tracks.iter().map(|t| t.id).collect(),
+    };
+    (playlist, tracks)
+}
+
+fn long_track(n: u128) -> Track {
+    // The remainder is below the list's length, so both casts are exact.
+    let pick = |words: &[&'static str], at: u128| words[(at % words.len() as u128) as usize];
+
+    let mut title = format!("{} {}", pick(FIRST_WORDS, n), pick(SECOND_WORDS, n));
+    // Now and then a title too long for its column.
+    if n.is_multiple_of(97) {
+        title.push_str(", as Heard From the Far End of the Platform After the Last Train");
+    }
+    // Twelve Tracks to an album, all by the same artist.
+    let disc = n / 12;
+    // A Spotify Track mostly has a Match on YouTube Music, sometimes only on
+    // SoundCloud, and sometimes none.
+    let kinds: &[SourceKind] = match n % 10 {
+        7 => &[Spotify, SoundCloud],
+        9 => UNMATCHED,
+        _ => MATCHED,
+    };
+
+    Track {
+        id: Uuid::from_u128(FIRST_LONG_ID + n),
+        title,
+        artists: vec![pick(LONG_ARTISTS, disc).to_owned()],
+        album: Some(format!(
+            "{} {}",
+            pick(SECOND_WORDS, disc / 7),
+            pick(FIRST_WORDS, disc)
+        )),
+        // From 2:00 to 5:59, spread out.
+        duration_ms: (120 + (n * 37 % 240) as u32) * 1000,
+        artwork_url: None,
+        isrc: None,
+        sources: source_refs(FIRST_LONG_ID + n, kinds),
     }
 }
 
@@ -200,14 +277,18 @@ fn track((number, &(title, artists, album, seconds, kinds)): (u128, &TrackSeed))
         duration_ms: seconds * 1000,
         artwork_url: None,
         isrc: None,
-        sources: kinds
-            .iter()
-            .map(|&kind| SourceRef {
-                kind,
-                id: format!("fixture-{number}"),
-            })
-            .collect(),
+        sources: source_refs(number, kinds),
     }
+}
+
+fn source_refs(number: u128, kinds: &[SourceKind]) -> Vec<SourceRef> {
+    kinds
+        .iter()
+        .map(|&kind| SourceRef {
+            kind,
+            id: format!("fixture-{number}"),
+        })
+        .collect()
 }
 
 fn owned(names: &[&str]) -> Vec<String> {

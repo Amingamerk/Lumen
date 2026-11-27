@@ -1,13 +1,19 @@
 //! Lumen's domain shapes and the views the UI draws from them. The data is a
 //! static fixture until the SQLite library replaces it (Milestone 3).
 
+use std::collections::HashMap;
+
 use serde::Serialize;
 use uuid::Uuid;
 
 mod fixtures;
 mod search;
+mod slice;
 
+#[cfg(test)]
+pub use fixtures::LONG_PLAYLIST_ID;
 pub use search::{SearchView, SourceFilter};
+pub use slice::{CollectionDetail, TrackSlice};
 
 /// The service a Track or Collection comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -183,6 +189,12 @@ struct ShelfPlan {
 #[derive(Debug)]
 pub struct Catalog {
     tracks: Vec<Track>,
+    /// How many of `tracks`, from the front, Search looks through. The generated
+    /// Tracks after them are only listed in their playlist: Search answers with
+    /// every match at once, which has to stay small.
+    searchable: usize,
+    /// Where each Track sits in `tracks`, so a slice does not scan for its rows.
+    positions: HashMap<Uuid, usize>,
     playlists: Vec<Playlist>,
     albums: Vec<Album>,
     shelves: &'static [ShelfPlan],
@@ -196,6 +208,52 @@ impl Default for Catalog {
 }
 
 impl Catalog {
+    fn new(
+        tracks: Vec<Track>,
+        playlists: Vec<Playlist>,
+        albums: Vec<Album>,
+        shelves: &'static [ShelfPlan],
+    ) -> Self {
+        let positions = tracks
+            .iter()
+            .enumerate()
+            .map(|(at, t)| (t.id, at))
+            .collect();
+        Self {
+            searchable: tracks.len(),
+            tracks,
+            positions,
+            playlists,
+            albums,
+            shelves,
+        }
+    }
+
+    /// Adds a playlist with Tracks of its own that Search leaves out.
+    fn with_unsearched(mut self, playlist: Playlist, tracks: Vec<Track>) -> Self {
+        for track in tracks {
+            self.positions.insert(track.id, self.tracks.len());
+            self.tracks.push(track);
+        }
+        self.playlists.push(playlist);
+        self
+    }
+
+    fn track(&self, id: Uuid) -> Option<&Track> {
+        self.positions.get(&id).map(|&at| &self.tracks[at])
+    }
+
+    /// The Tracks of a playlist or album, in its order.
+    fn listed(&self, id: &str) -> Option<&[Uuid]> {
+        let playlist = self.playlists.iter().find(|p| p.id == id);
+        playlist.map(|p| p.tracks.as_slice()).or_else(|| {
+            self.albums
+                .iter()
+                .find(|a| a.id == id)
+                .map(|a| a.tracks.as_slice())
+        })
+    }
+
     pub fn playlists(&self) -> &[Playlist] {
         &self.playlists
     }
@@ -286,6 +344,73 @@ mod tests {
             assert!(track.duration_ms > 0, "{}", track.title);
             assert!(!track.sources.is_empty(), "{}", track.title);
         }
+    }
+
+    fn long_playlist(catalog: &Catalog) -> &Playlist {
+        catalog
+            .playlists
+            .iter()
+            .find(|p| p.id == LONG_PLAYLIST_ID)
+            .expect("the long playlist exists")
+    }
+
+    #[test]
+    fn holds_a_five_thousand_track_playlist_beside_the_others() {
+        let catalog = Catalog::default();
+
+        let long = long_playlist(&catalog);
+
+        assert_eq!(long.tracks.len(), 5_000);
+        assert!(catalog.playlists.len() > 6);
+        assert!(
+            catalog
+                .library()
+                .playlists
+                .iter()
+                .any(|c| c.id == LONG_PLAYLIST_ID)
+        );
+    }
+
+    #[test]
+    fn builds_the_same_long_playlist_every_time() {
+        let (first, second) = (Catalog::default(), Catalog::default());
+
+        assert_eq!(long_playlist(&first), long_playlist(&second));
+        assert_eq!(first.tracks, second.tracks);
+    }
+
+    #[test]
+    fn the_long_playlist_has_matched_and_unmatched_spotify_tracks() {
+        let catalog = Catalog::default();
+        let listed: HashSet<Uuid> = long_playlist(&catalog).tracks.iter().copied().collect();
+
+        let mut mixes: HashSet<Vec<&str>> = HashSet::new();
+        for track in catalog.tracks.iter().filter(|t| listed.contains(&t.id)) {
+            mixes.insert(
+                TrackRow::from(track)
+                    .sources
+                    .iter()
+                    .map(|s| s.badge)
+                    .collect(),
+            );
+        }
+
+        assert_eq!(
+            mixes,
+            HashSet::from([vec!["SP", "YT"], vec!["SP", "SC"], vec!["SP"]])
+        );
+    }
+
+    #[test]
+    fn search_lists_the_long_playlist_but_not_its_generated_tracks() {
+        let catalog = Catalog::default();
+        let listed: HashSet<Uuid> = long_playlist(&catalog).tracks.iter().copied().collect();
+
+        let view = catalog.search("", SourceFilter::All);
+
+        assert!(view.tracks.iter().all(|t| !listed.contains(&t.id)));
+        assert_eq!(view.tracks.len(), catalog.tracks.len() - listed.len());
+        assert!(view.collections.iter().any(|c| c.id == LONG_PLAYLIST_ID));
     }
 
     #[test]
