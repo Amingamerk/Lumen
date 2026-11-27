@@ -83,7 +83,13 @@
   }
 
   onMount(() => {
-    const connections = [store.connect(), player.connect(), account.connect(), youtube.connect()];
+    const connections = [
+      store.connect(),
+      catalog.connect(),
+      player.connect(),
+      account.connect(),
+      youtube.connect(),
+    ];
     return () => {
       for (const connection of connections) void connection.then((disconnect) => disconnect());
     };
@@ -123,6 +129,10 @@
     {:else if route?.view === 'search'}
       <Search
         {catalog}
+        account={account.status}
+        youtube={youtube.status}
+        onsignin={() => void account.signIn()}
+        onresume={() => void youtube.resume()}
         onopen={openCollection}
         onplay={(trackId) => void player.playSearchResult(trackId)}
         focusWanted={searchFocusWanted}

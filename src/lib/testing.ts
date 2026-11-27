@@ -199,8 +199,21 @@ export function trackSlice(offset: number, limit: number, total: number): TrackS
 }
 
 /** The same results whatever is asked: matching is Rust's job, and tested there. */
-export function searchView(query: string, filter: SourceFilter): SearchView {
-  return { query, filter, tracks: tracks(), collections: [collection('low-tide')] };
+export function searchView(
+  query: string,
+  filter: SourceFilter,
+  overrides: Partial<SearchView> = {},
+): SearchView {
+  return {
+    revision: 0,
+    query,
+    filter,
+    status: 'results',
+    tracks: tracks(),
+    // Only the sample catalog has any.
+    collections: filter === 'soundcloud' ? [collection('low-tide')] : [],
+    ...overrides,
+  };
 }
 
 /** A promise the test settles when it chooses, to put answers out of order. */
@@ -222,6 +235,8 @@ export function fakeBridge({ announce = true } = {}) {
   const playerHandlers = new Set<(state: PlayerState) => void>();
   const positionHandlers = new Set<(position: PlayerPosition) => void>();
   let revision = 0;
+  let searchRevision = 0;
+  const searchHandlers = new Set<(view: SearchView) => void>();
   const accountHandlers = new Set<(status: AccountStatus) => void>();
   const signInFailureHandlers = new Set<(reason: string) => void>();
   const youtubeHandlers = new Set<(status: ServiceStatus) => void>();
@@ -229,6 +244,14 @@ export function fakeBridge({ announce = true } = {}) {
   function catalogCall(name: string) {
     bridge.calls.push(name);
     if (bridge.failCatalog) throw bridge.failCatalog;
+  }
+
+  /** Answers a search the way Rust does: with an event. */
+  async function announceSearch() {
+    const revision = ++searchRevision;
+    const { query, filter } = bridge.remembered;
+    const view = await bridge.answer(query, filter);
+    bridge.emitSearch({ ...view, revision });
   }
 
   /** Records a player command. Like Rust, it answers only through events. */
@@ -352,7 +375,9 @@ export function fakeBridge({ announce = true } = {}) {
       };
     },
     requested: [] as Route[],
+    /** What was submitted with Enter or "Try again". */
     searches: [] as { query: string; filter: SourceFilter }[],
+    filterChanges: [] as SourceFilter[],
     remembered: { query: '', filter: 'all' as SourceFilter },
     answer: searchView as Answer,
     failNavigate: null as string | null,
@@ -412,14 +437,34 @@ export function fakeBridge({ announce = true } = {}) {
     async getSearch(): Promise<SearchView> {
       catalogCall('getSearch');
       const { query, filter } = bridge.remembered;
+      const asOf = searchRevision;
       await bridge.beforeRemembered?.();
-      return bridge.answer(query, filter);
+      return { ...(await bridge.answer(query, filter)), revision: asOf };
     },
-    async searchCatalog(query: string, filter: SourceFilter): Promise<SearchView> {
-      catalogCall('searchCatalog');
+    async submitSearch(query: string, filter: SourceFilter) {
+      catalogCall('submitSearch');
       bridge.searches.push({ query, filter });
       bridge.remembered = { query, filter };
-      return bridge.answer(query, filter);
+      await announceSearch();
+    },
+    async setSearchFilter(filter: SourceFilter) {
+      catalogCall('setSearchFilter');
+      bridge.filterChanges.push(filter);
+      bridge.remembered = { ...bridge.remembered, filter };
+      await announceSearch();
+    },
+    get searchListeners() {
+      return searchHandlers.size;
+    },
+    emitSearch(view: SearchView) {
+      for (const handler of searchHandlers) handler(view);
+    },
+    async onSearchChanged(handler: (view: SearchView) => void) {
+      bridge.calls.push('onSearchChanged');
+      searchHandlers.add(handler);
+      return () => {
+        searchHandlers.delete(handler);
+      };
     },
     async onNavigationChanged(handler: (navigation: NavigationState) => void) {
       bridge.calls.push('onNavigationChanged');

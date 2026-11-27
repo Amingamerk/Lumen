@@ -226,13 +226,6 @@ impl AppState {
             .ok_or_else(|| unknown_collection(playlist_id))
     }
 
-    /// Runs a search and remembers it for the next visit to the Search view.
-    pub fn search(&mut self, query: &str, filter: SourceFilter) -> SearchView {
-        self.search.query = query.to_owned();
-        self.search.filter = filter;
-        self.search_view()
-    }
-
     /// What playing a result of the remembered search queues: all its Tracks,
     /// and where `track_id` is among them.
     pub fn search_queue(&self, track_id: Uuid) -> Result<(Vec<Uuid>, usize), StateError> {
@@ -356,7 +349,7 @@ impl AppState {
     }
 
     /// The submitted search as the chosen chip shows it.
-    pub fn shown_search(&self) -> SearchView {
+    pub fn search_view(&self) -> SearchView {
         let search = &self.search;
         if search.filter == SourceFilter::SoundCloud {
             return SearchView {
@@ -376,7 +369,7 @@ impl AppState {
 
     fn next_search_view(&mut self) -> SearchView {
         self.search.revision += 1;
-        self.shown_search()
+        self.search_view()
     }
 
     fn keep(&mut self, found: Parsed) -> SearchStatus {
@@ -390,11 +383,6 @@ impl AppState {
                 SearchStatus::NoResults
             }
         }
-    }
-
-    /// The remembered search with its results.
-    pub fn search_view(&self) -> SearchView {
-        self.catalog.search(&self.search.query, self.search.filter)
     }
 }
 
@@ -630,24 +618,25 @@ mod tests {
 
         assert_eq!(view.query, "");
         assert_eq!(view.filter, SourceFilter::All);
-        assert!(!view.tracks.is_empty());
+        assert_eq!(view.status, SearchStatus::Idle);
+        assert!(view.tracks.is_empty());
     }
 
     #[test]
     fn remembers_the_last_search() {
         let mut state = AppState::default();
 
-        let found = state.search("night", SourceFilter::YouTube);
+        let submitted = state.submit_search("night", SourceFilter::SoundCloud);
 
-        assert_eq!(found.query, "night");
-        assert_eq!(state.search_view(), found);
+        assert_eq!(Some(state.search_view()), submitted.view);
+        assert_eq!(state.search_view().query, "night");
     }
 
     #[test]
     fn searching_does_not_navigate() {
         let mut state = AppState::default();
 
-        state.search("night", SourceFilter::All);
+        state.submit_search("night", SourceFilter::All);
 
         assert_eq!(state.snapshot().navigation.revision, 0);
     }
@@ -694,12 +683,8 @@ mod tests {
     #[test]
     fn a_search_result_queues_the_remembered_results() {
         let mut state = AppState::default();
-        let found: Vec<Uuid> = state
-            .search("", SourceFilter::SoundCloud)
-            .tracks
-            .iter()
-            .map(|t| t.id)
-            .collect();
+        state.submit_search("", SourceFilter::SoundCloud);
+        let found: Vec<Uuid> = state.search_view().tracks.iter().map(|t| t.id).collect();
         assert!(found.len() > 1);
 
         assert_eq!(state.search_queue(found[1]), Ok((found.clone(), 1)));
@@ -708,7 +693,7 @@ mod tests {
     #[test]
     fn a_track_outside_the_search_is_rejected() {
         let mut state = AppState::default();
-        state.search("night", SourceFilter::SoundCloud);
+        state.submit_search("night", SourceFilter::SoundCloud);
         let id = Uuid::from_u128(999_999);
 
         assert_eq!(state.search_queue(id), Err(StateError::NotInSearch { id }));
@@ -747,7 +732,7 @@ mod tests {
     #[test]
     fn a_live_search_loads_and_then_shows_its_songs_with_a_rising_revision() {
         let mut state = AppState::default();
-        assert_eq!(shown(&state.shown_search()), (SearchStatus::Idle, vec![]));
+        assert_eq!(shown(&state.search_view()), (SearchStatus::Idle, vec![]));
 
         let submitted = state.submit_search(" Paper ", SourceFilter::YouTube);
 
@@ -765,7 +750,7 @@ mod tests {
         assert_eq!(shown(&done), (SearchStatus::Results, vec!["Lanterns"]));
         assert!(done.collections.is_empty());
         assert!(done.revision > loading.revision);
-        assert_eq!(state.shown_search(), done);
+        assert_eq!(state.search_view(), done);
     }
 
     #[test]
@@ -779,7 +764,7 @@ mod tests {
         assert_eq!(blank.view.unwrap().status, SearchStatus::Idle);
         assert!(!state.is_newest_search(ticket.number));
         assert_eq!(state.finish_search(ticket.number, songs("Late")), None);
-        assert_eq!(shown(&state.shown_search()), (SearchStatus::Idle, vec![]));
+        assert_eq!(shown(&state.search_view()), (SearchStatus::Idle, vec![]));
     }
 
     #[test]
@@ -807,7 +792,7 @@ mod tests {
             assert_eq!(state.finish_search(old.number, late), None);
 
             assert_eq!(
-                shown(&state.shown_search()),
+                shown(&state.search_view()),
                 (SearchStatus::Results, vec!["New"])
             );
         }

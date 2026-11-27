@@ -11,7 +11,7 @@ use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::audio::{PlayerError, PlayerPosition, PlayerState};
-use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, SourceFilter, TrackSlice};
+use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, TrackSlice};
 use crate::secrets::SecretError;
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
 
@@ -156,15 +156,6 @@ pub fn get_track_slice(
 #[tauri::command]
 pub fn get_search(state: State<'_, SharedState>) -> SearchView {
     lock(&state).search_view()
-}
-
-#[tauri::command]
-pub fn search_catalog(
-    state: State<'_, SharedState>,
-    query: String,
-    filter: SourceFilter,
-) -> SearchView {
-    lock(&state).search(&query, filter)
 }
 
 #[cfg(test)]

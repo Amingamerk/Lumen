@@ -3,8 +3,8 @@ import type { Bridge, CollectionDetail, Library, SearchView, Shelf, SourceFilter
 import { TrackWindow } from './trackWindow.svelte';
 
 /**
- * A mirror of the catalog views Rust builds. Each view asks when it opens; no
- * searching or filtering happens on this side.
+ * A mirror of the catalog views Rust builds. Each view asks when it opens, and
+ * the search also follows its events. No searching or filtering happens here.
  */
 export class CatalogStore {
   home = $state.raw<Shelf[] | null>(null);
@@ -17,11 +17,21 @@ export class CatalogStore {
 
   readonly #bridge: Bridge;
   // Answers can arrive out of order; only the latest request of each kind counts.
-  #searches = 0;
   #collections = 0;
 
   constructor(bridge: Bridge) {
     this.#bridge = bridge;
+  }
+
+  /** Starts mirroring the search. Resolves with a function that stops it. */
+  async connect(): Promise<() => void> {
+    let stop = () => {};
+    try {
+      stop = await this.#bridge.onSearchChanged((view) => this.#applySearch(view));
+    } catch (error) {
+      this.error = describeError(error);
+    }
+    return () => stop();
   }
 
   loadHome(): Promise<void> {
@@ -63,20 +73,29 @@ export class CatalogStore {
 
   /** Fetches the search Rust remembers. */
   openSearch(): Promise<void> {
-    return this.#askSearch(() => this.#bridge.getSearch());
-  }
-
-  runSearch(query: string, filter: SourceFilter): Promise<void> {
-    return this.#askSearch(() => this.#bridge.searchCatalog(query, filter));
-  }
-
-  #askSearch(request: () => Promise<SearchView>): Promise<void> {
-    const ticket = ++this.#searches;
     return this.#ask(
-      request,
-      (search) => (this.search = search),
-      () => ticket === this.#searches,
+      () => this.#bridge.getSearch(),
+      (view) => this.#applySearch(view),
     );
+  }
+
+  submitSearch(query: string, filter: SourceFilter): Promise<void> {
+    return this.#ask(
+      () => this.#bridge.submitSearch(query, filter),
+      () => {},
+    );
+  }
+
+  setSearchFilter(filter: SourceFilter): Promise<void> {
+    return this.#ask(
+      () => this.#bridge.setSearchFilter(filter),
+      () => {},
+    );
+  }
+
+  /** Events and answers can overtake each other; the revision tells them apart. */
+  #applySearch(view: SearchView) {
+    if (view.revision >= (this.search?.revision ?? 0)) this.search = view;
   }
 
   async #ask<T>(

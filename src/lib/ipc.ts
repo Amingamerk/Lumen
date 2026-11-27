@@ -61,10 +61,23 @@ export interface Library {
 
 export type SourceFilter = 'all' | 'youtube' | 'soundcloud';
 
+export type SearchStatus =
+  | 'idle'
+  | 'loading'
+  | 'results'
+  | 'noResults'
+  | 'offline'
+  | 'unexpected'
+  | 'blocked';
+
 /** A search and what Rust found for it. */
 export interface SearchView {
+  /** Grows with every change. */
+  revision: number;
+  /** The query last submitted. */
   query: string;
   filter: SourceFilter;
+  status: SearchStatus;
   tracks: TrackRow[];
   collections: CollectionSummary[];
 }
@@ -177,7 +190,11 @@ export interface Bridge {
   getTrackSlice(playlistId: string, offset: number, limit: number): Promise<TrackSlice>;
   /** The search Rust remembers, with its results. */
   getSearch(): Promise<SearchView>;
-  searchCatalog(query: string, filter: SourceFilter): Promise<SearchView>;
+  /** The only thing that sends a search. The outcome arrives as events. */
+  submitSearch(query: string, filter: SourceFilter): Promise<void>;
+  /** Switches the chip. Sends nothing to a service. The outcome arrives as an event. */
+  setSearchFilter(filter: SourceFilter): Promise<void>;
+  onSearchChanged(handler: (view: SearchView) => void): Promise<() => void>;
   /** Resolves with a function that stops listening. */
   onNavigationChanged(handler: (navigation: NavigationState) => void): Promise<() => void>;
 
@@ -221,6 +238,8 @@ const PLAYER_POSITION = 'player-position';
 /** Must match the names in src-tauri/src/ipc/account.rs. */
 const ACCOUNT_CHANGED = 'account-changed';
 const SIGN_IN_FAILED = 'sign-in-failed';
+/** Must match the name in src-tauri/src/ipc/search.rs. */
+const SEARCH_CHANGED = 'search-changed';
 /** Must match the name in src-tauri/src/ipc/youtube.rs. */
 const YOUTUBE_STATUS_CHANGED = 'youtube-status-changed';
 
@@ -233,7 +252,10 @@ export const tauriBridge: Bridge = {
   getTrackSlice: (playlistId, offset, limit) =>
     invoke<TrackSlice>('get_track_slice', { playlistId, offset, limit }),
   getSearch: () => invoke<SearchView>('get_search'),
-  searchCatalog: (query, filter) => invoke<SearchView>('search_catalog', { query, filter }),
+  submitSearch: (query, filter) => invoke('submit_search', { query, filter }),
+  setSearchFilter: (filter) => invoke('set_search_filter', { filter }),
+  onSearchChanged: (handler) =>
+    listen<SearchView>(SEARCH_CHANGED, (event) => handler(event.payload)),
   onNavigationChanged: (handler) =>
     listen<NavigationState>(NAVIGATION_CHANGED, (event) => handler(event.payload)),
   getPlayerState: () => invoke<PlayerState>('get_player_state'),

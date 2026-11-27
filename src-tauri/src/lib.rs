@@ -45,7 +45,6 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::get_collection,
             ipc::get_track_slice,
             ipc::get_search,
-            ipc::search_catalog,
             ipc::search::submit_search,
             ipc::search::set_search_filter,
             ipc::toggle_queue,

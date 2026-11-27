@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import type { SearchView } from '../ipc';
 import { deferred, fakeBridge, home, library, searchView } from '../testing';
 import { CatalogStore } from './catalog.svelte';
 
@@ -62,52 +61,68 @@ describe('CatalogStore', () => {
     expect(catalog.search).toEqual(searchView('ferry', 'soundcloud'));
   });
 
-  it('sends the query and chip to Rust and shows its answer unfiltered', async () => {
+  it('submits to Rust and mirrors the event that answers', async () => {
     const { bridge, catalog } = setUp();
+    await catalog.connect();
 
-    await catalog.runSearch('no such words', 'soundcloud');
+    await catalog.submitSearch('no such words', 'youtube');
 
-    expect(bridge.searches).toEqual([{ query: 'no such words', filter: 'soundcloud' }]);
-    expect(catalog.search).toEqual(searchView('no such words', 'soundcloud'));
+    expect(bridge.searches).toEqual([{ query: 'no such words', filter: 'youtube' }]);
+    expect(catalog.search).toEqual(searchView('no such words', 'youtube', { revision: 1 }));
   });
 
-  it('keeps the newest results when an older search answers late', async () => {
+  it('tells Rust which chip was chosen without submitting', async () => {
     const { bridge, catalog } = setUp();
-    const slow = deferred<SearchView>();
-    bridge.answer = (query, filter) => (query === 'n' ? slow.promise : searchView(query, filter));
+    await catalog.connect();
 
-    const first = catalog.runSearch('n', 'all');
-    await catalog.runSearch('ni', 'all');
-    slow.resolve(searchView('n', 'all'));
-    await first;
+    await catalog.setSearchFilter('soundcloud');
 
-    expect(catalog.search?.query).toBe('ni');
+    expect(bridge.filterChanges).toEqual(['soundcloud']);
+    expect(bridge.searches).toEqual([]);
+    expect(catalog.search?.filter).toBe('soundcloud');
   });
 
-  it('does not let the remembered search overwrite what was typed meanwhile', async () => {
+  it('drops a view older than the one it has', async () => {
     const { bridge, catalog } = setUp();
+    await catalog.connect();
+
+    bridge.emitSearch(searchView('new', 'all', { revision: 5 }));
+    bridge.emitSearch(searchView('old', 'all', { revision: 4 }));
+
+    expect(catalog.search?.query).toBe('new');
+  });
+
+  it('does not let the remembered search overwrite a newer event', async () => {
+    const { bridge, catalog } = setUp();
+    await catalog.connect();
     const slow = deferred<undefined>();
     bridge.beforeRemembered = () => slow.promise;
 
     const opening = catalog.openSearch();
-    await catalog.runSearch('ferry', 'all');
+    await catalog.submitSearch('ferry', 'all');
     slow.resolve(undefined);
     await opening;
 
     expect(catalog.search?.query).toBe('ferry');
   });
 
-  it('ignores the failure of a search that has been replaced', async () => {
+  it('stops listening for search changes', async () => {
     const { bridge, catalog } = setUp();
-    const slow = deferred<SearchView>();
-    bridge.answer = (query, filter) => (query === 'n' ? slow.promise : searchView(query, filter));
+    const disconnect = await catalog.connect();
+    expect(bridge.searchListeners).toBe(1);
 
-    const first = catalog.runSearch('n', 'all');
-    await catalog.runSearch('ni', 'all');
-    slow.reject('too late to matter');
-    await first;
+    disconnect();
 
-    expect(catalog.error).toBeNull();
+    expect(bridge.searchListeners).toBe(0);
+  });
+
+  it('says why a search command failed', async () => {
+    const { bridge, catalog } = setUp();
+    bridge.failCatalog = 'search unavailable';
+
+    await catalog.submitSearch('ferry', 'all');
+
+    expect(catalog.error).toBe('search unavailable');
   });
 
   it('keeps what it has and says why when Rust fails, then recovers', async () => {

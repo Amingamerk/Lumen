@@ -146,6 +146,8 @@ describe('player bar', () => {
 describe('playing from a list', () => {
   it('sends a search result to Rust and the bar follows the event', async () => {
     const { bridge } = await openApp();
+    // Only the sample catalog can be played from Search so far.
+    bridge.remembered = { query: '', filter: 'soundcloud' };
     await fireEvent.click(screen.getByRole('link', { name: 'Search' }));
 
     await fireEvent.click(
