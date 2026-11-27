@@ -1,0 +1,7 @@
+{
+  "artifacts": [
+    {"name":"libmpv","version":"2026-11-26","url":"https://github.com/Amingamerk/Lumen/releases/download/deps-libmpv-20261126/mpv-dev-lgpl-x86_64-20261126-git-1eab28e7b5.7z","sha256":"11a3542196c377fc2e8a1e9aa86acfd3b82ed2b738d057c238bd93e39d4847e9","file":"libmpv.7z"},
+    {"name":"yt-dlp","version":"2026.11.23","url":"https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe","sha256":"622ed48023cac1daa52a3bf3a6ac38f03514de214b5f0fa069389fd0f6d17e5c","file":"yt-dlp-x86_64-pc-windows-msvc.exe"},
+    {"name":"deno","version":"v2.9.8","url":"https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip","sha256":"cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf","file":"deno.zip"}
+  ]
+}
