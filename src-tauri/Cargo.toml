@@ -30,10 +30,12 @@ serde_json = "1"
 sha1 = "0.11"
 tauri = { version = "2", features = [] }
 tauri-plugin-single-instance = "2"
+# The temporary cookie file, removed when its guard drops.
+tempfile = "3"
 thiserror = "2"
 # The calendar date in the web client's version.
 time = "0.3"
-tokio = { version = "1", features = ["macros", "rt", "sync", "time"] }
+tokio = { version = "1", features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 # Version 5 gives a live YouTube Music song the same id every time it is found.
 uuid = { version = "1", features = ["serde", "v5"] }
 windows-native-keyring-store = "1"

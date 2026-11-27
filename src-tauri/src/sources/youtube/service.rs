@@ -255,6 +255,17 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
         outcome
     }
 
+    /// The session's generation, if something may be sent now. The error says
+    /// why not. Sends nothing.
+    pub fn ready(&self) -> Result<Generation, ServiceError> {
+        let (generation, _) = self.account.session_for_request()?;
+        match self.gate.view() {
+            GateView::Ready => Ok(generation),
+            GateView::CoolingDown { .. } => Err(GateError::CoolingDown.into()),
+            GateView::Paused { .. } => Err(GateError::Paused.into()),
+        }
+    }
+
     /// The one way out: waits for the gate, loads the session inside its turn
     /// and runs `work` with it. A session that is gone or rejected runs nothing,
     /// and one that `work` finds rejected expires before the next run.

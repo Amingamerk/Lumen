@@ -90,6 +90,13 @@ impl<C: Clock> Engine for SimulatedEngine<C> {
         sample.map(|_| ()).ok_or(EngineError::Unplayable)
     }
 
+    fn stop(&mut self) {
+        self.duration = Duration::ZERO;
+        self.base = Duration::ZERO;
+        self.since = None;
+        self.ended = false;
+    }
+
     fn set_playing(&mut self, playing: bool) {
         self.base = self.position();
         self.since = playing.then(|| self.clock.now());

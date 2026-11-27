@@ -84,8 +84,15 @@ pub enum StateError {
     UnknownCollection { id: String },
     #[error("the last search did not find the track {id}")]
     NotInSearch { id: Uuid },
-    #[error("playing YouTube Music songs is not available yet")]
-    NotPlayableYet,
+}
+
+/// What choosing a search result plays.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SearchPick {
+    /// The sample results, queued, starting at the chosen one.
+    Samples { tracks: Vec<Uuid>, start: usize },
+    /// One live YouTube Music song.
+    Live { video: String, row: TrackRow },
 }
 
 fn unknown_collection(id: &str) -> StateError {
@@ -226,18 +233,26 @@ impl AppState {
             .ok_or_else(|| unknown_collection(playlist_id))
     }
 
-    /// What playing a result of the remembered search queues: all its Tracks,
-    /// and where `track_id` is among them.
-    pub fn search_queue(&self, track_id: Uuid) -> Result<(Vec<Uuid>, usize), StateError> {
+    /// What choosing `track_id` among the remembered search's results plays.
+    pub fn search_pick(&self, track_id: Uuid) -> Result<SearchPick, StateError> {
+        let missing = StateError::NotInSearch { id: track_id };
         if self.search.filter != SourceFilter::SoundCloud {
-            return Err(StateError::NotPlayableYet);
+            let track = self.search.live.iter().find(|t| t.id == track_id);
+            let video = track.and_then(|t| {
+                let youtube = t.sources.iter().find(|s| s.kind == SourceKind::YouTube);
+                Some((youtube?.id.clone(), TrackRow::from(t)))
+            });
+            return match video {
+                Some((video, row)) => Ok(SearchPick::Live { video, row }),
+                None => Err(missing),
+            };
         }
         let tracks: Vec<Uuid> = self.search_view().tracks.iter().map(|t| t.id).collect();
         let start = tracks
             .iter()
             .position(|id| *id == track_id)
-            .ok_or(StateError::NotInSearch { id: track_id })?;
-        Ok((tracks, start))
+            .ok_or(missing)?;
+        Ok(SearchPick::Samples { tracks, start })
     }
 
     /// Enter on the Search view. A ticket means YouTube Music has to be asked.
@@ -687,7 +702,13 @@ mod tests {
         let found: Vec<Uuid> = state.search_view().tracks.iter().map(|t| t.id).collect();
         assert!(found.len() > 1);
 
-        assert_eq!(state.search_queue(found[1]), Ok((found.clone(), 1)));
+        assert_eq!(
+            state.search_pick(found[1]),
+            Ok(SearchPick::Samples {
+                tracks: found.clone(),
+                start: 1
+            })
+        );
     }
 
     #[test]
@@ -696,7 +717,7 @@ mod tests {
         state.submit_search("night", SourceFilter::SoundCloud);
         let id = Uuid::from_u128(999_999);
 
-        assert_eq!(state.search_queue(id), Err(StateError::NotInSearch { id }));
+        assert_eq!(state.search_pick(id), Err(StateError::NotInSearch { id }));
     }
 
     fn song(title: &str) -> Track {
@@ -887,20 +908,25 @@ mod tests {
         assert!(!view.tracks.is_empty());
         assert!(!state.is_newest_search(live.number));
         let first = view.tracks[0].id;
-        assert!(state.search_queue(first).is_ok());
+        assert!(state.search_pick(first).is_ok());
     }
 
     #[test]
-    fn a_live_result_cannot_be_played_yet() {
+    fn a_live_result_is_picked_with_its_video() {
         for filter in [SourceFilter::All, SourceFilter::YouTube] {
             let mut state = AppState::default();
             let ticket = state.submit_search("paper", filter).ticket.unwrap();
             state.finish_search(ticket.number, songs("Live")).unwrap();
 
             assert_eq!(
-                state.search_queue(song("Live").id),
-                Err(StateError::NotPlayableYet)
+                state.search_pick(song("Live").id),
+                Ok(SearchPick::Live {
+                    video: "fakeVideo01".to_owned(),
+                    row: TrackRow::from(&song("Live")),
+                })
             );
+            let id = Uuid::from_u128(999);
+            assert_eq!(state.search_pick(id), Err(StateError::NotInSearch { id }));
         }
     }
 

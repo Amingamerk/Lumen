@@ -212,15 +212,14 @@ describe('Search', () => {
     expect(main().getByRole('status').textContent?.trim()).toBe('2 songs');
   });
 
-  it('says a live song cannot be played yet and sends nothing', async () => {
+  it('asks Rust to play the live song that was chosen', async () => {
     const bridge = await openResults();
 
     await fireEvent.click(
       main().getByRole('button', { name: 'Play Harbor Lights by Mira Sol, Juno Park' }),
     );
 
-    expect(mainText()).toContain('Playing YouTube Music songs is not available yet.');
-    expect(bridge.commands).toEqual([]);
+    expect(bridge.commands).toEqual([['playSearchResult', expect.any(String)]]);
   });
 
   it('shows sample collections on the SoundCloud chip and opens them through Rust', async () => {

@@ -8,13 +8,15 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager, Runtime, State};
 use uuid::Uuid;
 
+use super::playback::{self, play_stream};
 use super::{EventSink, IpcError, SharedState, lock};
 use crate::audio::{
-    Engine, EngineEvent, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError, PlayerEvent,
-    PlayerState, QueueSlice, file_media,
+    Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError,
+    PlayerEvent, PlayerState, QueueSlice, file_media,
 };
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, TrackRow};
 use crate::recs::StaticRecommender;
+use crate::state::SearchPick;
 
 /// Events sent to the UI. Mirrored in `src/lib/ipc.ts`.
 pub const PLAYER_CHANGED: &str = "player-changed";
@@ -39,6 +41,42 @@ impl PlayerHandle {
     fn play_file(&self, path: PathBuf) {
         let (media, row) = file_media(path);
         lock(&self.player).play_media(media, row);
+    }
+}
+
+/// A song waiting for its stream. It outlives the command that chose it.
+pub struct Pending {
+    player: Arc<Mutex<AppPlayer>>,
+    key: u32,
+}
+
+impl Pending {
+    /// Whether it is still the song to play.
+    pub fn wanted(&self) -> bool {
+        lock(&self.player).awaits(self.key)
+    }
+
+    /// The change the outcome made, if it was still wanted.
+    pub fn finish(&self, outcome: Result<Media, String>) -> Option<PlayerState> {
+        lock(&self.player).finish_stream(self.key, outcome)
+    }
+}
+
+impl PlayerHandle {
+    /// Shows `row` as loading and announces it.
+    pub fn begin_stream(
+        &self,
+        sink: &impl EventSink,
+        video: String,
+        row: TrackRow,
+    ) -> Result<Pending, IpcError> {
+        // The lock is released before the event goes out. The revision keeps order.
+        let (key, state) = lock(&self.player).begin_stream(video, row);
+        sink.player_changed(&state)?;
+        Ok(Pending {
+            player: Arc::clone(&self.player),
+            key,
+        })
     }
 }
 
@@ -94,6 +132,13 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::R
     let thread = listen(events, move |event| {
         // A failure means the window is gone: nobody is left to tell.
         let _ = relay(&player, event, &sink);
+        if event == EngineEvent::Failed {
+            // A URL that would not play is not used again.
+            let failed = lock(&player).failed_stream();
+            if let Some((video, _)) = failed {
+                playback::forget(&sink, Some(&video));
+            }
+        }
     })?;
     app.manage(AudioThread::new(shutdown, thread));
     Ok(())
@@ -181,8 +226,13 @@ pub fn play_search_result<R: Runtime>(
     track_id: Uuid,
 ) -> Result<(), IpcError> {
     // The app's lock is released before the player's is taken.
-    let (tracks, start) = lock(&state).search_queue(track_id)?;
-    command(&player, &app, |p| p.play_tracks(tracks, start).map(Some))
+    let pick = lock(&state).search_pick(track_id)?;
+    match pick {
+        SearchPick::Samples { tracks, start } => {
+            command(&player, &app, |p| p.play_tracks(tracks, start).map(Some))
+        }
+        SearchPick::Live { video, row } => play_stream(&app, &player, video, row),
+    }
 }
 
 #[tauri::command]
@@ -190,7 +240,11 @@ pub fn toggle_play<R: Runtime>(
     app: AppHandle<R>,
     player: State<'_, PlayerHandle>,
 ) -> Result<(), IpcError> {
-    command(&player, &app, |p| Ok(p.toggle_play()))
+    let failed = lock(&player.player).failed_stream();
+    match failed {
+        Some((video, row)) => play_stream(&app, &player, video, row),
+        None => command(&player, &app, |p| Ok(p.toggle_play())),
+    }
 }
 
 #[tauri::command]
@@ -271,7 +325,7 @@ mod tests {
         FakeEngine, NowPlaying, PlaybackStatus, PlayerPosition, QueueItem, SimulatedEngine,
         SystemClock,
     };
-    use crate::catalog::{SourceKind, SourceTag, TrackRow};
+    use crate::catalog::{SourceKind, SourceTag};
 
     /// A player that can play the catalog's samples.
     fn handle() -> PlayerHandle {

@@ -11,9 +11,7 @@ pub enum Media {
     Sample { duration: Duration },
     /// A file on this computer.
     File(PathBuf),
-    /// A Stream URL and the headers it must be fetched with. No stream is
-    /// resolved before the YouTube Music tickets.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// A Stream URL and the headers it must be fetched with.
     Stream {
         url: String,
         headers: Vec<(String, String)>,
@@ -48,6 +46,8 @@ pub trait Engine: Send {
     /// Takes new media in place of the old, paused at `start`. On an error
     /// nothing is left loaded.
     fn load(&mut self, media: &Media, start: Duration) -> Result<(), EngineError>;
+    /// Lets go of the media. Nothing is loaded afterwards.
+    fn stop(&mut self);
     fn set_playing(&mut self, playing: bool);
     /// The caller clamps to the duration.
     fn seek(&mut self, position: Duration);
@@ -65,6 +65,10 @@ impl<E: Engine + ?Sized> Engine for Box<E> {
 
     fn load(&mut self, media: &Media, start: Duration) -> Result<(), EngineError> {
         (**self).load(media, start)
+    }
+
+    fn stop(&mut self) {
+        (**self).stop();
     }
 
     fn set_playing(&mut self, playing: bool) {

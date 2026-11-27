@@ -8,7 +8,7 @@ pub use parse::Parsed;
 
 use super::account::Generation;
 use super::client::{self, Fault};
-use super::gate::{GateClock, GateError, GateView, Kind, Verdict};
+use super::gate::{GateClock, Kind, Verdict};
 use super::service::{ServiceError, YouTube};
 use super::session::Session;
 use super::transport::Transport;
@@ -18,18 +18,11 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
     /// What a recent search for `query` found. While nothing may be sent,
     /// nothing is shown either: the error says why.
     pub fn cached_songs(&self, query: &str) -> Result<Option<Parsed>, ServiceError> {
-        let generation = match self.account().session_for_request() {
-            Ok((generation, _)) => generation,
-            Err(unusable) => {
+        let generation = self.ready().inspect_err(|error| {
+            if matches!(error, ServiceError::Disconnected | ServiceError::Expired) {
                 self.searches().clear();
-                return Err(unusable.into());
             }
-        };
-        match self.gate().view() {
-            GateView::Ready => {}
-            GateView::CoolingDown { .. } => return Err(GateError::CoolingDown.into()),
-            GateView::Paused { .. } => return Err(GateError::Paused.into()),
-        }
+        })?;
         Ok(self.recall(generation, query))
     }
 
@@ -90,6 +83,7 @@ mod tests {
 
     use super::*;
     use crate::secrets::fake::MemoryStore;
+    use crate::sources::youtube::GateError;
     use crate::sources::youtube::account::Account;
     use crate::sources::youtube::gate::{FakeClock, TempDir};
     use crate::sources::youtube::session::fake::{music_page, signed_in_cookies};

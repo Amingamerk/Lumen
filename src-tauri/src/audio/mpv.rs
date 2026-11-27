@@ -172,6 +172,12 @@ impl Engine for MpvEngine {
         })
     }
 
+    fn stop(&mut self) {
+        // mpv refuses only when it is shutting down.
+        let _ = self.mpv.command("stop", &[]);
+        *self.timeline() = Timeline::default();
+    }
+
     // mpv refuses these only when nothing is loaded, and then there is nothing
     // to change: a failure of the media itself arrives as an event.
     fn set_playing(&mut self, playing: bool) {
