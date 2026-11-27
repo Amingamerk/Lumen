@@ -10,7 +10,6 @@ mod fixtures;
 mod search;
 mod slice;
 
-#[cfg(test)]
 pub use fixtures::LONG_PLAYLIST_ID;
 pub use search::{SearchView, SourceFilter};
 pub use slice::{CollectionDetail, MAX_SLICE, TrackSlice};

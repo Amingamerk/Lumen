@@ -41,6 +41,24 @@ pub enum Route {
     Playlist { id: String },
 }
 
+impl Route {
+    /// Picks the opening route from command-line arguments. `--list` opens
+    /// the 5,000-track playlist directly so RAM checks need no clicking.
+    pub fn from_args<I>(args: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        if args.into_iter().any(|arg| arg.as_ref() == "--list") {
+            Self::Playlist {
+                id: crate::catalog::LONG_PLAYLIST_ID.to_owned(),
+            }
+        } else {
+            Self::Home
+        }
+    }
+}
+
 /// The current route plus a counter that grows with every change, so the UI can
 /// drop a snapshot that arrives after a newer event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -88,9 +106,20 @@ pub struct AppState {
 
 impl Default for AppState {
     fn default() -> Self {
+        Self::from_args(std::iter::empty::<&str>())
+    }
+}
+
+impl AppState {
+    /// Builds the starting state for the given command-line arguments.
+    pub fn from_args<I>(args: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
         Self {
             navigation: NavigationState {
-                route: Route::Home,
+                route: Route::from_args(args),
                 queue_open: false,
                 revision: 0,
             },
@@ -98,9 +127,7 @@ impl Default for AppState {
             search: SearchRequest::default(),
         }
     }
-}
 
-impl AppState {
     pub fn snapshot(&self) -> AppSnapshot {
         AppSnapshot {
             navigation: self.navigation.clone(),
@@ -214,6 +241,34 @@ mod tests {
 
         assert_eq!(navigation.route, Route::Home);
         assert_eq!(navigation.revision, 0);
+    }
+
+    #[test]
+    fn route_defaults_to_home_without_list_flag() {
+        assert_eq!(Route::from_args(std::iter::empty::<&str>()), Route::Home);
+        assert_eq!(Route::from_args(["lumen.exe"]), Route::Home);
+        assert_eq!(Route::from_args(["lumen.exe", "--listing"]), Route::Home);
+    }
+
+    #[test]
+    fn list_flag_selects_the_long_playlist_route() {
+        let expected = playlist_route(LONG_PLAYLIST_ID);
+        assert_eq!(Route::from_args(["--list"]), expected);
+        assert_eq!(Route::from_args(["lumen.exe", "--list"]), expected);
+    }
+
+    #[test]
+    fn app_state_from_args_with_list_starts_on_long_playlist_at_revision_zero() {
+        let state = AppState::from_args(["--list"]);
+        let navigation = state.snapshot().navigation;
+
+        assert_eq!(navigation.route, playlist_route(LONG_PLAYLIST_ID));
+        assert_eq!(navigation.revision, 0);
+        assert!(!navigation.queue_open);
+        assert_eq!(
+            state.collection(LONG_PLAYLIST_ID).map(|c| c.track_count),
+            Ok(5_000)
+        );
     }
 
     #[test]
