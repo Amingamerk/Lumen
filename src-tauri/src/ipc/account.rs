@@ -11,7 +11,7 @@ use tauri::{
 use tokio::sync::oneshot;
 
 use super::youtube::Service;
-use super::{IpcError, MAIN_WINDOW, lock, search};
+use super::{IpcError, MAIN_WINDOW, lock, playback, search};
 use crate::secrets::SecretError;
 use crate::sources::youtube::{
     AccountStatus, Cookie, LoginAttempt, ORIGIN, PageIdentity, Session, is_signed_in,
@@ -112,8 +112,10 @@ pub fn close_login<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
 pub fn announce<R: Runtime>(app: &AppHandle<R>, status: AccountStatus) {
     // A failure means the window is gone: nobody is left to tell.
     let _ = app.emit_to(MAIN_WINDOW, ACCOUNT_CHANGED, status);
-    // Songs found with another session are no longer shown.
+    // Songs found with another session are no longer shown, and its streams
+    // are not used again.
     search::account_changed(app);
+    playback::forget(app, None);
 }
 
 /// YouTube Music in an InPrivate window of its own: nothing of the login stays

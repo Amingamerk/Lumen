@@ -49,7 +49,10 @@ enum Phase {
 /// Real audio, which stands outside the Queue until Milestone 4.
 struct Direct {
     key: u32,
-    media: Media,
+    /// `None` while its stream is being resolved, or if that failed.
+    media: Option<Media>,
+    /// The YouTube video a resolved stream is of.
+    video: Option<String>,
     row: TrackRow,
 }
 
@@ -150,9 +153,75 @@ impl<E: Engine> Player<E> {
     /// before or after it. A failure to load it shows in the state.
     pub fn play_media(&mut self, media: Media, row: TrackRow) -> PlayerState {
         let key = self.queue.clear();
-        self.direct = Some(Direct { key, media, row });
+        self.direct = Some(Direct {
+            key,
+            media: Some(media),
+            video: None,
+            row,
+        });
         self.load(Duration::ZERO, true);
         self.commit()
+    }
+
+    /// Shows a song as loading while its stream is resolved: what played before
+    /// is let go of, and the Queue is emptied. The key names this attempt.
+    pub fn begin_stream(&mut self, video: String, row: TrackRow) -> (u32, PlayerState) {
+        let key = self.queue.clear();
+        self.engine.stop();
+        self.direct = Some(Direct {
+            key,
+            media: None,
+            video: Some(video),
+            row,
+        });
+        self.phase = Phase::Loading;
+        self.set_playing(true);
+        (key, self.commit())
+    }
+
+    /// Whether the stream of the attempt `key` is still wanted.
+    pub fn awaits(&self, key: u32) -> bool {
+        self.phase == Phase::Loading
+            && self
+                .direct
+                .as_ref()
+                .is_some_and(|direct| direct.key == key && direct.media.is_none())
+    }
+
+    /// Takes the outcome of the attempt `key`: loads the stream, or says why
+    /// there is none. A stale outcome changes nothing.
+    pub fn finish_stream(
+        &mut self,
+        key: u32,
+        outcome: Result<Media, String>,
+    ) -> Option<PlayerState> {
+        if !self.awaits(key) {
+            return None;
+        }
+        let direct = self.direct.as_mut()?;
+        match outcome {
+            Ok(media) => {
+                direct.media = Some(media);
+                // It may have been paused while loading.
+                let playing = self.playing;
+                self.load(Duration::ZERO, playing);
+            }
+            Err(reason) => {
+                let message = format!("Lumen could not play “{}”: {reason}.", direct.row.title);
+                self.set_playing(false);
+                self.phase = Phase::Failed(message);
+            }
+        }
+        Some(self.commit())
+    }
+
+    /// The stream that failed to resolve or to play, to ask for again.
+    pub fn failed_stream(&self) -> Option<(String, TrackRow)> {
+        let direct = self.direct.as_ref()?;
+        match self.phase {
+            Phase::Failed(_) => Some((direct.video.clone()?, direct.row.clone())),
+            _ => None,
+        }
     }
 
     /// Queues the whole playlist or album and plays the Track at `index`.
@@ -185,7 +254,9 @@ impl<E: Engine> Player<E> {
 
     /// After the end or a failure, playing starts the media over.
     pub fn toggle_play(&mut self) -> Option<PlayerState> {
-        if !self.has_current() {
+        // A stream that never arrived has nothing to play: it is asked for again.
+        let unresolved = self.direct.as_ref().is_some_and(|d| d.media.is_none());
+        if !self.has_current() || (unresolved && matches!(self.phase, Phase::Failed(_))) {
             return None;
         }
         if matches!(self.phase, Phase::Ended | Phase::Failed(_)) {
@@ -291,7 +362,9 @@ impl<E: Engine> Player<E> {
     }
 
     pub fn on_engine_event(&mut self, event: EngineEvent) -> Option<PlayerEvent> {
-        if !self.has_current() || matches!(self.phase, Phase::Failed(_)) {
+        // While a stream is resolved, nothing the engine says is about it.
+        let unresolved = self.direct.as_ref().is_some_and(|d| d.media.is_none());
+        if !self.has_current() || unresolved || matches!(self.phase, Phase::Failed(_)) {
             return None;
         }
         match event {
@@ -369,8 +442,8 @@ impl<E: Engine> Player<E> {
 
     /// The real audio, or the current Queue entry's sample.
     fn current_media(&self) -> Media {
-        if let Some(direct) = &self.direct {
-            return direct.media.clone();
+        if let Some(media) = self.direct.as_ref().and_then(|d| d.media.clone()) {
+            return media;
         }
         let duration = self
             .queue
@@ -493,6 +566,7 @@ impl<C: Clock> Player<SimulatedEngine<C>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audio::FakeEngine;
     use crate::audio::simulated::ManualClock;
     use crate::catalog::{LONG_PLAYLIST_ID, SourceKind, SourceRef, Track};
     use crate::recs::StaticRecommender;
@@ -1137,5 +1211,95 @@ mod tests {
 
         assert!(!state.can_next);
         assert_eq!(player.next_track(), None);
+    }
+
+    /// A player over an engine the test drives, with a song being resolved.
+    fn resolving() -> (Player<FakeEngine>, FakeEngine, u32) {
+        let engine = FakeEngine::default();
+        let catalog = Arc::new(Catalog::default());
+        let mut player = Player::new(engine.clone(), catalog, Box::new(Silent));
+        let row = TrackRow::untagged("Paper".to_owned());
+        let (key, _) = player.begin_stream("dQw4w9WgXcQ".to_owned(), row);
+        (player, engine, key)
+    }
+
+    fn stream() -> Media {
+        Media::Stream {
+            url: "https://a.googlevideo.com/x".to_owned(),
+            headers: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_chosen_stream_shows_as_loading_and_loads_nothing_yet() {
+        let (mut player, engine, key) = resolving();
+
+        let state = player.state();
+
+        assert_eq!(state.status, PlaybackStatus::Loading);
+        assert_eq!(state.current.unwrap().track.title, "Paper");
+        assert!(!state.can_next && !state.can_previous);
+        assert!(player.awaits(key));
+        assert_eq!(engine.fake().stops, 1);
+        assert!(engine.fake().loads.is_empty());
+        // The old media's last events are not about this song.
+        assert_eq!(player.on_engine_event(EngineEvent::Failed), None);
+        assert_eq!(player.on_engine_event(EngineEvent::Ended), None);
+        assert_eq!(player.seek(1_000), None);
+    }
+
+    #[test]
+    fn a_resolved_stream_is_loaded_and_plays() {
+        let (mut player, engine, key) = resolving();
+
+        let state = player.finish_stream(key, Ok(stream())).unwrap();
+
+        assert_eq!(state.status, PlaybackStatus::Loading);
+        assert_eq!(engine.fake().loads, [(stream(), Duration::ZERO)]);
+        assert!(engine.fake().playing);
+        let loaded = changed(player.on_engine_event(EngineEvent::Loaded));
+        assert_eq!(loaded.status, PlaybackStatus::Playing);
+    }
+
+    #[test]
+    fn a_pause_while_loading_is_kept() {
+        let (mut player, engine, key) = resolving();
+        player.toggle_play().unwrap();
+
+        let state = player.finish_stream(key, Ok(stream())).unwrap();
+
+        assert_eq!(state.status, PlaybackStatus::Paused);
+        assert!(!engine.fake().playing);
+    }
+
+    #[test]
+    fn only_the_newest_choice_is_loaded() {
+        let (mut player, engine, old) = resolving();
+        let row = TrackRow::untagged("Newer".to_owned());
+        let (new, _) = player.begin_stream("aaaaaaaaaaa".to_owned(), row);
+
+        assert!(!player.awaits(old));
+        assert_eq!(player.finish_stream(old, Ok(stream())), None);
+        assert_eq!(player.finish_stream(old, Err("no".to_owned())), None);
+        assert!(engine.fake().loads.is_empty());
+        assert!(player.finish_stream(new, Ok(stream())).is_some());
+    }
+
+    #[test]
+    fn a_failed_resolve_says_why_and_can_be_asked_for_again() {
+        let (mut player, engine, key) = resolving();
+        assert_eq!(player.failed_stream(), None);
+
+        let reason = "this song is unavailable".to_owned();
+        let state = player.finish_stream(key, Err(reason)).unwrap();
+
+        assert_eq!(state.status, PlaybackStatus::Error);
+        assert_eq!(
+            state.error.as_deref(),
+            Some("Lumen could not play “Paper”: this song is unavailable.")
+        );
+        assert_eq!(player.failed_stream().unwrap().0, "dQw4w9WgXcQ");
+        assert_eq!(player.toggle_play(), None);
+        assert!(engine.fake().loads.is_empty());
     }
 }

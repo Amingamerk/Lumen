@@ -16,6 +16,7 @@ pub struct Fake {
     /// What the next loads answer instead of succeeding.
     pub refuse: Option<EngineError>,
     pub plays_samples: bool,
+    pub stops: usize,
 }
 
 /// Clones share the state, so a test keeps one after the player takes another.
@@ -44,6 +45,14 @@ impl Engine for FakeEngine {
         }
         fake.position = start;
         Ok(())
+    }
+
+    fn stop(&mut self) {
+        let mut fake = self.fake();
+        fake.stops += 1;
+        fake.playing = false;
+        fake.position = Duration::ZERO;
+        fake.duration = Duration::ZERO;
     }
 
     fn set_playing(&mut self, playing: bool) {

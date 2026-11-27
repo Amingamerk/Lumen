@@ -3,6 +3,7 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod account;
+pub mod playback;
 pub mod player;
 pub mod search;
 pub mod youtube;

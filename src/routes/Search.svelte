@@ -18,7 +18,7 @@
     onsignin: () => void;
     onresume: () => void;
     onopen: (id: string) => void;
-    /** Plays a sample result; live songs cannot be played yet. */
+    /** Plays the chosen result. */
     onplay: (trackId: string) => void;
     /** Ctrl+F asked for the search box. */
     focusWanted: boolean;
@@ -48,9 +48,6 @@
   /** What is typed and chosen during this visit. Rust remembers what was submitted. */
   let typed = $state.raw<string | null>(null);
   let chosen = $state.raw<SourceFilter | null>(null);
-  /** The view on screen when a live song was chosen. */
-  let unplayable = $state.raw<number | null>(null);
-
   const results = $derived(catalog.search);
   const query = $derived(typed ?? results?.query ?? '');
   const filter = $derived(chosen ?? results?.filter ?? 'all');
@@ -91,11 +88,6 @@
   function choose(next: SourceFilter) {
     chosen = next;
     void catalog.setSearchFilter(next);
-  }
-
-  function play(trackId: string) {
-    if (live) unplayable = results?.revision ?? null;
-    else onplay(trackId);
   }
 </script>
 
@@ -186,9 +178,6 @@
         {@render action('Try again', () => void catalog.submitSearch(results.query, results.filter))}
       </EmptyState>
     {/if}
-    {#if found && unplayable === found.revision}
-      <p class="gate-notice mt-6">Playing YouTube Music songs is not available yet.</p>
-    {/if}
   </div>
 
   {#if found}
@@ -196,7 +185,7 @@
       {#if found.tracks.length}
         <section aria-labelledby="search-tracks">
           <h2 id="search-tracks" class="shelf-title mb-3">{live ? 'Songs' : 'Tracks'}</h2>
-          <TrackList tracks={found.tracks} labelledby="search-tracks" onplay={play} />
+          <TrackList tracks={found.tracks} labelledby="search-tracks" {onplay} />
         </section>
       {/if}
       {#if found.collections.length}

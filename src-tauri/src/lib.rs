@@ -5,6 +5,7 @@ mod catalog;
 mod ipc;
 mod queue;
 mod recs;
+mod resolver;
 mod secrets;
 mod sources;
 mod state;
@@ -35,6 +36,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(ipc::SharedState::new(state::AppState::from_args(args)))
         .setup(move |app| {
             ipc::youtube::start(app.handle())?;
+            ipc::playback::start(app.handle())?;
             Ok(ipc::player::start(app.handle(), play_file)?)
         })
         .invoke_handler(tauri::generate_handler![
@@ -69,6 +71,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .build(tauri::generate_context!())?
         .run(|app, event| {
             if matches!(event, RunEvent::Exit) {
+                ipc::playback::stop(app);
                 ipc::player::stop(app);
             }
         });
