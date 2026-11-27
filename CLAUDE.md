@@ -50,7 +50,7 @@ A milestone is done when it builds, works in the real app, and RAM is within bud
 ## Workflow
 
 - Feature-branch commits, pushes and ticket PRs into `dev` need no approval; show the diff in the PR.
-- Every merge (ticket PR into `dev`, promotion into `main`) and every release needs Amin's explicit OK for that PR. The `pr-merger` agent runs only after that OK.
+- Ticket PRs into `dev` and `dev` -> `main` promotions merge without asking once CI is green and a review names the head SHA with no open findings. Only releases need Amin's explicit OK.
 - Ticket work happens in a worktree that starts with `git fetch origin && git checkout -B <type>/<issue#>-short-name origin/dev`. Setup, command time limits, context hygiene and teardown: [docs/agents/workflow.md](docs/agents/workflow.md).
 - No AI credit anywhere: no co-author trailers, no "generated with" lines in commits, PRs or releases.
 

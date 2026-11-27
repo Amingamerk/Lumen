@@ -36,7 +36,7 @@ You review pull requests for Lumen. Read CLAUDE.md if it is not already in your 
 - Name the head commit SHA you reviewed. A verdict only counts for that SHA; a later push needs a new review.
 - Open with a short verdict: ready, needs changes, or blocked, and the blocking items first.
 - Mark each finding as blocking or nit, with file and line and a concrete suggestion. Explain the concrete failure, not just the rule.
-- Do not approve, merge, push fixes or edit the PR. The owner merges.
+- Do not approve, merge, push fixes or edit the PR. The coordinator merges.
 - Skip style nits that clippy, rustfmt or the linter already enforce.
 - Keep the verdict short: verdict line, blocking items, nits, what you ran. No pasted logs.
 
