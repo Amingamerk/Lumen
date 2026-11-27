@@ -25,7 +25,7 @@ $ErrorActionPreference = 'Stop'
 # Files produced from the artifacts; removed whenever an artifact fails its hash check.
 $script:DerivedFiles = @(
     'libmpv-2.dll', 'libmpv.dll.a', 'mpv.def', 'mpv.exp', 'mpv.lib', 'include',
-    'deno-x86_64-pc-windows-msvc.exe', 'deno-unpack'
+    'deno-x86_64-pc-windows-msvc.exe', 'deno-unpack', '.pinned-hashes.json'
 )
 
 function Get-Sha256([string]$Path) {
@@ -33,7 +33,9 @@ function Get-Sha256([string]$Path) {
 }
 
 function Remove-PinnedOutputs([string]$Dir, [string]$File) {
-    foreach ($name in @($File) + $script:DerivedFiles) {
+    $names = @($script:DerivedFiles)
+    if ($File) { $names = @($File) + $names }
+    foreach ($name in $names) {
         $p = Join-Path $Dir $name
         if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force }
     }
@@ -62,9 +64,29 @@ function Get-MpvExports([string[]]$DumpbinLines) {
     $seen.ToArray()
 }
 
+function Get-PinnedStampLines($Artifacts) {
+    @($Artifacts | ForEach-Object { "$($_.name):$($_.sha256.ToLowerInvariant())" } | Sort-Object)
+}
+
+function Test-PinnedStamp([string]$Dir, $Artifacts) {
+    $stamp = Join-Path $Dir '.pinned-hashes.json'
+    if (-not (Test-Path -LiteralPath $stamp)) { return $false }
+    try {
+        $saved = @(Get-Content -LiteralPath $stamp -Raw | ConvertFrom-Json).artifacts
+        return ((@($saved | Sort-Object) -join "`n") -eq ((Get-PinnedStampLines $Artifacts) -join "`n"))
+    } catch { return $false }
+}
+
+function Write-PinnedStamp([string]$Dir, $Artifacts) {
+    [pscustomobject]@{ artifacts = @(Get-PinnedStampLines $Artifacts) } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Dir '.pinned-hashes.json') -Encoding ascii
+}
+
 function Sync-PinnedArtifacts([string]$Manifest, [string]$Dir, [switch]$Verify) {
     New-Item -ItemType Directory -Force -Path $Dir | Out-Null
     $artifacts = (Get-Content -LiteralPath $Manifest -Raw | ConvertFrom-Json).artifacts
+    $stampMatches = Test-PinnedStamp $Dir $artifacts
+    if (-not $stampMatches -and -not $Verify) { Remove-PinnedOutputs $Dir '' }
     foreach ($item in $artifacts) {
         $path = Join-Path $Dir $item.file
         if (Test-Path -LiteralPath $path) { Assert-PinnedHash $path $item $Dir; continue }
@@ -81,6 +103,7 @@ function Sync-PinnedArtifacts([string]$Manifest, [string]$Dir, [switch]$Verify) 
     if (-not $Verify) {
         if ($names -contains 'deno') { Expand-PinnedDeno $Dir }
         if ($names -contains 'libmpv') { Expand-PinnedLibmpv $Dir }
+        Write-PinnedStamp $Dir $artifacts
     }
 }
 
@@ -100,14 +123,19 @@ function Expand-PinnedLibmpv([string]$Dir) {
     if (-not (Test-Path -LiteralPath $dll)) {
         # bsdtar (System32\tar.exe, Windows 10 1803+) reads 7z archives; no 7-Zip install needed.
         $tar = Join-Path $env:SystemRoot 'System32\tar.exe'
-        if (-not (Test-Path -LiteralPath $tar)) { throw "tar.exe not found at $tar." }
-        & $tar -xf (Join-Path $Dir 'libmpv.7z') -C $Dir
+        if (-not (Test-Path -LiteralPath $tar)) { $tar = (Get-Command tar.exe -ErrorAction SilentlyContinue).Source }
+        if ($tar) { & $tar -xf (Join-Path $Dir 'libmpv.7z') -C $Dir }
+        else {
+            $seven = Get-Command 7z.exe -ErrorAction SilentlyContinue
+            if (-not $seven) { throw 'tar.exe and 7z.exe are both unavailable.' }
+            & $seven.Source x (Join-Path $Dir 'libmpv.7z') "-o$Dir" -y
+        }
         if ($LASTEXITCODE -ne 0) { throw 'tar.exe failed to extract the libmpv archive.' }
     }
     if (Test-Path -LiteralPath $lib) { return }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
     if (-not (Test-Path -LiteralPath $vswhere)) { throw 'vswhere.exe not found; install the Visual Studio C++ build tools.' }
-    $dumpbin = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC/Tools/MSVC/**/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
+    $dumpbin = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe' | Select-Object -First 1
     if (-not $dumpbin) { throw 'dumpbin.exe not found via vswhere.' }
     $libExe = Join-Path (Split-Path -Parent $dumpbin) 'lib.exe'
     $exports = @(Get-MpvExports (& $dumpbin /nologo /exports $dll))
