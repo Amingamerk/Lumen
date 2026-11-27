@@ -16,37 +16,28 @@ Reference for `src-tauri/src/audio/` using `libmpv2`. Architecture and RAM rules
 
 ## Handle setup (`libmpv2 = { version = "7", default-features = false }`)
 
-Configure lean options from `docs/PROJECT.md` section 2 rule 7 in `Mpv::with_initializer`:
+The options are `OPTIONS` in `src-tauri/src/audio/mpv.rs`, set in `Mpv::with_initializer`: the lean ones from `docs/PROJECT.md` section 2 rule 7, user config, scripts and `ytdl` off, nothing loaded from the user's files, and `tls-verify=yes`. `mpv_tests.rs` reads them back.
 
-```rust
-const LEAN_OPTIONS: &[(&str, &str)] = &[
-    ("vid", "no"),
-    ("audio-display", "no"),
-    ("demuxer-max-bytes", "8MiB"),
-    ("demuxer-max-back-bytes", "1MiB"),
-    ("cache-secs", "20"),
-    ("ytdl", "no"),
-];
-```
-
-Apply resolved stream headers before `loadfile`:
-- Set `user-agent` via `mpv.set_property("user-agent", agent)`.
-- Append every other header one at a time via `mpv.command("change-list", &["http-header-fields", "append", &format!("{name}: {value}")])`. Do not pass a comma-joined string; header values contain commas.
+Stream headers are applied before `loadfile`:
+- Set `user-agent` via `mpv.set_property("user-agent", agent)`, restoring mpv's own for media without one.
+- Clear `http-header-fields`, then append every other header one at a time with the `change-list` command. Do not pass a comma-joined string; header values contain commas.
 
 ## Event thread and error handling
 
-- Run `mpv.wait_event(timeout)` on a dedicated OS thread (never block Tokio worker threads).
-- Observe playback properties (`time-pos`, `duration`, `pause`, `eof-reached`, `core-idle`) with `observe_property` and translate updates into throttled/deduplicated Tauri events.
-- Handle both `Some(Ok(Event::EndFile(reason)))` and `Some(Err(err))`:
-  - `EndFile` covers normal EOF, stop, redirect, and error reasons.
-  - **Gotcha:** HTTP 403 on an expired or rejected URL ends with mpv error `-13`, which `libmpv2` surfaces as `Some(Err(_))` rather than `Event::EndFile(_)`. Treat playback `Err` as a recoverable stream failure and signal the player/resolver to re-resolve with backoff instead of letting it pass silently.
+- `MpvEvents::wait` blocks in `wait_event` on its own OS thread (`mpv-events`, started in `ipc/player.rs`), so a paused player never wakes. Dropping `MpvEngine` sends `quit` and ends it.
+- Only `time-pos` and `duration` are observed. `mpv_events::translate` turns events into `EngineEvent`s and spaces progress at least 250 ms apart.
+- Events are ignored until the new file's `StartFile`, so a replaced file reports nothing more. `PlaybackRestart` means loaded; the timeline is read then.
+- Handle both `Ok(Event::EndFile(reason))` and `Err(_)`:
+  - `EndFile` covers normal EOF, stop, redirect (treated as a failure) and error reasons.
+  - **Gotcha:** HTTP 403 on an expired or rejected URL ends with mpv error `-13`, which `libmpv2` surfaces as `Some(Err(_))` rather than `Event::EndFile(_)`. Every `Err` is `EngineEvent::Failed`; the resolver tickets must re-resolve with backoff on it.
 
 ## Windows DLL placement and bundling
 
-- LGPL `libmpv-2.dll` (~103 MB) and generated `mpv.lib` live in `LIBMPV_DIR` (default `%LOCALAPPDATA%\Programs\libmpv`).
-- `build.rs` emits `cargo:rustc-link-search=native=<LIBMPV_DIR>` and copies `libmpv-2.dll` next to the built exe and `deps/` by locating the `build` ancestor of `OUT_DIR` (see `spikes/2-audio/build.rs`).
-- For release bundles, ensure `libmpv-2.dll` ships beside `lumen.exe`.
+- `scripts/fetch-pinned-binaries.ps1` puts the LGPL `libmpv-2.dll` (~103 MB) and `mpv.lib` in `src-tauri/binaries/`. Run it in every new worktree before cargo. `LIBMPV_DIR` overrides the folder.
+- `build.rs` adds the folder to the link search path and copies the DLL next to the built exe and into `deps/`.
+- `tauri.conf.json` lists the DLL under `bundle.resources`, so it ships beside `lumen.exe`.
 
-## Testing without libmpv
+## Testing
 
-Hide `libmpv2` behind an `Engine` trait (`load`, `play`, `pause`, `seek`, `set_volume`, event channel) so unit and integration tests run against an in-memory fake engine with deterministic events and zero audio hardware or network calls.
+- Player rules run against `FakeEngine` (and `SimulatedEngine` for samples): deterministic events, no audio device, no network.
+- `mpv_tests.rs` loads the real DLL through `MpvEngine::silent()` (`ao=null`) and plays generated WAV files, locally and in CI.
