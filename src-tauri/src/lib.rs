@@ -2,6 +2,8 @@
 
 mod catalog;
 mod ipc;
+#[allow(dead_code)]
+mod queue;
 mod state;
 
 /// Builds the app and runs its event loop until the last window closes.
