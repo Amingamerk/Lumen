@@ -3,6 +3,9 @@
 
 mod account;
 mod cookies;
+// Not wired up yet.
+#[allow(dead_code)]
+mod gate;
 mod session;
 
 pub use account::{Account, AccountStatus, LoginAttempt};

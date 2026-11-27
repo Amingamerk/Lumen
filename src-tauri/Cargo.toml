@@ -14,6 +14,8 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1"
+# Reads the HTTP-date form of `Retry-After`.
+httpdate = "1"
 # The `keyring` project's core and Windows store, used directly: `keyring`'s own
 # `Entry` cannot set a credential's persistence.
 keyring-core = "1"
