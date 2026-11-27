@@ -36,7 +36,11 @@ Recorded as given:
 
 **Readings taken after those decisions fall outside the figures they name.** Two later launches read 127.9 and
 128.3 MB idle after playback ended (median of all three 127.9 MB, not 109.2 MB). A later resolve peaked at
-415.3 MB (above the 387-407 MB range). The decisions above have not been restated for these figures.
+415.3 MB (above the 387-407 MB range). Amin accepted both later figures on 2026-11-27, as given:
+
+> its okay Idle after playback
+
+> the peak let it be okay for now
 
 **"Resolve while another track plays" cannot happen in Milestone 2**: selecting a song stops playback before
 the new stream is resolved, so no resolve overlaps audio. The resolves below were sampled with nothing

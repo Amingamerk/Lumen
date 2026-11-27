@@ -72,7 +72,8 @@ Owner decisions (Amin), recorded as given:
 
 > Idle after playback ended (109.2 MB, one reading): accepted by Amin as is.
 
-The two later idle-after readings and the 415.3 MB resolve fall outside the figures these decisions name.
+The two later idle-after readings (median 127.9 MB) and the 415.3 MB resolve fell outside those figures; Amin
+accepted both on 2026-11-27 ("its okay Idle after playback", "the peak let it be okay for now").
 "Resolve while another track plays" cannot happen in Milestone 2, because selecting a song stops playback;
 Milestone 4 re-measures it ([#78](https://github.com/Amingamerk/Lumen/issues/78)).
 
