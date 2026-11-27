@@ -290,6 +290,12 @@ shapes, the views built from them, search and Track slices (the playlist page ge
 its data is a static fixture, including a generated 5,000-Track playlist that Search leaves out, until the
 SQLite library replaces it in Milestone 3.
 
+`sources/youtube/` holds the YouTube Music session (`account.rs`, `cookies.rs`, `session.rs`), the
+account-safety gate (`gate/`: rules, saved state, clock) and the web client (`auth.rs`, `client.rs`,
+`transport.rs`, `http.rs`, which follows the Windows system proxy like the login window). `service.rs` owns the
+account, the gate and the transport and is the only way a request goes out. The gate moves up only when a second
+service needs it.
+
 ## 7. Milestones
 
 0. **Spikes** (before any UI, throwaway code in `spikes/`):

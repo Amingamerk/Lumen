@@ -225,7 +225,7 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
                 |lease| {
                     checked = Some(lease.generation);
                     self.set_check(lease.generation, Check::Checking);
-                    self.send(lease.session, client::browse, client::page)
+                    self.send("browse", lease.session, client::browse, client::page)
                 },
             )
             .await
@@ -279,9 +279,11 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
         Ok(outcome??)
     }
 
-    /// Builds one request, sends it once and judges the reply.
+    /// Builds one request, sends it once and judges the reply. The only place
+    /// a request goes out.
     async fn send<R>(
         &self,
+        name: &'static str,
         session: Session,
         build: impl FnOnce(&Session, u64) -> Option<Request>,
         parse: impl FnOnce(&Value) -> Option<R>,
@@ -290,6 +292,10 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
             // No cookie left to sign with: only a new login helps.
             return (Verdict::Rejected, Err(Fault::Rejected));
         };
+        // Lets a development run count its requests. A fixed name, nothing else.
+        if cfg!(debug_assertions) {
+            eprintln!("youtube request: {name}");
+        }
         client::classify(self.transport.post(request).await, parse)
     }
 
