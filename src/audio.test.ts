@@ -161,3 +161,35 @@ describe('the notice', () => {
     expect(button('Pause')).toBeTruthy();
   });
 });
+
+describe('a stream that is recovered', () => {
+  it('says it is reconnecting, and can still be paused', async () => {
+    const bridge = await openApp();
+    bridge.emitPlayer(fileState());
+    bridge.emitPlayer(fileState({ revision: 2, status: 'reconnecting', positionMs: 4_000 }));
+
+    expect(await bar().findByText('Reconnecting…')).toBeTruthy();
+    expect(slider('Seek').disabled).toBe(true);
+    expect(notice()).toBeNull();
+    await fireEvent.click(button('Pause'));
+    expect(bridge.commands).toEqual([['togglePlay']]);
+
+    bridge.emitPlayer(fileState({ revision: 3 }));
+    await waitFor(() => expect(bar().queryByText('Reconnecting…')).toBeNull());
+  });
+
+  it('offers to try again once it has stopped with an error', async () => {
+    const bridge = await openApp();
+    bridge.emitPlayer(fileState());
+    expect(bar().queryByRole('button', { name: 'Try again' })).toBeNull();
+    bridge.emitPlayer(failed());
+    await screen.findByRole('alert');
+
+    await fireEvent.click(await bar().findByRole('button', { name: 'Try again' }));
+
+    expect(bridge.commands).toEqual([['togglePlay']]);
+    bridge.emitPlayer(fileState({ revision: 3, status: 'loading' }));
+    await waitFor(() => expect(notice()).toBeNull());
+    expect(bar().queryByRole('button', { name: 'Try again' })).toBeNull();
+  });
+});

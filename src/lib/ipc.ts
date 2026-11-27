@@ -101,7 +101,14 @@ export interface AppSnapshot {
 
 // Playback. Mirrors src-tauri/src/audio/state.rs.
 
-export type PlaybackStatus = 'idle' | 'loading' | 'playing' | 'paused' | 'ended' | 'error';
+export type PlaybackStatus =
+  | 'idle'
+  | 'loading'
+  | 'playing'
+  | 'paused'
+  | 'reconnecting'
+  | 'ended'
+  | 'error';
 
 /** The current Queue entry. */
 export interface NowPlaying {

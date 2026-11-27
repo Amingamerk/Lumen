@@ -24,6 +24,7 @@
   /** The statuses the controls alone do not tell apart. */
   const WORDS: Partial<Record<PlaybackStatus, string>> = {
     loading: 'Loading…',
+    reconnecting: 'Reconnecting…',
     ended: 'Ended',
     error: 'Could not play',
   };
@@ -31,9 +32,11 @@
   const current = $derived(player.state?.current ?? null);
   const idle = $derived(current === null);
   const status = $derived(player.state?.status ?? 'idle');
-  // While it loads it is about to play, so the button pauses.
-  const playing = $derived(status === 'playing' || status === 'loading');
-  const seekable = $derived(!idle && status !== 'loading' && status !== 'error');
+  /** A stream is on its way: there is nothing to seek in yet. */
+  const waiting = $derived(status === 'loading' || status === 'reconnecting');
+  // While it waits it is about to play, so the button pauses.
+  const playing = $derived(status === 'playing' || waiting);
+  const seekable = $derived(!idle && !waiting && status !== 'error');
   const canNext = $derived(player.state?.canNext ?? false);
   const canPrevious = $derived(player.state?.canPrevious ?? false);
 
@@ -57,7 +60,18 @@
         {#if artists}
           <p class="text-ink-faint truncate text-[13px]" title={artists}>{artists}</p>
         {/if}
-        <p class="text-ink-soft text-[12px]" role="status">{WORDS[status]}</p>
+        <div class="flex items-center gap-2">
+          <p class="text-ink-soft text-[12px]" role="status">{WORDS[status]}</p>
+          {#if status === 'error'}
+            <button
+              type="button"
+              class="retry"
+              onclick={(event) => press(event, () => player.togglePlay())}
+            >
+              Try again
+            </button>
+          {/if}
+        </div>
       </div>
     {:else}
       <div class="art-slot" aria-hidden="true">
