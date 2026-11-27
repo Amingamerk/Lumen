@@ -109,6 +109,14 @@
     padding: 8px;
   }
 
+  /* The queue takes a third column. */
+  .shell[data-queue='open'] {
+    grid-template-areas:
+      'sidebar stage queue'
+      'player player player';
+    grid-template-columns: 264px minmax(0, 1fr) 320px;
+  }
+
   /* A raised plane: faint grain, light falling from above, a hairline edge. */
   .surface {
     border-radius: var(--radius-frame);
@@ -800,6 +808,113 @@
   .alert > svg {
     flex: none;
     color: var(--color-ember);
+  }
+
+  /* Queue panel */
+  .queue-panel {
+    grid-area: queue;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 0;
+    padding: 16px 12px 12px;
+    user-select: none;
+  }
+
+  /* A narrow window has no room for three columns: the panel lies over the stage. */
+  @media (max-width: 1099px) {
+    .shell[data-queue='open'] {
+      grid-template-areas:
+        'sidebar stage'
+        'player player';
+      grid-template-columns: 264px minmax(0, 1fr);
+    }
+
+    .queue-panel {
+      grid-area: stage;
+      justify-self: end;
+      z-index: 2;
+      width: 320px;
+      box-shadow:
+        inset 0 0 0 1px var(--color-edge),
+        0 0 48px rgb(4 3 9 / 0.7);
+    }
+  }
+
+  .queue-label {
+    margin-bottom: 4px;
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .queue-scroll {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .queue-list {
+    position: relative;
+    /* Rows are placed by hand, so the browser must not nudge the scroll to follow them. */
+    overflow-anchor: none;
+  }
+
+  .queue-row {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding-left: 4px;
+    line-height: 1.25;
+  }
+
+  .queue-row[data-dragged='true'] {
+    opacity: 0.5;
+  }
+
+  /* Sits inside its row, so every row keeps the same height. */
+  .queue-heading {
+    overflow: hidden;
+    color: var(--color-lume-hi);
+    font-size: 11px;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .queue-handle {
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-chip);
+    color: var(--color-ink-faint);
+    cursor: grab;
+    touch-action: none;
+  }
+
+  .queue-handle:hover {
+    background: var(--color-raise);
+    color: var(--color-ink);
+  }
+
+  .queue-handle:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .queue-drop {
+    position: absolute;
+    right: 0;
+    left: 0;
+    height: 2px;
+    margin-top: -1px;
+    border-radius: 999px;
+    background: var(--color-lume);
+    pointer-events: none;
   }
 
   /* Player */

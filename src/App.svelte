@@ -3,6 +3,7 @@
   import { onMount } from 'svelte';
   import MainFrame from './lib/components/MainFrame.svelte';
   import PlayerBar from './lib/components/PlayerBar.svelte';
+  import QueuePanel from './lib/components/QueuePanel.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
   import { tauriBridge } from './lib/ipc';
   import { AppStore } from './lib/stores/app.svelte';
@@ -46,7 +47,7 @@
 
 <a class="skip-link" href="#main">Skip to content</a>
 
-<div class="shell">
+<div class="shell" data-queue={queueOpen ? 'open' : undefined}>
   <Sidebar playlists={store.playlists} {route} onnavigate={(next) => store.navigate(next)} />
 
   <MainFrame view={route?.view} {pageKey}>
@@ -76,6 +77,10 @@
       <Playlist {catalog} {id} onplay={(index) => void player.playCollection(id, index)} />
     {/if}
   </MainFrame>
+
+  {#if queueOpen}
+    <QueuePanel {player} {queue} onclose={() => void store.toggleQueue()} />
+  {/if}
 
   <PlayerBar {player} {queueOpen} ontogglequeue={() => void store.toggleQueue()} />
 </div>
