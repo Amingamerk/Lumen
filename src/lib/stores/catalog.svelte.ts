@@ -1,5 +1,6 @@
 import { describeError } from '../errors';
-import type { Bridge, CollectionSummary, Library, SearchView, Shelf, SourceFilter } from '../ipc';
+import type { Bridge, CollectionDetail, Library, SearchView, Shelf, SourceFilter } from '../ipc';
+import { TrackWindow } from './trackWindow.svelte';
 
 /**
  * A mirror of the catalog views Rust builds. Each view asks when it opens; no
@@ -10,7 +11,7 @@ export class CatalogStore {
   library = $state.raw<Library | null>(null);
   search = $state.raw<SearchView | null>(null);
   /** The playlist or album asked for last. */
-  collection = $state.raw<CollectionSummary | null>(null);
+  collection = $state.raw<CollectionDetail | null>(null);
   /** Why the last request to Rust failed, if it did. */
   error = $state.raw<string | null>(null);
 
@@ -44,6 +45,20 @@ export class CatalogStore {
       (collection) => (this.collection = collection),
       () => ticket === this.#collections,
     );
+  }
+
+  /** A new window onto one Collection's Tracks, for one visit to its page. */
+  tracksOf(id: string): TrackWindow {
+    return new TrackWindow(async (offset, limit) => {
+      try {
+        const slice = await this.#bridge.getTrackSlice(id, offset, limit);
+        this.error = null;
+        return slice;
+      } catch (error) {
+        this.error = describeError(error);
+        throw error;
+      }
+    });
   }
 
   /** Fetches the search Rust remembers. */

@@ -23,6 +23,13 @@ export interface CollectionSummary extends SourceTag {
   subtitle: string;
 }
 
+/** A Collection as its page header shows it. */
+export interface CollectionDetail extends CollectionSummary {
+  trackCount: number;
+  /** The length of all its Tracks together. */
+  durationMs: number;
+}
+
 export interface TrackRow {
   id: string;
   title: string;
@@ -30,6 +37,14 @@ export interface TrackRow {
   album: string | null;
   durationMs: number;
   sources: SourceTag[];
+}
+
+/** Some consecutive rows of a Collection. The rest stay in Rust. */
+export interface TrackSlice {
+  total: number;
+  /** The position of the first row asked for, counted from 0. */
+  offset: number;
+  tracks: TrackRow[];
 }
 
 /** One horizontal row of cards on Home. */
@@ -75,7 +90,9 @@ export interface Bridge {
   navigate(route: Route): Promise<void>;
   getHome(): Promise<Shelf[]>;
   getLibrary(): Promise<Library>;
-  getCollection(id: string): Promise<CollectionSummary>;
+  getCollection(id: string): Promise<CollectionDetail>;
+  /** Up to `limit` rows of a playlist or album, starting at `offset`. */
+  getTrackSlice(playlistId: string, offset: number, limit: number): Promise<TrackSlice>;
   /** The search Rust remembers, with its results. */
   getSearch(): Promise<SearchView>;
   searchCatalog(query: string, filter: SourceFilter): Promise<SearchView>;
@@ -91,7 +108,9 @@ export const tauriBridge: Bridge = {
   navigate: (route) => invoke('navigate', { route }),
   getHome: () => invoke<Shelf[]>('get_home'),
   getLibrary: () => invoke<Library>('get_library'),
-  getCollection: (id) => invoke<CollectionSummary>('get_collection', { id }),
+  getCollection: (id) => invoke<CollectionDetail>('get_collection', { id }),
+  getTrackSlice: (playlistId, offset, limit) =>
+    invoke<TrackSlice>('get_track_slice', { playlistId, offset, limit }),
   getSearch: () => invoke<SearchView>('get_search'),
   searchCatalog: (query, filter) => invoke<SearchView>('search_catalog', { query, filter }),
   onNavigationChanged: (handler) =>

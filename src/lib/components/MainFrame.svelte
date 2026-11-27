@@ -16,7 +16,8 @@
   <!-- The light the app is named after. It moves to show that the view changed. -->
   <div class="beam" aria-hidden="true"></div>
   {#key pageKey}
-    <div class="scroller relative h-full px-10 pt-14 pb-10">
+    <!-- A playlist's backdrop reaches the top edge, so it brings its own space. -->
+    <div class={['scroller relative h-full px-10 pb-10', view !== 'playlist' && 'pt-14']} data-scroller>
       {@render children()}
     </div>
   {/key}

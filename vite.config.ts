@@ -22,5 +22,6 @@ export default defineConfig({
     environment: 'jsdom',
     // Only the app's tests; .claude/hooks has its own node:test suite.
     include: ['src/**/*.test.ts'],
+    setupFiles: ['src/test-setup.ts'],
   },
 });

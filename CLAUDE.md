@@ -60,7 +60,7 @@ lumen/
 │  │  ├─ main.rs
 │  │  ├─ ipc/            Tauri commands and event emitters
 │  │  ├─ state.rs        navigation, search and catalog state
-│  │  ├─ catalog/        domain shapes, static fixtures, views, search
+│  │  ├─ catalog/        domain shapes, static fixtures, views, search, track slices
 │  │  ├─ audio/          libmpv wrapper, playback state
 │  │  ├─ queue/          queue, shuffle, repeat, pre-resolve
 │  │  ├─ sources/        Source trait + youtube, soundcloud, spotify
@@ -71,7 +71,7 @@ lumen/
 │  │  └─ media/          souvlaki media keys
 │  └─ binaries/          yt-dlp and Deno sidecars (not committed)
 ├─ src/                  Svelte 5 app
-│  ├─ lib/components/    Sidebar, PlayerBar, TrackList, CollectionCard, Shelf, QueuePanel
+│  ├─ lib/components/    Sidebar, PlayerBar, TrackList, TrackTable, CollectionCard, Shelf, QueuePanel
 │  ├─ lib/stores/        state mirrored from Rust events
 │  └─ routes/            home, search, library, playlist
 ├─ spikes/               Milestone 0 throwaway experiments
