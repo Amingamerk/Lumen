@@ -1,4 +1,6 @@
-# Lumen
+<h1 align="center">
+  <img src="docs/assets/lumen-logo.svg" alt="Lumen" width="360">
+</h1>
 
 A lightweight Windows desktop music player that combines YouTube Music, SoundCloud and Spotify into one library, one queue and one recommendation engine.
 
