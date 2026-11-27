@@ -5,7 +5,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Runtime, State};
 
-use crate::catalog::{CollectionSummary, Library, SearchView, Shelf, SourceFilter};
+use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, SourceFilter, TrackSlice};
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
 
 /// Event sent after the route changes. Mirrored in `src/lib/ipc.ts`.
@@ -86,8 +86,19 @@ pub fn get_library(state: State<'_, SharedState>) -> Library {
 pub fn get_collection(
     state: State<'_, SharedState>,
     id: String,
-) -> Result<CollectionSummary, IpcError> {
+) -> Result<CollectionDetail, IpcError> {
     Ok(lock(&state).collection(&id)?)
+}
+
+/// The visible window of a long list. The rest of its rows stay in Rust.
+#[tauri::command]
+pub fn get_track_slice(
+    state: State<'_, SharedState>,
+    playlist_id: String,
+    offset: usize,
+    limit: usize,
+) -> Result<TrackSlice, IpcError> {
+    Ok(lock(&state).track_slice(&playlist_id, offset, limit)?)
 }
 
 #[tauri::command]

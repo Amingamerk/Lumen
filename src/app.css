@@ -128,6 +128,11 @@
     scrollbar-color: rgb(226 220 255 / 0.18) transparent;
   }
 
+  /* A page without links takes the focus itself, so the keys can scroll it. */
+  .scroller:focus-visible {
+    outline-offset: -2px;
+  }
+
   /* Sidebar */
   .sidebar {
     grid-area: sidebar;
@@ -268,8 +273,9 @@
     translate: 40vw 0;
   }
 
+  /* A playlist is lit by its own cover instead: see .hero. */
   .stage[data-view='playlist'] .beam {
-    translate: 8vw 0;
+    opacity: 0;
   }
 
   .page-title {
@@ -293,17 +299,55 @@
     line-clamp: 3;
   }
 
+  /*
+   * The head of a playlist or album, under a lamp in the cover's dominant colour.
+   * It bleeds to the edges of the stage and fades out before the track list.
+   */
+  .hero {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 28px;
+    margin-inline: -2.5rem;
+    padding: 3.5rem 2.5rem 1.75rem;
+    background:
+      radial-gradient(
+        64% 118% at 14% 0%,
+        color-mix(in oklab, var(--glow) 28%, transparent),
+        transparent 72%
+      ),
+      linear-gradient(
+        180deg,
+        color-mix(in oklab, var(--glow) 17%, transparent),
+        color-mix(in oklab, var(--ground) 34%, transparent) 55%,
+        transparent
+      );
+    container-type: inline-size;
+  }
+
+  /* The filament, as on every other view. */
+  .hero::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 2.5rem;
+    width: 300px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--glow), transparent);
+  }
+
   /* The large cover at the head of a playlist or album. */
   .cover {
     flex: none;
-    width: 176px;
+    width: clamp(160px, 25cqi, 224px);
     border-radius: var(--radius-row);
     box-shadow: 0 24px 48px -24px rgb(4 3 9 / 0.9);
   }
 
   /*
    * Placeholder covers: every title under its own lamp, ringed once like the mark.
-   * lib/art.ts picks the tone and where the light stands.
+   * lib/art.ts picks the tone and where the light stands. The tone also names the
+   * dominant colour a page backdrop is drawn from.
    */
   .art {
     --x: 20%;
@@ -342,32 +386,32 @@
     line-height: 0.85;
   }
 
-  .art[data-tone='0'] {
+  [data-tone='0'] {
     --glow: var(--color-ember);
     --ground: #4a2612;
   }
 
-  .art[data-tone='1'] {
+  [data-tone='1'] {
     --glow: var(--color-lume);
     --ground: #47142b;
   }
 
-  .art[data-tone='2'] {
+  [data-tone='2'] {
     --glow: #c04dd2;
     --ground: #36143f;
   }
 
-  .art[data-tone='3'] {
+  [data-tone='3'] {
     --glow: #9d83d6;
     --ground: #281d44;
   }
 
-  .art[data-tone='4'] {
+  [data-tone='4'] {
     --glow: #8fb56b;
     --ground: #1f3019;
   }
 
-  .art[data-tone='5'] {
+  [data-tone='5'] {
     --glow: #5aa8bd;
     --ground: #102c35;
   }
@@ -634,6 +678,80 @@
     }
   }
 
+  /* A playlist's Tracks. TrackTable sets each row's height and place. */
+  .track-table {
+    container-type: inline-size;
+  }
+
+  .track-line {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 56px;
+    align-items: center;
+    column-gap: 16px;
+    padding-right: 8px;
+  }
+
+  /*
+   * The column names stay put while the rows pass under them. Until then the
+   * backdrop shows through; stuck, they sit on a bar across the whole stage.
+   */
+  .track-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    margin-inline: -2.5rem;
+    padding-inline: 2.5rem;
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-weight: 600;
+    user-select: none;
+  }
+
+  .track-head[data-stuck='true'] {
+    background: var(--color-stage);
+  }
+
+  .track-head > .track-line {
+    height: 40px;
+    box-shadow: 0 1px 0 var(--color-edge);
+  }
+
+  .track-body {
+    position: relative;
+    margin-top: 6px;
+    /* Rows are placed by hand, so the browser must not nudge the scroll to follow them. */
+    overflow-anchor: none;
+  }
+
+  .track-row {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+  }
+
+  .track-number {
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+
+  /* Stands in for a title that is still on its way. */
+  .track-blank {
+    display: block;
+    width: 38%;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--color-raise);
+  }
+
+  @container (max-width: 599px) {
+    .track-line {
+      grid-template-columns: 48px minmax(0, 1fr) 72px 56px;
+    }
+  }
+
   .lamp {
     display: grid;
     flex: none;
@@ -742,7 +860,9 @@
 
   .beam {
     animation: ignite 900ms var(--ease-glide) backwards;
-    transition: translate 640ms var(--ease-glide);
+    transition:
+      translate 640ms var(--ease-glide),
+      opacity 640ms var(--ease-glide);
   }
 
   .rise {

@@ -4,7 +4,8 @@
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{
-    Catalog, CollectionSummary, Library, Playlist, SearchView, Shelf, SourceFilter, SourceKind,
+    Catalog, CollectionDetail, Library, Playlist, SearchView, Shelf, SourceFilter, SourceKind,
+    TrackSlice,
 };
 
 /// A playlist as the sidebar shows it.
@@ -58,6 +59,10 @@ pub enum StateError {
     UnknownCollection { id: String },
 }
 
+fn unknown_collection(id: &str) -> StateError {
+    StateError::UnknownCollection { id: id.to_owned() }
+}
+
 /// What was last typed and chosen on the Search view.
 #[derive(Debug, Default)]
 struct SearchRequest {
@@ -102,8 +107,10 @@ impl AppState {
     /// `None` when that route is already showing.
     pub fn navigate(&mut self, route: Route) -> Result<Option<NavigationState>, StateError> {
         // The playlist route shows albums too.
-        if let Route::Playlist { id } = &route {
-            self.collection(id)?;
+        if let Route::Playlist { id } = &route
+            && self.catalog.collection(id).is_none()
+        {
+            return Err(unknown_collection(id));
         }
         if route == self.navigation.route {
             return Ok(None);
@@ -123,11 +130,23 @@ impl AppState {
         self.catalog.library()
     }
 
-    /// The playlist or album a playlist route points at.
-    pub fn collection(&self, id: &str) -> Result<CollectionSummary, StateError> {
+    /// The playlist or album a playlist route points at, with its totals.
+    pub fn collection(&self, id: &str) -> Result<CollectionDetail, StateError> {
         self.catalog
-            .collection(id)
-            .ok_or_else(|| StateError::UnknownCollection { id: id.to_owned() })
+            .collection_detail(id)
+            .ok_or_else(|| unknown_collection(id))
+    }
+
+    /// The rows of that Collection the UI is about to show.
+    pub fn track_slice(
+        &self,
+        playlist_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<TrackSlice, StateError> {
+        self.catalog
+            .track_slice(playlist_id, offset, limit)
+            .ok_or_else(|| unknown_collection(playlist_id))
     }
 
     /// Runs a search and remembers it for the next visit to the Search view.
@@ -150,6 +169,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::catalog::LONG_PLAYLIST_ID;
 
     fn playlist_route(id: &str) -> Route {
         Route::Playlist { id: id.to_owned() }
@@ -279,7 +299,7 @@ mod tests {
             state.navigate(playlist_route(&id)).unwrap();
 
             assert_eq!(state.snapshot().navigation.route, playlist_route(&id));
-            assert_eq!(state.collection(&id).map(|c| c.id), Ok(id));
+            assert_eq!(state.collection(&id).map(|c| c.summary.id), Ok(id));
         }
     }
 
@@ -301,6 +321,42 @@ mod tests {
             Err(StateError::UnknownCollection {
                 id: "nope".to_owned()
             })
+        );
+    }
+
+    #[test]
+    fn slices_the_tracks_of_a_collection() {
+        let state = AppState::default();
+
+        let slice = state.track_slice("night-shift", 1, 2).unwrap();
+
+        assert_eq!((slice.total, slice.offset, slice.tracks.len()), (5, 1, 2));
+        assert_eq!(
+            state.collection("night-shift").map(|c| c.track_count),
+            Ok(slice.total)
+        );
+    }
+
+    #[test]
+    fn rejects_a_slice_of_an_unknown_collection() {
+        assert_eq!(
+            AppState::default().track_slice("nope", 0, 50),
+            Err(StateError::UnknownCollection {
+                id: "nope".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn opens_the_long_playlist() {
+        let mut state = AppState::default();
+
+        let changed = state.navigate(playlist_route(LONG_PLAYLIST_ID)).unwrap();
+
+        assert!(changed.is_some());
+        assert_eq!(
+            state.collection(LONG_PLAYLIST_ID).map(|c| c.track_count),
+            Ok(5_000)
         );
     }
 

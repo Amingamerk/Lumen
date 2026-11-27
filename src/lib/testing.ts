@@ -2,6 +2,7 @@
 import type {
   AppSnapshot,
   Bridge,
+  CollectionDetail,
   CollectionSummary,
   Library,
   NavigationState,
@@ -10,6 +11,7 @@ import type {
   Shelf,
   SourceFilter,
   TrackRow,
+  TrackSlice,
 } from './ipc';
 
 export function snapshot(): AppSnapshot {
@@ -107,6 +109,22 @@ export function tracks(): TrackRow[] {
   ];
 }
 
+const LENGTH_MS = 201_000;
+
+/** The rows Rust would send for this window of a list of `total` numbered Tracks. */
+export function trackSlice(offset: number, limit: number, total: number): TrackSlice {
+  const length = Math.max(0, Math.min(limit, total - offset));
+  return {
+    total,
+    offset,
+    tracks: Array.from({ length }, (_, at) => ({
+      ...tracks()[0],
+      id: `n${offset + at + 1}`,
+      title: `Track ${offset + at + 1}`,
+    })),
+  };
+}
+
 /** The same results whatever is asked: matching is Rust's job, and tested there. */
 export function searchView(query: string, filter: SourceFilter): SearchView {
   return { query, filter, tracks: tracks(), collections: [collection('low-tide')] };
@@ -147,6 +165,11 @@ export function fakeBridge({ announce = true } = {}) {
     beforeSnapshot: null as (() => void) | null,
     beforeCollection: null as ((id: string) => Promise<void> | undefined) | null,
     beforeRemembered: null as (() => Promise<void>) | null,
+    beforeSlice: null as (() => Promise<void>) | null,
+    slices: [] as { id: string; offset: number; limit: number }[],
+    failSlices: null as string | null,
+    /** How many Tracks a Collection holds, where it is not two. */
+    trackCounts: {} as Record<string, number>,
     playlists: snapshot().playlists,
     shelves: home(),
     saved: library(),
@@ -176,10 +199,19 @@ export function fakeBridge({ announce = true } = {}) {
       catalogCall('getLibrary');
       return bridge.saved;
     },
-    async getCollection(id: string): Promise<CollectionSummary> {
+    async getCollection(id: string): Promise<CollectionDetail> {
       catalogCall('getCollection');
       await bridge.beforeCollection?.(id);
-      return collection(id);
+      const trackCount = bridge.trackCounts[id] ?? 2;
+      return { ...collection(id), trackCount, durationMs: trackCount * LENGTH_MS };
+    },
+    async getTrackSlice(id: string, offset: number, limit: number): Promise<TrackSlice> {
+      catalogCall('getTrackSlice');
+      bridge.slices.push({ id, offset, limit });
+      if (bridge.failSlices) throw bridge.failSlices;
+      await bridge.beforeSlice?.();
+      collection(id);
+      return trackSlice(offset, limit, bridge.trackCounts[id] ?? 2);
     },
     async getSearch(): Promise<SearchView> {
       catalogCall('getSearch');

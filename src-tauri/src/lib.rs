@@ -14,6 +14,7 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::get_home,
             ipc::get_library,
             ipc::get_collection,
+            ipc::get_track_slice,
             ipc::get_search,
             ipc::search_catalog,
         ])
