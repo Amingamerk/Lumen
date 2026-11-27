@@ -25,9 +25,10 @@ git rev-parse --short HEAD   # must equal the head SHA named in the review
 
 ## Long commands: time limits and trimmed output
 
-Nothing may run without a limit or flood the context. Use these forms (Git Bash on Windows has GNU `timeout`):
+Nothing may run without a limit or flood the context. Always enable `set -o pipefail` when piping to `tail` so a failed or timed-out check still returns a non-zero exit status (Git Bash on Windows has GNU `timeout`):
 
 ```bash
+set -o pipefail
 timeout 20m cargo fmt --check 2>&1 | tail -n 20
 timeout 20m cargo clippy --all-targets -- -D warnings 2>&1 | tail -n 40
 timeout 20m cargo test -q 2>&1 | tail -n 40
