@@ -98,7 +98,7 @@ impl MpvEngine {
                     .ok_or(EngineError::NotFound)?;
                 (path, [].as_slice())
             }
-            Media::Stream { url, headers } => (url.clone(), headers.as_slice()),
+            Media::Stream { url, headers, .. } => (url.clone(), headers.as_slice()),
         };
         if !headers.iter().all(|(name, value)| is_header(name, value)) {
             return Err(EngineError::Unplayable);

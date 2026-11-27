@@ -13,6 +13,8 @@ pub enum PlaybackStatus {
     Loading,
     Playing,
     Paused,
+    /// A stream was lost and a new one is on its way.
+    Reconnecting,
     /// Real audio played to its end.
     Ended,
     Error,

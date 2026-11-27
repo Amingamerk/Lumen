@@ -53,8 +53,12 @@ export class PlayerStore {
   }
 
   togglePlay() {
-    // Trying again after a failure: if it fails again, say so again.
-    if (this.state?.status === 'error') this.#failure = null;
+    // Trying again after a failure: its notice is over, and if it fails again,
+    // say so again.
+    if (this.state?.status === 'error') {
+      this.#failure = null;
+      if (this.notice?.from === 'playback') this.notice = null;
+    }
     return this.#send(() => this.#bridge.togglePlay());
   }
 

@@ -166,6 +166,7 @@ async fn gives_the_stream_without_the_secret_headers() {
                     ("Accept".to_owned(), "*/*".to_owned()),
                     ("User-Agent".to_owned(), "FakeAgent/1.0".to_owned()),
                 ],
+                expires_at: Some(1_700_021_600),
             }
     );
     let runs = f.ytdlp.runs.lock().unwrap();
@@ -341,8 +342,28 @@ async fn failures_become_fixed_categories_that_quote_nothing() {
     let cases = [
         ("ERROR: x: HTTP Error 429: Too Many Requests", RateLimited),
         ("ERROR: x: Sign in to confirm you're not a bot.", BotCheck),
-        ("ERROR: x: HTTP Error 401: Unauthorized", AuthRejected),
-        ("ERROR: x: HTTP Error 403: Forbidden", AuthRejected),
+        (
+            "ERROR: [youtube] x: Unable to download API page: HTTP Error 401: Unauthorized",
+            AuthRejected,
+        ),
+        (
+            "ERROR: [youtube] x: Unable to download API page: HTTP Error 403: Forbidden",
+            AuthRejected,
+        ),
+        (
+            "ERROR: [youtube] x: Sign in to view this video",
+            AuthRejected,
+        ),
+        (
+            "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+            Failed,
+        ),
+        (
+            "ERROR: [youtube] x: HTTP Error 403: Forbidden (https://rr1.googlevideo.com/videoplayback?ip=MARKER-IP)",
+            Failed,
+        ),
+        ("ERROR: x: HTTP Error 403: Forbidden", Failed),
+        ("ERROR: x: HTTP Error 401: Unauthorized", Failed),
         ("ERROR: x: Requested format is not available.", NoFormat),
         ("ERROR: x: Video unavailable", Unavailable),
         (
@@ -417,7 +438,9 @@ async fn unavailable_songs_never_pause_but_three_failures_do() {
 #[tokio::test]
 async fn each_serious_answer_gets_the_gates_reaction() {
     let limited = fixture(failing("ERROR: x: HTTP Error 429: Too Many Requests"));
-    let rejected = fixture(failing("ERROR: x: HTTP Error 401"));
+    let rejected = fixture(failing(
+        "ERROR: [youtube] x: Unable to download API page: HTTP Error 401: Unauthorized",
+    ));
 
     let _ = limited.resolve().await;
     let _ = rejected.resolve().await;
@@ -444,4 +467,28 @@ fn a_new_resolver_and_a_shutdown_sweep_leftover_jars() {
         "cache".into(),
     );
     assert!(!leftover.exists());
+}
+
+#[test]
+fn only_answers_that_could_change_are_worth_asking_again() {
+    use ResolveError::*;
+    for error in [TimedOut, Failed, NoFormat, UnexpectedOutput, Spawn] {
+        assert!(error.worth_retrying(), "{error}");
+    }
+    for error in [
+        AuthRejected,
+        RateLimited,
+        BotCheck,
+        Unavailable,
+        MissingYtDlp,
+        MissingDeno,
+        AvailableTooLate,
+        AccountChanged,
+        BadVideo,
+        Closed,
+        Service(ServiceError::Gate(GateError::Paused)),
+        Service(ServiceError::Expired),
+    ] {
+        assert!(!error.worth_retrying(), "{error}");
+    }
 }

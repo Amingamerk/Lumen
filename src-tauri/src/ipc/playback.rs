@@ -6,9 +6,10 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager, Runtime};
 
 use super::account::AccountHandle;
-use super::player::PlayerHandle;
+#[cfg(debug_assertions)]
+use super::break_url::BreakUrl;
+use super::player::{Pending, PlayerHandle};
 use super::{EventSink, IpcError};
-use crate::audio::PlaybackStatus;
 use crate::catalog::TrackRow;
 use crate::resolver::{Resolver, Sidecars, jar_dir};
 use crate::sources::youtube::SystemClock;
@@ -28,6 +29,8 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
         jar_dir(),
         cache,
     )));
+    #[cfg(debug_assertions)]
+    app.manage(BreakUrl::from_args(std::env::args_os()));
     Ok(())
 }
 
@@ -56,6 +59,12 @@ pub fn play_stream<R: Runtime>(
     row: TrackRow,
 ) -> Result<(), IpcError> {
     let pending = player.begin_stream(app, video.clone(), row)?;
+    resolve_in_background(app, pending, video);
+    Ok(())
+}
+
+/// Resolves `video` for the song that waits for it, and plays it.
+pub fn resolve_in_background<R: Runtime>(app: &AppHandle<R>, pending: Pending, video: String) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let resolver = Arc::clone(app.state::<Arc<AppResolver>>().inner());
@@ -64,14 +73,14 @@ pub fn play_stream<R: Runtime>(
             .resolve(&youtube, &video, || pending.wanted())
             .await
             .map_err(|error| error.to_string());
+        #[cfg(debug_assertions)]
+        let outcome = outcome.map(|media| match pending.wanted() {
+            true => app.state::<BreakUrl>().apply(media),
+            false => media,
+        });
         if let Some(state) = pending.finish(outcome) {
-            // A stream the engine refused is not used again.
-            if state.status == PlaybackStatus::Error {
-                resolver.forget(&video);
-            }
             // A failure means the window is gone: nobody is left to tell.
             let _ = app.player_changed(&state);
         }
     });
-    Ok(())
 }

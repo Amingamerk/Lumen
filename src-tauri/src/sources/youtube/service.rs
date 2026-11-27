@@ -222,6 +222,13 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
         }
     }
 
+    /// Counts a failure no run showed the gate, as when a stream keeps failing
+    /// to play. Sends nothing.
+    pub fn count_failure(&self) {
+        self.gate.apply(&Verdict::Failure);
+        self.refresh();
+    }
+
     /// Ends a pause, if that can be saved. Sends nothing.
     pub fn resume(&self) {
         self.gate.resume();

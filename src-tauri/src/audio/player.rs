@@ -12,6 +12,13 @@ use super::{
 use crate::catalog::{Catalog, MAX_SLICE, TrackRow};
 use crate::queue::{Entry, Queue, QueueError};
 use crate::recs::{RECENT_HISTORY, Recommender};
+use crate::sources::youtube::SystemClock;
+
+mod recovery;
+
+use recovery::PlayerClock;
+use recovery::Recovery;
+pub use recovery::{Fetch, NoStream};
 
 pub const DEFAULT_VOLUME: u8 = 80;
 /// Previous restarts the current track once it is further in than this.
@@ -42,6 +49,8 @@ enum Phase {
     Loading,
     Open,
     Ended,
+    /// A live stream was let go of: a fresh URL is awaited, or a resume.
+    Broken,
     /// With the words the user is told.
     Failed(String),
 }
@@ -54,6 +63,7 @@ struct Direct {
     /// The YouTube video a resolved stream is of.
     video: Option<String>,
     row: TrackRow,
+    recovery: Recovery,
 }
 
 pub struct Player<E: Engine> {
@@ -72,6 +82,15 @@ pub struct Player<E: Engine> {
     reported_second: u64,
     /// The duration the UI last heard about.
     reported_duration_ms: u32,
+    clock: Box<dyn PlayerClock>,
+    /// Told of every change.
+    wake: Option<Box<dyn Fn() + Send>>,
+    /// The last fetch number given out.
+    tickets: u32,
+    /// Both recovery attempts have just been used up.
+    gave_up: bool,
+    /// The video whose stream was just let go of.
+    dropped: Option<String>,
 }
 
 /// Commands that may have nothing to change return `None` when they do not.
@@ -90,6 +109,11 @@ impl<E: Engine> Player<E> {
             revision: 0,
             reported_second: 0,
             reported_duration_ms: 0,
+            clock: Box::new(SystemClock::default()),
+            wake: None,
+            tickets: 0,
+            gave_up: false,
+            dropped: None,
         }
     }
 
@@ -102,7 +126,7 @@ impl<E: Engine> Player<E> {
                 autoplay,
             })
         });
-        let duration_ms = millis(self.engine.duration());
+        let duration_ms = millis(self.duration());
         let current = match &self.direct {
             Some(direct) => {
                 let mut track = direct.row.clone();
@@ -122,7 +146,14 @@ impl<E: Engine> Player<E> {
             Phase::Failed(_) => PlaybackStatus::Error,
             Phase::Ended => PlaybackStatus::Ended,
             _ if !self.playing => PlaybackStatus::Paused,
-            Phase::Loading => PlaybackStatus::Loading,
+            _ if self
+                .direct
+                .as_ref()
+                .is_some_and(|d| d.recovery.reconnecting) =>
+            {
+                PlaybackStatus::Reconnecting
+            }
+            Phase::Loading | Phase::Broken => PlaybackStatus::Loading,
             Phase::Open => PlaybackStatus::Playing,
         };
         let queued = self.queue.current().is_some();
@@ -133,7 +164,7 @@ impl<E: Engine> Player<E> {
             // The engine's last word can fall just short of the end.
             position_ms: match self.phase {
                 Phase::Ended => duration_ms,
-                _ => millis(self.engine.position()),
+                _ => millis(self.position()),
             },
             duration_ms,
             volume: self.volume,
@@ -158,6 +189,7 @@ impl<E: Engine> Player<E> {
             media: Some(media),
             video: None,
             row,
+            recovery: Recovery::default(),
         });
         self.load(Duration::ZERO, true);
         self.commit()
@@ -173,6 +205,7 @@ impl<E: Engine> Player<E> {
             media: None,
             video: Some(video),
             row,
+            recovery: Recovery::default(),
         });
         self.phase = Phase::Loading;
         self.set_playing(true);
@@ -203,8 +236,8 @@ impl<E: Engine> Player<E> {
             Ok(media) => {
                 direct.media = Some(media);
                 // It may have been paused while loading.
-                let playing = self.playing;
-                self.load(Duration::ZERO, playing);
+                let (start, playing) = (direct.recovery.resume_at, self.playing);
+                self.load(start, playing);
             }
             Err(reason) => {
                 let message = format!("Lumen could not play “{}”: {reason}.", direct.row.title);
@@ -259,7 +292,18 @@ impl<E: Engine> Player<E> {
         if !self.has_current() || (unresolved && matches!(self.phase, Phase::Failed(_))) {
             return None;
         }
-        if matches!(self.phase, Phase::Ended | Phase::Failed(_)) {
+        let restarts = matches!(self.phase, Phase::Ended | Phase::Failed(_));
+        if self.phase == Phase::Broken {
+            self.toggle_without_stream();
+        } else if (restarts || !self.playing) && self.expired() {
+            let start = if restarts {
+                Duration::ZERO
+            } else {
+                self.reached()
+            };
+            self.set_playing(true);
+            self.replace_expired(start);
+        } else if restarts {
             self.load(Duration::ZERO, true);
         } else {
             self.set_playing(!self.playing);
@@ -292,24 +336,36 @@ impl<E: Engine> Player<E> {
         if !self.has_current() || matches!(self.phase, Phase::Loading | Phase::Failed(_)) {
             return None;
         }
-        let target = Duration::from_millis(u64::try_from(position_ms).unwrap_or(0))
-            .min(self.engine.duration());
-        if self.phase == Phase::Ended {
-            if target == self.engine.duration() {
-                return None;
+        let wanted = Duration::from_millis(u64::try_from(position_ms).unwrap_or(0));
+        if self.phase == Phase::Broken {
+            return self.seek_without_stream(wanted).then(|| self.commit());
+        }
+        let target = wanted.min(self.engine.duration());
+        let unchanged = if self.phase == Phase::Ended {
+            target == self.engine.duration()
+        } else {
+            millis(target) == millis(self.engine.position())
+        };
+        if unchanged {
+            return None;
+        }
+        if self.expired() {
+            if self.phase == Phase::Ended {
+                self.set_playing(false);
             }
+            self.replace_expired(target);
+        } else if self.phase == Phase::Ended {
             // The engine let go of it at the end: open it again there.
             self.load(target, false);
-        } else if millis(target) == millis(self.engine.position()) {
-            return None;
         } else {
             self.engine.seek(target);
+            self.watch_from_now();
         }
         Some(self.commit())
     }
 
     pub fn seek_by(&mut self, delta_ms: i64) -> Option<PlayerState> {
-        let position = i64::from(millis(self.engine.position()));
+        let position = i64::from(millis(self.position()));
         self.seek(position.saturating_add(delta_ms))
     }
 
@@ -373,6 +429,10 @@ impl<E: Engine> Player<E> {
                     return None;
                 }
                 self.phase = Phase::Open;
+                if let Some(direct) = &mut self.direct {
+                    direct.recovery.reconnecting = false;
+                }
+                self.watch_from_now();
                 Some(PlayerEvent::Changed(self.commit()))
             }
             EngineEvent::Duration => {
@@ -384,6 +444,7 @@ impl<E: Engine> Player<E> {
                 Some(PlayerEvent::Changed(self.commit()))
             }
             EngineEvent::Progress => {
+                self.watch_progress();
                 let position = self.engine.position();
                 if self.phase != Phase::Open
                     || !self.playing
@@ -401,7 +462,9 @@ impl<E: Engine> Player<E> {
                 if self.phase == Phase::Ended {
                     return None;
                 }
-                if self.direct.is_some() {
+                if self.recoverable() && self.ended_early() {
+                    self.drop_failed(self.reached());
+                } else if self.direct.is_some() {
                     // Real audio stops here. Nothing advances by itself.
                     self.set_playing(false);
                     self.phase = Phase::Ended;
@@ -414,8 +477,16 @@ impl<E: Engine> Player<E> {
                 Some(PlayerEvent::Changed(self.commit()))
             }
             EngineEvent::Failed => {
-                self.set_playing(false);
-                self.phase = self.failure(EngineError::Unplayable);
+                // A stream that has ended needs nothing more.
+                if self.phase == Phase::Ended && self.recoverable() {
+                    return None;
+                }
+                if self.recoverable() {
+                    self.drop_failed(self.reached());
+                } else {
+                    self.set_playing(false);
+                    self.phase = self.failure(EngineError::Unplayable);
+                }
                 Some(PlayerEvent::Changed(self.commit()))
             }
         }
@@ -426,8 +497,11 @@ impl<E: Engine> Player<E> {
     /// Marks a change and describes the result.
     fn commit(&mut self) -> PlayerState {
         self.revision += 1;
-        self.reported_second = self.engine.position().as_secs();
-        self.reported_duration_ms = millis(self.engine.duration());
+        self.reported_second = self.position().as_secs();
+        self.reported_duration_ms = millis(self.duration());
+        if let Some(wake) = &self.wake {
+            wake();
+        }
         self.state()
     }
 
@@ -436,8 +510,29 @@ impl<E: Engine> Player<E> {
     }
 
     fn set_playing(&mut self, playing: bool) {
+        // A resumed stream gets its full time to move on.
+        if playing && !self.playing {
+            self.watch_from_now();
+        }
         self.playing = playing;
         self.engine.set_playing(playing);
+    }
+
+    /// Where playback is, also while there is no stream to ask.
+    fn position(&self) -> Duration {
+        match &self.direct {
+            Some(direct) if direct.media.is_none() => direct.recovery.resume_at,
+            _ => self.engine.position(),
+        }
+    }
+
+    /// The length, as last known while the engine does not say.
+    fn duration(&self) -> Duration {
+        let known = self.engine.duration();
+        match &self.direct {
+            Some(direct) if known.is_zero() => direct.recovery.duration,
+            _ => known,
+        }
     }
 
     /// The real audio, or the current Queue entry's sample.
@@ -458,14 +553,23 @@ impl<E: Engine> Player<E> {
     /// Gives the engine the current media at `start`.
     fn load(&mut self, start: Duration, playing: bool) {
         let media = self.current_media();
+        if let Some(direct) = &mut self.direct {
+            // Where it goes on from if it never opens.
+            direct.recovery.resume_at = start;
+        }
         match self.engine.load(&media, start) {
             Ok(()) => {
+                self.watch_from_now();
                 // A sample has nothing to open.
                 self.phase = match media {
                     Media::Sample { .. } => Phase::Open,
                     Media::File(_) | Media::Stream { .. } => Phase::Loading,
                 };
                 self.set_playing(playing);
+            }
+            Err(_) if self.recoverable() => {
+                self.set_playing(playing);
+                self.drop_failed(start);
             }
             Err(error) => {
                 self.set_playing(false);
@@ -1227,6 +1331,7 @@ mod tests {
         Media::Stream {
             url: "https://a.googlevideo.com/x".to_owned(),
             headers: Vec::new(),
+            expires_at: None,
         }
     }
 

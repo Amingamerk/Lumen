@@ -222,6 +222,10 @@ trait Resolver {
 - Wait until the stream's `available_at` time, when yt-dlp reports one, before handing the URL to mpv.
 - Store each URL's expiry. **Pre-resolve the next 1-2 tracks** in the queue before the current one ends so
   there are no gaps. **Re-resolve on HTTP 403 or a stall**, mpv will not do this on its own.
+- Recovery of the current track: a load or playback error, 10 s without progress while playing, or an end
+  more than 5 s early drops the stream and resolves again through the gate, at least 2 s and then 10 s later.
+  After those two attempts it stops with a manual retry and counts one gate failure. An expired URL is
+  replaced before a resume or seek uses it. A debug build started with `--break-url` spoils the first stream.
 - Gapless via mpv `playlist-append` of pre-resolved URLs (a suggestion, to be verified in a spike).
 - YouTube needs PO tokens / SABR handling in some clients. Bundle Deno + yt-dlp-ejs, optionally a token
   provider later, and auto-update yt-dlp.
