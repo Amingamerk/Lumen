@@ -1,26 +1,11 @@
-//! Navigation and sidebar state. Rust owns it; the UI mirrors it through IPC.
+//! Navigation, search and catalog state. Rust owns it; the UI mirrors it
+//! through IPC.
 
 use serde::{Deserialize, Serialize};
 
-/// The service a sidebar playlist comes from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum SourceKind {
-    YouTube,
-    SoundCloud,
-    Spotify,
-}
-
-impl SourceKind {
-    /// The short label shown next to a playlist.
-    pub fn badge(self) -> &'static str {
-        match self {
-            Self::YouTube => "YT",
-            Self::SoundCloud => "SC",
-            Self::Spotify => "SP",
-        }
-    }
-}
+use crate::catalog::{
+    Catalog, CollectionSummary, Library, Playlist, SearchView, Shelf, SourceFilter, SourceKind,
+};
 
 /// A playlist as the sidebar shows it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -31,13 +16,13 @@ pub struct PlaylistSummary {
     pub badge: &'static str,
 }
 
-impl PlaylistSummary {
-    fn new(id: &str, name: &str, source: SourceKind) -> Self {
+impl From<&Playlist> for PlaylistSummary {
+    fn from(playlist: &Playlist) -> Self {
         Self {
-            id: id.to_owned(),
-            name: name.to_owned(),
-            source,
-            badge: source.badge(),
+            id: playlist.id.clone(),
+            name: playlist.name.clone(),
+            source: playlist.source,
+            badge: playlist.source.badge(),
         }
     }
 }
@@ -69,14 +54,22 @@ pub struct AppSnapshot {
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum StateError {
-    #[error("no playlist has the id “{id}”")]
-    UnknownPlaylist { id: String },
+    #[error("no playlist or album has the id “{id}”")]
+    UnknownCollection { id: String },
+}
+
+/// What was last typed and chosen on the Search view.
+#[derive(Debug, Default)]
+struct SearchRequest {
+    query: String,
+    filter: SourceFilter,
 }
 
 #[derive(Debug)]
 pub struct AppState {
     navigation: NavigationState,
-    playlists: Vec<PlaylistSummary>,
+    catalog: Catalog,
+    search: SearchRequest,
 }
 
 impl Default for AppState {
@@ -86,44 +79,31 @@ impl Default for AppState {
                 route: Route::Home,
                 revision: 0,
             },
-            playlists: placeholder_playlists(),
+            catalog: Catalog::default(),
+            search: SearchRequest::default(),
         }
     }
-}
-
-/// Fixed sidebar entries until the SQLite library lands (Milestone 3).
-fn placeholder_playlists() -> Vec<PlaylistSummary> {
-    use SourceKind::{SoundCloud, Spotify, YouTube};
-
-    vec![
-        PlaylistSummary::new("night-shift", "Night shift", YouTube),
-        PlaylistSummary::new("tunnel-mixes", "Tunnel mixes", SoundCloud),
-        PlaylistSummary::new("liked-on-spotify", "Liked on Spotify", Spotify),
-        PlaylistSummary::new("sunday-cooking", "Sunday cooking", YouTube),
-        PlaylistSummary::new("field-recordings", "Field recordings", SoundCloud),
-        PlaylistSummary::new(
-            "long-drive-home",
-            "Songs for the long drive home after a late shift",
-            Spotify,
-        ),
-    ]
 }
 
 impl AppState {
     pub fn snapshot(&self) -> AppSnapshot {
         AppSnapshot {
             navigation: self.navigation.clone(),
-            playlists: self.playlists.clone(),
+            playlists: self
+                .catalog
+                .playlists()
+                .iter()
+                .map(PlaylistSummary::from)
+                .collect(),
         }
     }
 
     /// Switches the main frame to `route`. Returns the new navigation state, or
     /// `None` when that route is already showing.
     pub fn navigate(&mut self, route: Route) -> Result<Option<NavigationState>, StateError> {
-        if let Route::Playlist { id } = &route
-            && !self.playlists.iter().any(|playlist| playlist.id == *id)
-        {
-            return Err(StateError::UnknownPlaylist { id: id.clone() });
+        // The playlist route shows albums too.
+        if let Route::Playlist { id } = &route {
+            self.collection(id)?;
         }
         if route == self.navigation.route {
             return Ok(None);
@@ -133,6 +113,35 @@ impl AppState {
             revision: self.navigation.revision + 1,
         };
         Ok(Some(self.navigation.clone()))
+    }
+
+    pub fn home(&self) -> Vec<Shelf> {
+        self.catalog.home()
+    }
+
+    pub fn library(&self) -> Library {
+        self.catalog.library()
+    }
+
+    /// The playlist or album a playlist route points at.
+    pub fn collection(&self, id: &str) -> Result<CollectionSummary, StateError> {
+        self.catalog
+            .collection(id)
+            .ok_or_else(|| StateError::UnknownCollection { id: id.to_owned() })
+    }
+
+    /// Runs a search and remembers it for the next visit to the Search view.
+    pub fn search(&mut self, query: &str, filter: SourceFilter) -> SearchView {
+        self.search = SearchRequest {
+            query: query.to_owned(),
+            filter,
+        };
+        self.search_view()
+    }
+
+    /// The remembered search with its results.
+    pub fn search_view(&self) -> SearchView {
+        self.catalog.search(&self.search.query, self.search.filter)
     }
 }
 
@@ -180,13 +189,6 @@ mod tests {
         ids.dedup();
 
         assert_eq!(ids.len(), playlists.len());
-    }
-
-    #[test]
-    fn each_source_has_its_badge() {
-        assert_eq!(SourceKind::YouTube.badge(), "YT");
-        assert_eq!(SourceKind::SoundCloud.badge(), "SC");
-        assert_eq!(SourceKind::Spotify.badge(), "SP");
     }
 
     #[test]
@@ -239,6 +241,98 @@ mod tests {
     }
 
     #[test]
+    fn sidebar_playlists_are_the_catalog_playlists() {
+        let state = AppState::default();
+
+        let sidebar: Vec<(String, String)> = state
+            .snapshot()
+            .playlists
+            .into_iter()
+            .map(|p| (p.id, p.name))
+            .collect();
+        let library: Vec<(String, String)> = state
+            .library()
+            .playlists
+            .into_iter()
+            .map(|c| (c.id, c.title))
+            .collect();
+
+        assert!(!library.is_empty());
+        assert_eq!(sidebar, library);
+    }
+
+    #[test]
+    fn navigates_to_every_collection_in_the_library_and_on_home() {
+        let mut state = AppState::default();
+        let library = state.library();
+        let home = state.home();
+        let ids: Vec<String> = library
+            .playlists
+            .iter()
+            .chain(&library.albums)
+            .chain(home.iter().flat_map(|shelf| &shelf.items))
+            .map(|c| c.id.clone())
+            .collect();
+        assert!(!ids.is_empty());
+
+        for id in ids {
+            state.navigate(playlist_route(&id)).unwrap();
+
+            assert_eq!(state.snapshot().navigation.route, playlist_route(&id));
+            assert_eq!(state.collection(&id).map(|c| c.id), Ok(id));
+        }
+    }
+
+    #[test]
+    fn navigates_to_an_album() {
+        let mut state = AppState::default();
+        let albums = state.library().albums;
+        let album = &albums.first().expect("the library has an album").id;
+
+        let changed = state.navigate(playlist_route(album)).unwrap();
+
+        assert_eq!(changed.map(|n| n.route), Some(playlist_route(album)));
+    }
+
+    #[test]
+    fn rejects_an_unknown_collection_lookup() {
+        assert_eq!(
+            AppState::default().collection("nope"),
+            Err(StateError::UnknownCollection {
+                id: "nope".to_owned()
+            })
+        );
+    }
+
+    #[test]
+    fn starts_with_a_blank_search_of_every_source() {
+        let view = AppState::default().search_view();
+
+        assert_eq!(view.query, "");
+        assert_eq!(view.filter, SourceFilter::All);
+        assert!(!view.tracks.is_empty());
+    }
+
+    #[test]
+    fn remembers_the_last_search() {
+        let mut state = AppState::default();
+
+        let found = state.search("night", SourceFilter::YouTube);
+
+        assert_eq!(found.query, "night");
+        assert_eq!(state.search_view(), found);
+    }
+
+    #[test]
+    fn searching_does_not_navigate() {
+        let mut state = AppState::default();
+
+        state.search("night", SourceFilter::All);
+
+        assert_eq!(state.snapshot().navigation.revision, 0);
+    }
+
+    #[test]
     fn rejects_an_unknown_playlist_and_stays_put() {
         let mut state = AppState::default();
         state.navigate(Route::Library).unwrap();
@@ -247,7 +341,7 @@ mod tests {
 
         assert_eq!(
             result,
-            Err(StateError::UnknownPlaylist {
+            Err(StateError::UnknownCollection {
                 id: "nope".to_owned()
             })
         );

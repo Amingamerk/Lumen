@@ -1,10 +1,11 @@
 //! Tauri commands in, events out. No business logic lives here.
 
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Runtime, State};
 
+use crate::catalog::{CollectionSummary, Library, SearchView, Shelf, SourceFilter};
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
 
 /// Event sent after the route changes. Mirrored in `src/lib/ipc.ts`.
@@ -38,6 +39,11 @@ impl<R: Runtime> EventSink for AppHandle<R> {
     }
 }
 
+/// A panic elsewhere must not take the whole UI down with a poisoned lock.
+fn lock(state: &SharedState) -> MutexGuard<'_, AppState> {
+    state.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 /// Applies a route change and announces it if anything changed.
 fn navigate_and_notify(
     state: &SharedState,
@@ -45,10 +51,7 @@ fn navigate_and_notify(
     sink: &impl EventSink,
 ) -> Result<(), IpcError> {
     // The lock is released before the event goes out. The revision keeps order.
-    let changed = state
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .navigate(route)?;
+    let changed = lock(state).navigate(route)?;
     if let Some(navigation) = changed {
         sink.navigation_changed(&navigation)?;
     }
@@ -57,10 +60,7 @@ fn navigate_and_notify(
 
 #[tauri::command]
 pub fn get_app_state(state: State<'_, SharedState>) -> AppSnapshot {
-    state
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .snapshot()
+    lock(&state).snapshot()
 }
 
 #[tauri::command]
@@ -70,6 +70,38 @@ pub fn navigate<R: Runtime>(
     route: Route,
 ) -> Result<(), IpcError> {
     navigate_and_notify(&state, route, &app)
+}
+
+#[tauri::command]
+pub fn get_home(state: State<'_, SharedState>) -> Vec<Shelf> {
+    lock(&state).home()
+}
+
+#[tauri::command]
+pub fn get_library(state: State<'_, SharedState>) -> Library {
+    lock(&state).library()
+}
+
+#[tauri::command]
+pub fn get_collection(
+    state: State<'_, SharedState>,
+    id: String,
+) -> Result<CollectionSummary, IpcError> {
+    Ok(lock(&state).collection(&id)?)
+}
+
+#[tauri::command]
+pub fn get_search(state: State<'_, SharedState>) -> SearchView {
+    lock(&state).search_view()
+}
+
+#[tauri::command]
+pub fn search_catalog(
+    state: State<'_, SharedState>,
+    query: String,
+    filter: SourceFilter,
+) -> SearchView {
+    lock(&state).search(&query, filter)
 }
 
 #[cfg(test)]
@@ -135,13 +167,13 @@ mod tests {
 
     #[test]
     fn errors_serialize_as_their_message() {
-        let error = IpcError::from(StateError::UnknownPlaylist {
+        let error = IpcError::from(StateError::UnknownCollection {
             id: "nope".to_owned(),
         });
 
         assert_eq!(
             serde_json::to_value(&error).unwrap(),
-            json!("no playlist has the id “nope”")
+            json!("no playlist or album has the id “nope”")
         );
     }
 
