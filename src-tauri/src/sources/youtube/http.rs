@@ -76,6 +76,8 @@ impl HttpTransport {
             // The web-client headers are set per request, so add none here.
             .referer(false)
             .dns_resolver(Resolver(self.lookup))
+            // The system proxy stays on (no `no_proxy()`), so requests leave
+            // by the same path as the login.
             .build()
             .map_err(|_| TransportError::Other)?;
         Ok(self.client.get_or_init(|| client))
@@ -220,6 +222,22 @@ mod tests {
 
         assert!(printed.contains("302"), "{printed}");
         assert!(!printed.contains("marker"), "{printed}");
+    }
+
+    #[test]
+    fn the_client_follows_the_system_proxy_like_the_login_window() {
+        let transport = HttpTransport::default();
+
+        // `no_proxy()` would leave the client without any proxy matcher.
+        let client = format!("{:?}", transport.client().unwrap());
+        assert!(client.contains("proxies"), "{client}");
+        // Without this feature reqwest only reads the proxy environment
+        // variables, not the Windows settings.
+        let reqwest = include_str!("../../../Cargo.toml")
+            .lines()
+            .find(|line| line.starts_with("reqwest = "))
+            .unwrap();
+        assert!(reqwest.contains("\"system-proxy\""), "{reqwest}");
     }
 
     #[tokio::test]

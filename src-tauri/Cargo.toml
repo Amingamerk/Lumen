@@ -21,8 +21,9 @@ httpdate = "1"
 keyring-core = "1"
 # libmpv-2.dll comes from scripts/fetch-pinned-binaries.ps1; build.rs links it.
 libmpv2 = { version = "7", default-features = false }
-# The Windows TLS stack; no cookie store, system proxy or retries of its own.
-reqwest = { version = "0.13", default-features = false, features = ["gzip", "http2", "native-tls"] }
+# The Windows TLS stack, and the Windows system proxy as the login window uses it;
+# no cookie store or retries of its own.
+reqwest = { version = "0.13", default-features = false, features = ["gzip", "http2", "native-tls", "system-proxy"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `SAPISIDHASH`, the web client's request signature.
