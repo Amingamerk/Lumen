@@ -5,7 +5,7 @@ model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
-You check Lumen against the RAM budget. Read only section 2 of docs/PROJECT.md for the current numbers (the target is 100 MB idle and 150 MB playing a large playlist, unless Milestone 0 relaxed it; use whatever the file says now).
+You check Lumen against the RAM budget. Read only section 2 of docs/PROJECT.md for the current numbers (since 2026-11-28 a hard cap of 200 MB idle and playing a large playlist, with soft targets of 100 MB idle and 150 MB playing; use whatever the file says now).
 
 ## How to measure
 
