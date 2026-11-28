@@ -20,12 +20,13 @@ mod simulated;
 
 pub use engine::{Engine, EngineError, EngineEvent, Media};
 #[cfg(test)]
-pub use fake::FakeEngine;
+pub use fake::{FakeEngine, FakeTracks};
 pub use local::{file_media, play_file_arg};
 pub use mpv::{MpvEngine, MpvEvents, MpvShutdown};
-pub use player::{Fetch, NoStream, Player, PlayerError};
+pub use player::{Fetch, NoStream, Player, PlayerError, TrackLookup};
 #[cfg(test)]
 pub use simulated::{SimulatedEngine, SystemClock};
 pub use state::{
     NowPlaying, PlaybackStatus, PlayerEvent, PlayerPosition, PlayerState, QueueItem, QueueSlice,
+    Skipped,
 };

@@ -49,6 +49,9 @@ pub struct NoStream {
     pub reason: String,
     /// Whether asking again could help.
     pub retry: bool,
+    /// Whether the song is the problem, not the account or the machine. Then a
+    /// queued song is passed over.
+    pub skip: bool,
 }
 
 /// A fetch that is planned or in progress.
@@ -153,15 +156,24 @@ impl<E: Engine> Player<E> {
                 let (start, playing) = (direct.recovery.resume_at, self.playing);
                 self.load(start, playing);
             }
-            Err(no) if no.retry => {
-                direct.recovery.expired = false;
-                direct.recovery.failed_at = now;
-                // Paused, it waits to be resumed.
-                if self.playing {
-                    self.plan_attempt(Some(&no.reason));
+            Err(no) => {
+                if no.retry {
+                    direct.recovery.expired = false;
+                    direct.recovery.failed_at = now;
+                    // Paused, it waits to be resumed.
+                    if self.playing {
+                        self.plan_attempt(Some(&no.reason));
+                    }
+                } else {
+                    self.stop_recovering(Some(&no.reason));
+                }
+                // A queued song that gave up is passed over, unless the account
+                // or the machine is why.
+                let queued = self.direct.as_ref().is_some_and(|d| d.queued);
+                if no.skip && queued && matches!(self.phase, Phase::Failed(_)) {
+                    self.skip_entry(&no.reason);
                 }
             }
-            Err(no) => self.stop_recovering(Some(&no.reason)),
         }
         Some(self.commit())
     }
@@ -209,6 +221,18 @@ impl<E: Engine> Player<E> {
         recovery.duration = duration;
         let state = self.commit();
         Some((video, key, state))
+    }
+
+    /// Asks again for the stream of the queued song that gave up, going on where
+    /// it stopped.
+    pub(super) fn retry_entry(&mut self) {
+        if let Some(direct) = &mut self.direct {
+            direct.recovery.attempts = 0;
+            direct.recovery.expired = false;
+        }
+        self.phase = Phase::Loading;
+        self.set_playing(true);
+        self.plan_replacement();
     }
 
     /// Whether what is loaded, or was, is a live stream that can be resolved
@@ -366,7 +390,7 @@ impl<E: Engine> Player<E> {
         }
     }
 
-    fn plan_replacement(&mut self) {
+    pub(super) fn plan_replacement(&mut self) {
         let now = self.clock.monotonic();
         self.plan(now, false);
     }
@@ -403,7 +427,7 @@ impl<E: Engine> Player<E> {
     }
 
     /// Ends in the error state, from which only a retry goes on.
-    fn stop_recovering(&mut self, reason: Option<&str>) {
+    pub(super) fn stop_recovering(&mut self, reason: Option<&str>) {
         self.set_playing(false);
         let failed = match (reason, self.direct.as_ref()) {
             (Some(reason), Some(direct)) => Phase::Failed(format!(

@@ -121,7 +121,7 @@
           labelledby="playlist-tracks"
           onplay={(position) => {
             const row = tracks.row(position);
-            if (row) void library.play(row.id);
+            if (row) void library.play({ kind: 'playlist', id }, position, row.id);
           }}
           onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}
           onremove={(position, row) => void playlists.removeEntry(id, position, row.id)}

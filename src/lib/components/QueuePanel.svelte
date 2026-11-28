@@ -1,7 +1,7 @@
 <!--
-  The Queue: what is playing, then what comes next. Only the rows near the view are
-  drawn, and Rust is asked for just those. Rows move by dragging their handle, or
-  with the arrow keys on it.
+  The Queue: what is playing, then what comes next, or what played before. Only the
+  rows near the view are drawn, and Rust is asked for just those. Rows that come next
+  move by dragging their handle, or with the arrow keys on it.
 -->
 <script lang="ts">
   import DotsSixVerticalIcon from 'phosphor-svelte/lib/DotsSixVerticalIcon';
@@ -31,8 +31,14 @@
   const STEP = 8;
 
   const current = $derived(player.state?.current ?? null);
-  const total = $derived(player.state?.upcoming ?? 0);
+  const upcoming = $derived(player.state?.upcoming ?? 0);
+  const playedCount = $derived(player.state?.history ?? 0);
   const queueRevision = $derived(player.state?.queueRevision);
+
+  let showing = $state<'next' | 'history'>('next');
+  // With nothing played, there is no history to show.
+  const view = $derived(showing === 'history' && playedCount > 0 ? 'history' : 'next');
+  const total = $derived(view === 'history' ? playedCount : upcoming);
 
   let scrolled = $state.raw(0);
   let viewport = $state.raw(0);
@@ -49,16 +55,19 @@
   const limit = $derived(range.end - offset);
 
   $effect(() => {
-    if (queueRevision !== undefined && limit > 0) void queue.load(offset, limit);
+    if (queueRevision === undefined || limit <= 0) return;
+    if (view === 'history') void queue.loadPlayed(offset, limit);
+    else void queue.load(offset, limit);
   });
 
   function itemAt(position: number): QueueItem | undefined {
-    const slice = queue.slice;
+    const slice = view === 'history' ? queue.played : queue.slice;
     return slice?.items[position - slice.offset];
   }
 
   /** Where the Recommender's picks start, and where the queue takes over again. */
   function headingAt(position: number): string | null {
+    if (view === 'history') return null;
     const item = itemAt(position);
     if (!item) return null;
     const before = position === 0 ? undefined : itemAt(position - 1);
@@ -213,7 +222,21 @@
     </section>
   {/if}
 
-  <h3 class="queue-label">Next up</h3>
+  <div class="flex items-center justify-between gap-3">
+    <h3 class="queue-label">{view === 'history' ? 'History' : 'Next up'}</h3>
+    {#if playedCount > 0}
+      <button
+        type="button"
+        class="chip"
+        onclick={(event) => {
+          releasePointerFocus(event);
+          showing = view === 'history' ? 'next' : 'history';
+        }}
+      >
+        {view === 'history' ? 'Show next up' : 'Show history'}
+      </button>
+    {/if}
+  </div>
   {#if total === 0}
     <p class="text-ink-faint">Nothing up next</p>
   {:else}
@@ -246,6 +269,7 @@
                 <p class="truncate font-semibold" title={item.track.title}>{item.track.title}</p>
                 <p class="text-ink-faint truncate text-[12px]" title={artists}>{artists}</p>
               </div>
+              {#if view === 'next'}
               <button
                 type="button"
                 class="queue-handle"
@@ -257,6 +281,7 @@
               >
                 <DotsSixVerticalIcon size={18} weight="bold" aria-hidden="true" />
               </button>
+              {/if}
             </li>
           {/if}
         {/each}

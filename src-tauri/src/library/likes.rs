@@ -71,6 +71,20 @@ impl Library {
         Ok(liked)
     }
 
+    /// Every liked song by id, the newest like first.
+    pub fn liked_list(&self) -> Result<Vec<Uuid>, LibraryError> {
+        let conn = self.conn();
+        let mut ask =
+            conn.prepare_cached("SELECT track_id FROM likes ORDER BY liked_at DESC, rowid DESC")?;
+        let ids = ask
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids
+            .iter()
+            .filter_map(|id| Uuid::parse_str(id).ok())
+            .collect())
+    }
+
     /// Up to `limit` liked songs from `offset`, the newest like first.
     pub fn liked_slice(&self, offset: usize, limit: usize) -> Result<TrackSlice, LibraryError> {
         let conn = self.conn();
@@ -197,5 +211,19 @@ mod tests {
         assert_eq!(titles, ["Song 4", "Song 3"]);
         assert!(library.liked_slice(9, 5).unwrap().tracks.is_empty());
         assert_eq!(library.liked_slice(0, 1_000_000).unwrap().tracks.len(), 5);
+    }
+
+    #[test]
+    fn the_liked_list_is_every_song_newest_like_first() {
+        let (library, clock) = crate::library::testing::memory();
+        for n in [2, 1, 3] {
+            library.like(&song(n)).unwrap();
+            clock.advance(std::time::Duration::from_secs(1));
+        }
+
+        assert_eq!(
+            library.liked_list().unwrap(),
+            [song(3).id, song(1).id, song(2).id]
+        );
     }
 }

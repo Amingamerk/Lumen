@@ -10,14 +10,15 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::account::AccountHandle;
+use super::library::blocking;
 use super::playback::{AppResolver, play_stream, resolve_in_background};
 use super::{EventSink, IpcError, SharedState, lock, recovery};
 use crate::audio::{
     Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError,
-    PlayerEvent, PlayerState, QueueSlice, file_media,
+    PlayerEvent, PlayerState, QueueSlice, TrackLookup, file_media,
 };
 use crate::catalog::{Catalog, Track, TrackRow};
-use crate::library::PlayLog;
+use crate::library::{Library, PlayLog};
 use crate::recs::StaticRecommender;
 use crate::state::SearchPick;
 
@@ -57,6 +58,15 @@ impl PlayerHandle {
     }
 }
 
+/// The library's Tracks, found by id for the Queue.
+struct LibraryTracks(Arc<Library>);
+
+impl TrackLookup for LibraryTracks {
+    fn track(&self, id: Uuid) -> Option<Track> {
+        self.0.track(id).ok().flatten()
+    }
+}
+
 /// A song waiting for its stream. It outlives the command that chose it.
 pub struct Pending {
     player: Arc<Mutex<AppPlayer>>,
@@ -76,6 +86,16 @@ impl Pending {
 }
 
 impl PlayerHandle {
+    /// Queues the Tracks by id, plays the one at `start` and announces it.
+    pub fn play_list(
+        &self,
+        sink: &impl EventSink,
+        tracks: Vec<Uuid>,
+        start: usize,
+    ) -> Result<(), IpcError> {
+        command(self, sink, |p| p.play_list(tracks, start).map(Some))
+    }
+
     /// Shows `row` as loading and announces it.
     pub fn begin_stream(
         &self,
@@ -153,6 +173,9 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::R
     let handle = PlayerHandle::new(catalog, Box::new(engine));
     if let Some(writer) = super::library::play_log(app) {
         handle.log_to(Box::new(writer));
+    }
+    if let Some(library) = super::library::open_shared(app) {
+        lock(&handle.player).set_tracks(Box::new(LibraryTracks(library)));
     }
     if let Some(path) = file {
         handle.play_file(path);
@@ -339,10 +362,28 @@ pub fn change_volume<R: Runtime>(
     command(&player, &app, |p| Ok(p.change_volume(delta)))
 }
 
-/// The visible window of the upcoming entries.
+/// The visible window of the upcoming entries. Their rows come from the library,
+/// so this waits on a blocking thread.
 #[tauri::command]
-pub fn get_queue(player: State<'_, PlayerHandle>, offset: usize, limit: usize) -> QueueSlice {
-    lock(&player.player).queue_slice(offset, limit)
+pub async fn get_queue(
+    player: State<'_, PlayerHandle>,
+    offset: usize,
+    limit: usize,
+) -> Result<QueueSlice, IpcError> {
+    let player = Arc::clone(&player.player);
+    blocking(move || Ok(lock(&player).queue_slice(offset, limit))).await
+}
+
+/// The visible window of the entries played before the current one, the latest
+/// first.
+#[tauri::command]
+pub async fn get_queue_history(
+    player: State<'_, PlayerHandle>,
+    offset: usize,
+    limit: usize,
+) -> Result<QueueSlice, IpcError> {
+    let player = Arc::clone(&player.player);
+    blocking(move || Ok(lock(&player).history_slice(offset, limit))).await
 }
 
 #[tauri::command]
@@ -362,8 +403,8 @@ mod tests {
     use super::super::tests::RecordingSink;
     use super::*;
     use crate::audio::{
-        FakeEngine, NowPlaying, PlaybackStatus, PlayerPosition, QueueItem, SimulatedEngine,
-        SystemClock,
+        FakeEngine, FakeTracks, NowPlaying, PlaybackStatus, PlayerPosition, QueueItem,
+        SimulatedEngine, Skipped, SystemClock,
     };
     use crate::catalog::{SourceKind, SourceTag};
 
@@ -453,6 +494,25 @@ mod tests {
     }
 
     #[test]
+    fn playing_a_list_announces_the_chosen_song_once_and_a_bad_start_stays_quiet() {
+        let engine = FakeEngine::default();
+        let handle = PlayerHandle::new(Arc::new(Catalog::empty()), Box::new(engine.clone()));
+        lock(&handle.player).set_tracks(Box::new(FakeTracks::of(3)));
+        let sink = RecordingSink::default();
+
+        handle.play_list(&sink, FakeTracks::ids(3), 1).unwrap();
+        let refused = handle.play_list(&sink, FakeTracks::ids(3), 3);
+
+        assert!(refused.is_err());
+        let states = sink.states.borrow();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].current.as_ref().unwrap().track.title, "Track 2");
+        assert_eq!((states[0].history, states[0].upcoming), (1, 1));
+        assert_eq!(states[0].status, PlaybackStatus::Loading);
+        assert!(engine.fake().loads.is_empty());
+    }
+
+    #[test]
     fn a_launch_file_is_loaded_and_the_engine_is_relayed() {
         let (handle, engine) = real();
         let sink = RecordingSink::default();
@@ -520,8 +580,13 @@ mod tests {
             can_next: true,
             can_previous: true,
             upcoming: 5,
+            history: 2,
             queue_revision: 3,
             error: None,
+            skipped: Some(Box::new(Skipped {
+                key: 1,
+                message: "Lumen skipped “Harbor Lights”.".to_owned(),
+            })),
         };
 
         assert_eq!(
@@ -536,8 +601,10 @@ mod tests {
                 "canNext": true,
                 "canPrevious": true,
                 "upcoming": 5,
+                "history": 2,
                 "queueRevision": 3,
-                "error": null
+                "error": null,
+                "skipped": { "key": 1, "message": "Lumen skipped “Harbor Lights”." }
             })
         );
         assert_eq!(

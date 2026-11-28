@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::{
     Engine, EngineError, EngineEvent, Media, NowPlaying, PlaybackStatus, PlayerEvent,
-    PlayerPosition, PlayerState, QueueItem, QueueSlice,
+    PlayerPosition, PlayerState, QueueItem, QueueSlice, Skipped,
 };
 use crate::catalog::{Catalog, MAX_SLICE, TrackRow};
 use crate::library::{EndReason, NoLog, PlayLog};
@@ -15,9 +15,12 @@ use crate::queue::{Entry, Queue, QueueError};
 use crate::recs::{RECENT_HISTORY, Recommender};
 use crate::sources::youtube::SystemClock;
 
+mod entries;
 mod history;
 mod recovery;
 
+use entries::NoTracks;
+pub use entries::TrackLookup;
 use recovery::PlayerClock;
 use recovery::Recovery;
 pub use recovery::{Fetch, NoStream};
@@ -57,9 +60,11 @@ enum Phase {
     Failed(String),
 }
 
-/// Real audio, which stands outside the Queue until Milestone 4.
+/// Real audio: the song of the current Queue entry, or one that stands outside it.
 struct Direct {
     key: u32,
+    /// Whether it belongs to the current Queue entry. Then its end moves on.
+    queued: bool,
     /// `None` while its stream is being resolved, or if that failed.
     media: Option<Media>,
     /// The YouTube video a resolved stream is of.
@@ -73,8 +78,15 @@ pub struct Player<E: Engine> {
     catalog: Arc<Catalog>,
     recommender: Box<dyn Recommender>,
     queue: Queue,
-    /// Set while real audio is loaded. The Queue is empty then.
+    /// Where the Queue's library Tracks are found by id.
+    tracks: Box<dyn TrackLookup>,
+    /// Set while real audio is loaded: of the current Queue entry, or by itself
+    /// with the Queue empty.
     direct: Option<Direct>,
+    /// The latest queued song that was passed over.
+    skipped: Option<Box<Skipped>>,
+    /// Songs passed over one after the other.
+    skips: usize,
     phase: Phase,
     /// Whether it should be playing, also while still loading.
     playing: bool,
@@ -112,7 +124,10 @@ impl<E: Engine> Player<E> {
             catalog,
             recommender,
             queue: Queue::default(),
+            tracks: Box::new(NoTracks),
             direct: None,
+            skipped: None,
+            skips: 0,
             phase: Phase::Open,
             playing: false,
             volume: DEFAULT_VOLUME,
@@ -147,10 +162,11 @@ impl<E: Engine> Player<E> {
                 if duration_ms > 0 {
                     track.duration_ms = duration_ms;
                 }
+                let autoplay = direct.queued && self.queue.current().is_some_and(|e| e.autoplay);
                 Some(NowPlaying {
                     key: direct.key,
                     track,
-                    autoplay: false,
+                    autoplay,
                 })
             }
             None => queued,
@@ -185,11 +201,13 @@ impl<E: Engine> Player<E> {
             can_next: queued && (upcoming > 0 || self.recommendation().is_some()),
             can_previous: queued,
             upcoming,
+            history: self.queue.history().len(),
             queue_revision: self.queue.revision(),
             error: match &self.phase {
                 Phase::Failed(message) => Some(message.clone()),
                 _ => None,
             },
+            skipped: self.skipped.clone(),
             current,
         }
     }
@@ -198,8 +216,10 @@ impl<E: Engine> Player<E> {
     /// before or after it. A failure to load it shows in the state.
     pub fn play_media(&mut self, media: Media, row: TrackRow) -> PlayerState {
         let key = self.queue.clear();
+        self.skipped = None;
         self.direct = Some(Direct {
             key,
+            queued: false,
             media: Some(media),
             video: None,
             row,
@@ -213,9 +233,11 @@ impl<E: Engine> Player<E> {
     /// is let go of, and the Queue is emptied. The key names this attempt.
     pub fn begin_stream(&mut self, video: String, row: TrackRow) -> (u32, PlayerState) {
         let key = self.queue.clear();
+        self.skipped = None;
         self.engine.stop();
         self.direct = Some(Direct {
             key,
+            queued: false,
             media: None,
             video: Some(video),
             row,
@@ -264,7 +286,7 @@ impl<E: Engine> Player<E> {
 
     /// The stream that failed to resolve or to play, to ask for again.
     pub fn failed_stream(&self) -> Option<(String, TrackRow)> {
-        let direct = self.direct.as_ref()?;
+        let direct = self.direct.as_ref().filter(|direct| !direct.queued)?;
         match self.phase {
             Phase::Failed(_) => Some((direct.video.clone()?, direct.row.clone())),
             _ => None,
@@ -294,6 +316,7 @@ impl<E: Engine> Player<E> {
             return Err(PlayerError::SampleTrack);
         }
         self.queue.replace(tracks, start)?;
+        self.skipped = None;
         self.direct = None;
         self.play_current();
         Ok(self.commit())
@@ -303,7 +326,14 @@ impl<E: Engine> Player<E> {
     pub fn toggle_play(&mut self) -> Option<PlayerState> {
         // A stream that never arrived has nothing to play: it is asked for again.
         let unresolved = self.direct.as_ref().is_some_and(|d| d.media.is_none());
-        if !self.has_current() || (unresolved && matches!(self.phase, Phase::Failed(_))) {
+        let failed = matches!(self.phase, Phase::Failed(_));
+        if self.has_current() && unresolved && failed && self.is_queued() {
+            // A queued song asks for its own stream again.
+            self.skips = 0;
+            self.retry_entry();
+            return Some(self.commit());
+        }
+        if !self.has_current() || (unresolved && failed) {
             return None;
         }
         let restarts = matches!(self.phase, Phase::Ended | Phase::Failed(_));
@@ -332,18 +362,24 @@ impl<E: Engine> Player<E> {
             return None;
         }
         self.end_reason = Some(EndReason::Skipped);
-        self.play_current();
+        self.skips = 0;
+        self.start_entry();
         Some(self.commit())
     }
 
     pub fn previous_track(&mut self) -> Option<PlayerState> {
         self.queue.current()?;
+        self.skips = 0;
         // On the first entry there is nowhere back to go, so it restarts.
         if self.engine.position() <= RESTART_THRESHOLD {
             self.queue.retreat();
             self.end_reason = Some(EndReason::Skipped);
+            self.start_entry();
+        } else if self.direct.as_ref().is_some_and(|d| d.media.is_none()) {
+            self.start_entry();
+        } else {
+            self.play_current();
         }
-        self.play_current();
         Some(self.commit())
     }
 
@@ -445,6 +481,8 @@ impl<E: Engine> Player<E> {
                     return None;
                 }
                 self.phase = Phase::Open;
+                self.skips = 0;
+                self.skipped = None;
                 if let Some(direct) = &mut self.direct {
                     direct.recovery.reconnecting = false;
                 }
@@ -480,14 +518,19 @@ impl<E: Engine> Player<E> {
                 }
                 if self.recoverable() && self.ended_early() {
                     self.drop_failed(self.reached());
-                } else if self.direct.is_some() {
+                } else if self.direct.is_some() && !self.is_queued() {
                     self.end_listen(EndReason::Finished);
-                    // Real audio stops here. Nothing advances by itself.
+                    // Real audio by itself stops here. Nothing advances.
                     self.set_playing(false);
                     self.phase = Phase::Ended;
                 } else if self.advance() {
                     self.end_listen(EndReason::Finished);
-                    self.play_current();
+                    self.start_entry();
+                } else if self.is_queued() {
+                    self.end_listen(EndReason::Finished);
+                    // The Queue is over: stay on the last song, ready to replay it.
+                    self.set_playing(false);
+                    self.phase = Phase::Ended;
                 } else {
                     self.end_listen(EndReason::Finished);
                     // Nothing to go on with: stay here, ready to play it again.
@@ -523,6 +566,11 @@ impl<E: Engine> Player<E> {
             wake();
         }
         self.state()
+    }
+
+    /// Whether real audio is that of the current Queue entry.
+    fn is_queued(&self) -> bool {
+        self.direct.as_ref().is_some_and(|direct| direct.queued)
     }
 
     fn has_current(&self) -> bool {
@@ -658,13 +706,13 @@ impl<E: Engine> Player<E> {
         let upcoming: Vec<Uuid> = self.queue.upcoming().iter().map(|e| e.track).collect();
         self.recommender
             .recommend(&recent, current.track, &upcoming)
-            .filter(|id| self.catalog.track(*id).is_some())
+            .filter(|id| self.find(*id).is_some())
     }
 
     /// An entry's key, row and autoplay mark.
     fn row(&self, entry: &Entry) -> Option<(u32, TrackRow, bool)> {
-        let track = self.catalog.track(entry.track)?;
-        Some((entry.key, TrackRow::from(track), entry.autoplay))
+        let track = self.find(entry.track)?;
+        Some((entry.key, TrackRow::from(&track), entry.autoplay))
     }
 }
 

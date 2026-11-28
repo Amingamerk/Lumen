@@ -136,6 +136,22 @@ impl Library {
         played_count(&self.conn())
     }
 
+    /// Every song played by id, the one played last first, each once.
+    pub fn recent_list(&self) -> Result<Vec<Uuid>, LibraryError> {
+        let conn = self.conn();
+        let mut ask = conn.prepare_cached(
+            "SELECT track_id FROM history GROUP BY track_id
+             ORDER BY MAX(started_at) DESC, MAX(id) DESC",
+        )?;
+        let ids = ask
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids
+            .iter()
+            .filter_map(|id| Uuid::parse_str(id).ok())
+            .collect())
+    }
+
     /// Up to `limit` songs from `offset`, the one played last first. A song
     /// played often is listed once.
     pub fn recent_slice(&self, offset: usize, limit: usize) -> Result<TrackSlice, LibraryError> {
@@ -268,6 +284,10 @@ mod tests {
         let titles: Vec<&str> = slice.tracks.iter().map(|t| t.title.as_str()).collect();
         assert_eq!(titles, ["Song 1", "Song 2", "Song 3"]);
         assert_eq!(slice.total, 3);
+        assert_eq!(
+            library.recent_list().unwrap(),
+            [song(1).id, song(2).id, song(3).id]
+        );
         let tail = library.recent_slice(2, 10).unwrap();
         assert_eq!(tail.tracks.len(), 1);
     }

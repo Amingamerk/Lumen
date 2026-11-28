@@ -49,10 +49,24 @@ pub struct PlayerState {
     pub can_previous: bool,
     /// How many entries come after the current one.
     pub upcoming: usize,
+    /// How many entries came before it.
+    pub history: usize,
     /// Grows when the Queue changes.
     pub queue_revision: u64,
     /// Why playback failed, in words for the user. Set in the error state only.
     pub error: Option<String>,
+    /// The latest queued song that could not be played and was passed over.
+    pub skipped: Option<Box<Skipped>>,
+}
+
+/// A queued song that was skipped because it could not be played.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Skipped {
+    /// The Queue entry that was passed over, so the UI says it once.
+    pub key: u32,
+    /// In words for the user: the title, never where the audio came from.
+    pub message: String,
 }
 
 /// The clock moving on. It belongs to the state with the same revision.

@@ -207,6 +207,22 @@ impl Library {
         Ok(removed > 0)
     }
 
+    /// Every Track of the playlist by id, in its order, repeats included.
+    pub fn playlist_track_ids(&self, id: &str) -> Result<Vec<Uuid>, LibraryError> {
+        let conn = self.conn();
+        require(&conn, id)?;
+        let mut ask = conn.prepare_cached(
+            "SELECT track_id FROM playlist_entries WHERE playlist_id = ?1 ORDER BY position",
+        )?;
+        let ids = ask
+            .query_map([id], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ids
+            .iter()
+            .filter_map(|id| Uuid::parse_str(id).ok())
+            .collect())
+    }
+
     /// Up to `limit` entries from `offset`, in the playlist's order.
     pub fn playlist_slice(
         &self,
@@ -418,5 +434,22 @@ mod tests {
 
         assert_eq!((made.id.as_str(), made.track_count), ("long-haul", 3));
         assert!(library.has_playlist("long-haul").unwrap());
+    }
+
+    #[test]
+    fn a_playlist_lists_every_track_in_order_repeats_included() {
+        let (library, _) = memory();
+        let playlist = library.create_playlist("Mix").unwrap();
+        for n in [3, 1, 3, 2] {
+            library.add_to_playlist(&playlist.id, &song(n)).unwrap();
+        }
+
+        let ids = library.playlist_track_ids(&playlist.id).unwrap();
+
+        assert_eq!(ids, [song(3).id, song(1).id, song(3).id, song(2).id]);
+        assert!(matches!(
+            library.playlist_track_ids("nope"),
+            Err(LibraryError::NoPlaylist { .. })
+        ));
     }
 }

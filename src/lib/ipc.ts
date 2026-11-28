@@ -155,9 +155,20 @@ export interface PlayerState {
   canPrevious: boolean;
   /** How many entries come after the current one. */
   upcoming: number;
+  /** How many entries came before it. */
+  history: number;
   queueRevision: number;
   /** Why playback failed, in words for the user. Set in the error state only. */
   error: string | null;
+  /** The latest queued song that could not be played and was passed over. */
+  skipped: Skipped | null;
+}
+
+/** A queued song that was skipped because it could not be played. */
+export interface Skipped {
+  /** The Queue entry that was passed over, so it is said once. */
+  key: number;
+  message: string;
 }
 
 /** The clock moving on. It belongs to the state with the same revision. */
@@ -166,13 +177,16 @@ export interface PlayerPosition {
   positionMs: number;
 }
 
+/** A list of the library that plays through the Queue. */
+export type PlayList = { kind: 'playlist'; id: string } | { kind: 'liked' } | { kind: 'recent' };
+
 export interface QueueItem {
   key: number;
   track: TrackRow;
   autoplay: boolean;
 }
 
-/** Some consecutive upcoming entries. */
+/** Some consecutive upcoming entries, or played ones with the latest first. */
 export interface QueueSlice {
   queueRevision: number;
   offset: number;
@@ -272,6 +286,8 @@ export interface Bridge {
   getPlayerState(): Promise<PlayerState>;
   /** Up to `limit` upcoming entries, starting at `offset`. */
   getQueue(offset: number, limit: number): Promise<QueueSlice>;
+  /** Up to `limit` entries played before the current one, the latest first. */
+  getQueueHistory(offset: number, limit: number): Promise<QueueSlice>;
   // The answer to each of these arrives as an event.
   playSearchResult(trackId: string): Promise<void>;
   togglePlay(): Promise<void>;
@@ -296,8 +312,11 @@ export interface Bridge {
   getLikedSlice(offset: number, limit: number): Promise<TrackSlice>;
   /** Up to `limit` played songs from `offset`, the one played last first. */
   getRecentSlice(offset: number, limit: number): Promise<TrackSlice>;
-  /** Plays a song of the library by itself. The answer arrives as an event. */
-  playLibraryTrack(trackId: string): Promise<void>;
+  /**
+   * Queues a whole list and plays from one of its rows, named by its place and
+   * its song. The answer arrives as an event.
+   */
+  playList(list: PlayList, position: number, trackId: string): Promise<void>;
   onLikesChanged(handler: (change: LikesChanged) => void): Promise<() => void>;
   onHistoryChanged(handler: (change: HistoryChanged) => void): Promise<() => void>;
 
@@ -359,6 +378,8 @@ export const tauriBridge: Bridge = {
     listen<NavigationState>(NAVIGATION_CHANGED, (event) => handler(event.payload)),
   getPlayerState: () => invoke<PlayerState>('get_player_state'),
   getQueue: (offset, limit) => invoke<QueueSlice>('get_queue', { offset, limit }),
+  getQueueHistory: (offset, limit) =>
+    invoke<QueueSlice>('get_queue_history', { offset, limit }),
   playSearchResult: (trackId) => invoke('play_search_result', { trackId }),
   togglePlay: () => invoke('toggle_play'),
   nextTrack: () => invoke('next_track'),
@@ -379,7 +400,7 @@ export const tauriBridge: Bridge = {
   getLikedIds: (trackIds) => invoke<string[]>('get_liked_ids', { trackIds }),
   getLikedSlice: (offset, limit) => invoke<TrackSlice>('get_liked_slice', { offset, limit }),
   getRecentSlice: (offset, limit) => invoke<TrackSlice>('get_recent_slice', { offset, limit }),
-  playLibraryTrack: (trackId) => invoke('play_library_track', { trackId }),
+  playList: (list, position, trackId) => invoke('play_list', { list, position, trackId }),
   onLikesChanged: (handler) =>
     listen<LikesChanged>(LIKES_CHANGED, (event) => handler(event.payload)),
   onHistoryChanged: (handler) =>

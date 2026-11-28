@@ -1,6 +1,6 @@
 import { SvelteSet } from 'svelte/reactivity';
 import { describeError } from '../errors';
-import type { Bridge, LibrarySummary, TrackRow, TrackSlice } from '../ipc';
+import type { Bridge, LibrarySummary, PlayList, TrackRow, TrackSlice } from '../ipc';
 import { TrackWindow } from './trackWindow.svelte';
 
 /**
@@ -77,8 +77,9 @@ export class LibraryStore {
     );
   }
 
-  play(trackId: string): Promise<void> {
-    return this.#send(() => this.#bridge.playLibraryTrack(trackId));
+  /** Queues the whole list and plays from one of its rows. */
+  play(list: PlayList, position: number, trackId: string): Promise<void> {
+    return this.#send(() => this.#bridge.playList(list, position, trackId));
   }
 
   /** A new window onto the liked songs. */

@@ -108,6 +108,32 @@ describe('queue panel', () => {
     await waitFor(() => expect(bridge.queueRequests).toHaveLength(before + 1));
   });
 
+  it('lists what played before, the latest first, a window at a time', async () => {
+    const bridge = await open(3);
+    bridge.answerHistory = (offset, limit) => queueSlice(offset, limit, 5000);
+    bridge.emitPlayer(playerState({ revision: 2, upcoming: 3, history: 5000, queueRevision: 2 }));
+
+    await fireEvent.click(await panel().findByRole('button', { name: 'Show history' }));
+
+    expect(await panel().findByRole('heading', { name: 'History' })).toBeTruthy();
+    await waitFor(() => expect(items().length).toBeGreaterThan(0));
+    expect(items().length).toBeLessThan(40);
+    expect(items()[0].getAttribute('aria-setsize')).toBe('5000');
+    expect(panel().queryAllByRole('button', { name: /^Move / })).toHaveLength(0);
+    expect(bridge.historyRequests.length).toBeGreaterThan(0);
+    for (const { limit } of bridge.historyRequests) expect(limit).toBeLessThan(40);
+
+    await fireEvent.click(panel().getByRole('button', { name: 'Show next up' }));
+    expect(await panel().findByRole('heading', { name: 'Next up' })).toBeTruthy();
+    await panel().findByRole('button', { name: 'Move Track 1' });
+  });
+
+  it('offers the history only when there is some', async () => {
+    await open(3);
+
+    expect(panel().queryByRole('button', { name: 'Show history' })).toBeNull();
+  });
+
   it('labels the picks of the recommender', async () => {
     const bridge = fakeBridge();
     bridge.answerQueue = (offset, limit): QueueSlice => {

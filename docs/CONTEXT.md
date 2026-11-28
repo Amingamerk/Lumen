@@ -55,9 +55,12 @@ or `Playlists`). Rust does the searching and remembers the last query and chips.
 
 ### Queue
 The ordered list of what plays. Starting a Collection or a catalog search result replaces it with all of their
-Tracks. A live YouTube Music result empties it and plays by itself. When Next or the end of a track passes the last entry, the **Recommender** appends an **autoplay**
+Tracks. Pressing a row of a local playlist, the liked songs or the recently played replaces it with the whole
+list, by Track id, and plays from that row. Only the current entry is resolved, when its turn comes; one that
+cannot be resolved is skipped with a **Notice** (after five skips in a row, or when the account is why, playback
+stops with the error instead). A live YouTube Music result empties it and plays by itself. When Next or the end of a track passes the last entry, the **Recommender** appends an **autoplay**
 pick and keeps a few upcoming. The history is the entries before the current one. The whole Queue stays in
-Rust; the UI asks for the upcoming rows it shows.
+Rust; the UI asks for the upcoming or history rows it shows, a window at a time.
 
 ### Queue entry
 One place in the Queue: a Track plus a `key` that is unique and never reused, so the same Track twice is two
@@ -75,8 +78,8 @@ happens before the Engine sees Media.
 
 ### Playback status
 `idle`, `loading`, `playing`, `paused`, `ended` or `error`. Real audio (a local file or a live YouTube Music
-song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends. Queued playback of real audio, with
-autoplay on by default, comes in Milestone 4.
+song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends. A
+queued library song moves on to the next entry when it ends, and Next and Previous work.
 
 ### Library, like and history
 The library is the SQLite file `library.db` in the app's local data folder. It keeps each Track it has met once,
@@ -86,8 +89,8 @@ a song is chosen or resolved), with its start time, the time it actually sounded
 `skipped`, `replaced`, `failed`, `exit`, or `interrupted` after a crash). A pause, a seek, a stream recovery or
 a failed load adds no row and no listened time. The Library view's **Recently played** lists each song once, the
 latest play first. A file made by a newer Lumen, or a damaged one, is reported and left as it is; likes and
-history stay off until it is dealt with. It also holds the **kept streams** of the Resolver and the **match** cache. Songs of the library, and the rows of a local playlist, play one at a
-time, as a search result does, until Milestone 4. A run with `--list` opens a **throwaway library** in the system's
+history stay off until it is dealt with. It also holds the **kept streams** of the Resolver and the **match** cache. Pressing a song of the library, or a row of a local playlist, queues
+that whole list and plays from the row. A run with `--list` opens a **throwaway library** in the system's
 temp folder, holding one sample playlist of 5,000 songs, and never reads or writes the user's `library.db`.
 
 ### Notice

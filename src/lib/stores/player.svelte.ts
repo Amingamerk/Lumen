@@ -25,6 +25,8 @@ export class PlayerStore {
   #revision = -1;
   /** The playback failure already given notice of. */
   #failure: string | null = null;
+  /** The skipped song already given notice of. */
+  #skipped: number | null = null;
 
   constructor(bridge: Bridge) {
     this.#bridge = bridge;
@@ -109,6 +111,13 @@ export class PlayerStore {
     this.state = next;
     this.positionMs = next.positionMs;
     this.#noticeFailure(next);
+    this.#noticeSkip(next);
+  }
+
+  #noticeSkip({ skipped }: PlayerState) {
+    if (skipped === null || skipped.key === this.#skipped) return;
+    this.#skipped = skipped.key;
+    this.notice = { message: skipped.message, from: 'playback' };
   }
 
   #noticeFailure({ error, current }: PlayerState) {
