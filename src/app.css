@@ -728,7 +728,7 @@
 
   .track {
     display: grid;
-    grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) 72px 48px;
+    grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) 72px 88px;
     align-items: center;
     column-gap: 16px;
     padding-block: 7px;
@@ -754,6 +754,31 @@
     outline-offset: -2px;
   }
 
+  /* The heart sits over the row's play button, so it can be pressed on its own. */
+  .track-end {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .like {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    color: var(--color-ink-faint);
+    cursor: pointer;
+  }
+
+  .like:hover,
+  .like[aria-pressed='true'] {
+    color: var(--color-lume-hi);
+  }
+
   .track + .track {
     border-top: 1px solid var(--color-edge);
   }
@@ -769,7 +794,7 @@
   /* A narrow list drops the album column first. */
   @container (max-width: 599px) {
     .track {
-      grid-template-columns: 40px minmax(0, 1fr) 72px 48px;
+      grid-template-columns: 40px minmax(0, 1fr) 72px 88px;
     }
 
     .track-album {
@@ -784,7 +809,7 @@
 
   .track-line {
     display: grid;
-    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 56px;
+    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 96px;
     align-items: center;
     column-gap: 16px;
     padding-right: 8px;
@@ -847,7 +872,7 @@
 
   @container (max-width: 599px) {
     .track-line {
-      grid-template-columns: 48px minmax(0, 1fr) 72px 56px;
+      grid-template-columns: 48px minmax(0, 1fr) 72px 96px;
     }
   }
 

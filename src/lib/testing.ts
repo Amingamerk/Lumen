@@ -5,7 +5,10 @@ import type {
   Bridge,
   CollectionDetail,
   CollectionSummary,
+  HistoryChanged,
   Library,
+  LibrarySummary,
+  LikesChanged,
   NavigationState,
   PlayerPosition,
   PlayerState,
@@ -21,6 +24,7 @@ import type {
 import { AccountStore } from './stores/account.svelte';
 import { AppStore } from './stores/app.svelte';
 import { CatalogStore } from './stores/catalog.svelte';
+import { LibraryStore } from './stores/library.svelte';
 import { PlayerStore } from './stores/player.svelte';
 import { QueueStore } from './stores/queue.svelte';
 import { YoutubeStore } from './stores/youtube.svelte';
@@ -30,6 +34,7 @@ export function appStores(bridge: Bridge) {
   return {
     store: new AppStore(bridge),
     catalog: new CatalogStore(bridge),
+    library: new LibraryStore(bridge),
     player: new PlayerStore(bridge),
     queue: new QueueStore(bridge),
     account: new AccountStore(bridge),
@@ -240,6 +245,9 @@ export function fakeBridge({ announce = true } = {}) {
   const accountHandlers = new Set<(status: AccountStatus) => void>();
   const signInFailureHandlers = new Set<(reason: string) => void>();
   const youtubeHandlers = new Set<(status: ServiceStatus) => void>();
+  const likesHandlers = new Set<(change: LikesChanged) => void>();
+  const historyHandlers = new Set<(change: HistoryChanged) => void>();
+  let libraryRevision = 0;
 
   function catalogCall(name: string) {
     bridge.calls.push(name);
@@ -316,6 +324,83 @@ export function fakeBridge({ announce = true } = {}) {
     changeVolume: (delta: number) => command('changeVolume', delta),
     moveQueueEntry: (key: number, before: number | null) => command('moveQueueEntry', key, before),
     toggleQueue: () => command('toggleQueue'),
+    /** The ids of the liked songs, newest like first. */
+    likedIds: [] as string[],
+    /** The rows `getLikedSlice` and `getRecentSlice` answer from. */
+    played: [] as TrackRow[],
+    rowsById: new Map<string, TrackRow>(),
+    problem: null as string | null,
+    likedAsked: [] as string[][],
+    get libraryListeners() {
+      return likesHandlers.size + historyHandlers.size;
+    },
+    emitLikes(change: LikesChanged) {
+      for (const handler of likesHandlers) handler(change);
+    },
+    emitHistory(change: HistoryChanged) {
+      for (const handler of historyHandlers) handler(change);
+    },
+    async getLibrarySummary(): Promise<LibrarySummary> {
+      bridge.calls.push('getLibrarySummary');
+      return {
+        revision: libraryRevision,
+        likedCount: bridge.likedIds.length,
+        playedCount: bridge.played.length,
+        problem: bridge.problem,
+      };
+    },
+    /** Like Rust: the change is answered with an event, once. */
+    async likeTrack(trackId: string) {
+      await command('likeTrack', trackId);
+      if (bridge.likedIds.includes(trackId)) return;
+      bridge.likedIds = [trackId, ...bridge.likedIds];
+      bridge.emitLikes({
+        revision: ++libraryRevision,
+        trackId,
+        liked: true,
+        likedCount: bridge.likedIds.length,
+      });
+    },
+    async unlikeTrack(trackId: string) {
+      await command('unlikeTrack', trackId);
+      if (!bridge.likedIds.includes(trackId)) return;
+      bridge.likedIds = bridge.likedIds.filter((id) => id !== trackId);
+      bridge.emitLikes({
+        revision: ++libraryRevision,
+        trackId,
+        liked: false,
+        likedCount: bridge.likedIds.length,
+      });
+    },
+    async getLikedIds(trackIds: string[]): Promise<string[]> {
+      bridge.likedAsked.push(trackIds);
+      return trackIds.filter((id) => bridge.likedIds.includes(id));
+    },
+    async getLikedSlice(offset: number, limit: number): Promise<TrackSlice> {
+      bridge.calls.push('getLikedSlice');
+      const rows = bridge.likedIds.map((id) => bridge.rowsById.get(id) ?? { ...tracks()[0], id });
+      return { total: rows.length, offset, tracks: rows.slice(offset, offset + limit) };
+    },
+    async getRecentSlice(offset: number, limit: number): Promise<TrackSlice> {
+      bridge.calls.push('getRecentSlice');
+      const rows = bridge.played;
+      return { total: rows.length, offset, tracks: rows.slice(offset, offset + limit) };
+    },
+    playLibraryTrack: (trackId: string) => command('playLibraryTrack', trackId),
+    async onLikesChanged(handler: (change: LikesChanged) => void) {
+      bridge.calls.push('onLikesChanged');
+      likesHandlers.add(handler);
+      return () => {
+        likesHandlers.delete(handler);
+      };
+    },
+    async onHistoryChanged(handler: (change: HistoryChanged) => void) {
+      bridge.calls.push('onHistoryChanged');
+      historyHandlers.add(handler);
+      return () => {
+        historyHandlers.delete(handler);
+      };
+    },
     /** What `getAccountStatus` answers. */
     accountStatus: 'disconnected' as AccountStatus,
     beforeAccountStatus: null as (() => Promise<unknown>) | null,

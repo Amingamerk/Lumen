@@ -8,6 +8,7 @@
   import { formatDuration, formatNumber } from '../format';
   import type { TrackWindow } from '../stores/trackWindow.svelte';
   import { rowRange } from '../virtual';
+  import LikeButton from './LikeButton.svelte';
   import SourceBadge from './SourceBadge.svelte';
 
   interface Props {
@@ -16,9 +17,12 @@
     labelledby: string;
     /** Called with a row's position in the whole list, counted from 0. */
     onplay: (position: number) => void;
+    /** Whether a song is liked. Without it, rows have no heart. */
+    liked?: (trackId: string) => boolean;
+    onlike?: (trackId: string) => void;
   }
 
-  let { tracks, labelledby, onplay }: Props = $props();
+  let { tracks, labelledby, onplay, liked, onlike }: Props = $props();
 
   const ROW_HEIGHT = 56;
   const OVERSCAN = 8;
@@ -116,8 +120,17 @@
               <SourceBadge source={tag.source} badge={tag.badge} />
             {/each}
           </span>
-          <span class="text-ink-faint text-right text-[13px] tabular-nums" role="cell">
-            {formatDuration(track.durationMs)}
+          <span class="track-end" role="cell">
+            {#if liked && onlike}
+              <LikeButton
+                liked={liked(track.id)}
+                title={track.title}
+                ontoggle={() => onlike(track.id)}
+              />
+            {/if}
+            <span class="text-ink-faint text-right text-[13px] tabular-nums">
+              {formatDuration(track.durationMs)}
+            </span>
           </span>
         {:else}
           <span role="cell">

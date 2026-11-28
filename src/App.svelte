@@ -11,6 +11,7 @@
   import { AccountStore } from './lib/stores/account.svelte';
   import { AppStore } from './lib/stores/app.svelte';
   import { CatalogStore } from './lib/stores/catalog.svelte';
+  import { LibraryStore } from './lib/stores/library.svelte';
   import { PlayerStore } from './lib/stores/player.svelte';
   import { QueueStore } from './lib/stores/queue.svelte';
   import { YoutubeStore } from './lib/stores/youtube.svelte';
@@ -22,6 +23,7 @@
   interface Props {
     store?: AppStore;
     catalog?: CatalogStore;
+    library?: LibraryStore;
     player?: PlayerStore;
     queue?: QueueStore;
     account?: AccountStore;
@@ -31,6 +33,7 @@
   let {
     store = new AppStore(tauriBridge),
     catalog = new CatalogStore(tauriBridge),
+    library = new LibraryStore(tauriBridge),
     player = new PlayerStore(tauriBridge),
     queue = new QueueStore(tauriBridge),
     account = new AccountStore(tauriBridge),
@@ -43,6 +46,7 @@
   const error = $derived(
     store.error ??
       catalog.error ??
+      library.error ??
       player.error ??
       queue.error ??
       account.error ??
@@ -86,6 +90,7 @@
     const connections = [
       store.connect(),
       catalog.connect(),
+      library.connect(),
       player.connect(),
       account.connect(),
       youtube.connect(),
@@ -129,6 +134,7 @@
     {:else if route?.view === 'search'}
       <Search
         {catalog}
+        {library}
         account={account.status}
         youtube={youtube.status}
         onsignin={() => void account.signIn()}
@@ -139,7 +145,7 @@
         onfocused={() => (searchFocusWanted = false)}
       />
     {:else if route?.view === 'library'}
-      <Library {catalog} onopen={openCollection} />
+      <Library {catalog} {library} onopen={openCollection} />
     {:else if route?.view === 'playlist'}
       {@const id = route.id}
       <Playlist {catalog} {id} onplay={(index) => void player.playCollection(id, index)} />
@@ -150,7 +156,7 @@
     <QueuePanel {player} {queue} onclose={() => void store.toggleQueue()} />
   {/if}
 
-  <PlayerBar {player} {queueOpen} ontogglequeue={() => void store.toggleQueue()} />
+  <PlayerBar {player} {library} {queueOpen} ontogglequeue={() => void store.toggleQueue()} />
 </div>
 
 <!-- A new notice is a new element, so it is announced again. -->

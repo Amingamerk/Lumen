@@ -4,6 +4,7 @@
   import { formatDuration } from '../format';
   import type { TrackRow } from '../ipc';
   import CoverArt from './CoverArt.svelte';
+  import LikeButton from './LikeButton.svelte';
   import SourceBadge from './SourceBadge.svelte';
 
   interface Props {
@@ -11,9 +12,12 @@
     /** The id of the heading that names the list. */
     labelledby: string;
     onplay: (trackId: string) => void;
+    /** Whether a song is liked. Without it, rows have no heart. */
+    liked?: (trackId: string) => boolean;
+    onlike?: (trackId: string) => void;
   }
 
-  let { tracks, labelledby, onplay }: Props = $props();
+  let { tracks, labelledby, onplay, liked, onlike }: Props = $props();
 </script>
 
 <ul class="tracks" aria-labelledby={labelledby}>
@@ -34,9 +38,14 @@
           <SourceBadge source={tag.source} badge={tag.badge} />
         {/each}
       </div>
-      <p class="text-ink-faint text-right text-[13px] tabular-nums">
-        {formatDuration(track.durationMs)}
-      </p>
+      <div class="track-end">
+        {#if liked && onlike}
+          <LikeButton liked={liked(track.id)} title={track.title} ontoggle={() => onlike(track.id)} />
+        {/if}
+        <p class="text-ink-faint text-right text-[13px] tabular-nums">
+          {formatDuration(track.durationMs)}
+        </p>
+      </div>
       <!-- Lies over the whole row. -->
       <button
         type="button"

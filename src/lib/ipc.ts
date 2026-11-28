@@ -187,6 +187,34 @@ export interface ServiceStatus {
   check: SessionCheck;
 }
 
+// Likes and history. Mirrors src-tauri/src/ipc/library.rs.
+
+/** A song was liked or unliked. */
+export interface LikesChanged {
+  /** Rises with every library event, so an older one can be dropped. */
+  revision: number;
+  trackId: string;
+  liked: boolean;
+  likedCount: number;
+}
+
+/** A play started, so the songs played changed. */
+export interface HistoryChanged {
+  revision: number;
+  /** How many different songs have been played. */
+  playedCount: number;
+}
+
+/** What the Library view starts from. */
+export interface LibrarySummary {
+  /** The revision of the newest event this snapshot already includes. */
+  revision: number;
+  likedCount: number;
+  playedCount: number;
+  /** Why the library cannot be used, in words. Its file is left as it is. */
+  problem: string | null;
+}
+
 export interface Bridge {
   getAppState(): Promise<AppSnapshot>;
   navigate(route: Route): Promise<void>;
@@ -223,6 +251,21 @@ export interface Bridge {
   onPlayerChanged(handler: (state: PlayerState) => void): Promise<() => void>;
   onPlayerPosition(handler: (position: PlayerPosition) => void): Promise<() => void>;
 
+  getLibrarySummary(): Promise<LibrarySummary>;
+  // The answer to each of these arrives as an event.
+  likeTrack(trackId: string): Promise<void>;
+  unlikeTrack(trackId: string): Promise<void>;
+  /** Which of these songs are liked. */
+  getLikedIds(trackIds: string[]): Promise<string[]>;
+  /** Up to `limit` liked songs from `offset`, the newest like first. */
+  getLikedSlice(offset: number, limit: number): Promise<TrackSlice>;
+  /** Up to `limit` played songs from `offset`, the one played last first. */
+  getRecentSlice(offset: number, limit: number): Promise<TrackSlice>;
+  /** Plays a song of the library by itself. The answer arrives as an event. */
+  playLibraryTrack(trackId: string): Promise<void>;
+  onLikesChanged(handler: (change: LikesChanged) => void): Promise<() => void>;
+  onHistoryChanged(handler: (change: HistoryChanged) => void): Promise<() => void>;
+
   getAccountStatus(): Promise<AccountStatus>;
   /** Opens the sign-in window, or focuses it. The outcome arrives as an event. */
   signIn(): Promise<void>;
@@ -242,6 +285,9 @@ const NAVIGATION_CHANGED = 'navigation-changed';
 /** Must match the names in src-tauri/src/ipc/player.rs. */
 const PLAYER_CHANGED = 'player-changed';
 const PLAYER_POSITION = 'player-position';
+/** Must match the names in src-tauri/src/ipc/library.rs. */
+const LIKES_CHANGED = 'likes-changed';
+const HISTORY_CHANGED = 'history-changed';
 /** Must match the names in src-tauri/src/ipc/account.rs. */
 const ACCOUNT_CHANGED = 'account-changed';
 const SIGN_IN_FAILED = 'sign-in-failed';
@@ -282,6 +328,17 @@ export const tauriBridge: Bridge = {
     listen<PlayerState>(PLAYER_CHANGED, (event) => handler(event.payload)),
   onPlayerPosition: (handler) =>
     listen<PlayerPosition>(PLAYER_POSITION, (event) => handler(event.payload)),
+  getLibrarySummary: () => invoke<LibrarySummary>('get_library_summary'),
+  likeTrack: (trackId) => invoke('like_track', { trackId }),
+  unlikeTrack: (trackId) => invoke('unlike_track', { trackId }),
+  getLikedIds: (trackIds) => invoke<string[]>('get_liked_ids', { trackIds }),
+  getLikedSlice: (offset, limit) => invoke<TrackSlice>('get_liked_slice', { offset, limit }),
+  getRecentSlice: (offset, limit) => invoke<TrackSlice>('get_recent_slice', { offset, limit }),
+  playLibraryTrack: (trackId) => invoke('play_library_track', { trackId }),
+  onLikesChanged: (handler) =>
+    listen<LikesChanged>(LIKES_CHANGED, (event) => handler(event.payload)),
+  onHistoryChanged: (handler) =>
+    listen<HistoryChanged>(HISTORY_CHANGED, (event) => handler(event.payload)),
   getAccountStatus: () => invoke<AccountStatus>('get_account_status'),
   signIn: () => invoke('sign_in'),
   disconnect: () => invoke('disconnect'),

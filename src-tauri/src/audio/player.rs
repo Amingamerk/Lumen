@@ -10,10 +10,12 @@ use super::{
     PlayerPosition, PlayerState, QueueItem, QueueSlice,
 };
 use crate::catalog::{Catalog, MAX_SLICE, TrackRow};
+use crate::library::{EndReason, NoLog, PlayLog};
 use crate::queue::{Entry, Queue, QueueError};
 use crate::recs::{RECENT_HISTORY, Recommender};
 use crate::sources::youtube::SystemClock;
 
+mod history;
 mod recovery;
 
 use recovery::PlayerClock;
@@ -91,6 +93,14 @@ pub struct Player<E: Engine> {
     gave_up: bool,
     /// The video whose stream was just let go of.
     dropped: Option<String>,
+    /// Where plays are written.
+    log: Box<dyn PlayLog>,
+    /// The play in progress, from the moment its audio starts.
+    listen: Option<history::Listen>,
+    /// Why the next change of song ends the play, if not by being replaced.
+    end_reason: Option<EndReason>,
+    /// The app is closing: no more plays start.
+    log_closed: bool,
 }
 
 /// Commands that may have nothing to change return `None` when they do not.
@@ -114,6 +124,10 @@ impl<E: Engine> Player<E> {
             tickets: 0,
             gave_up: false,
             dropped: None,
+            log: Box::new(NoLog),
+            listen: None,
+            end_reason: None,
+            log_closed: false,
         }
     }
 
@@ -317,6 +331,7 @@ impl<E: Engine> Player<E> {
         if !self.advance() {
             return None;
         }
+        self.end_reason = Some(EndReason::Skipped);
         self.play_current();
         Some(self.commit())
     }
@@ -326,6 +341,7 @@ impl<E: Engine> Player<E> {
         // On the first entry there is nowhere back to go, so it restarts.
         if self.engine.position() <= RESTART_THRESHOLD {
             self.queue.retreat();
+            self.end_reason = Some(EndReason::Skipped);
         }
         self.play_current();
         Some(self.commit())
@@ -465,12 +481,15 @@ impl<E: Engine> Player<E> {
                 if self.recoverable() && self.ended_early() {
                     self.drop_failed(self.reached());
                 } else if self.direct.is_some() {
+                    self.end_listen(EndReason::Finished);
                     // Real audio stops here. Nothing advances by itself.
                     self.set_playing(false);
                     self.phase = Phase::Ended;
                 } else if self.advance() {
+                    self.end_listen(EndReason::Finished);
                     self.play_current();
                 } else {
+                    self.end_listen(EndReason::Finished);
                     // Nothing to go on with: stay here, ready to play it again.
                     self.load(Duration::ZERO, false);
                 }
@@ -496,6 +515,7 @@ impl<E: Engine> Player<E> {
 impl<E: Engine> Player<E> {
     /// Marks a change and describes the result.
     fn commit(&mut self) -> PlayerState {
+        self.track_listening();
         self.revision += 1;
         self.reported_second = self.position().as_secs();
         self.reported_duration_ms = millis(self.duration());

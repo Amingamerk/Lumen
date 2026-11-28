@@ -24,6 +24,7 @@ libmpv2 = { version = "7", default-features = false }
 # The Windows TLS stack, and the Windows system proxy as the login window uses it;
 # no cookie store or retries of its own.
 reqwest = { version = "0.13", default-features = false, features = ["gzip", "http2", "native-tls", "system-proxy"] }
+rusqlite = { version = "0.43.0", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # `SAPISIDHASH`, the web client's request signature.
