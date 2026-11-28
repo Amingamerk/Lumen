@@ -62,6 +62,17 @@ happens before the Engine sees Media.
 song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends. Queued playback of real audio, with
 autoplay on by default, comes in Milestone 4.
 
+### Library, like and history
+The library is the SQLite file `library.db` in the app's local data folder. It keeps each Track it has met once,
+found again by any of its `SourceRef`s, with the **liked songs** and the **history**. A like is one row per Track;
+unliking removes it and keeps the Track. The history has one row per **play**: written when audio starts (not when
+a song is chosen or resolved), with its start time, the time it actually sounded and why it ended (`finished`,
+`skipped`, `replaced`, `failed`, `exit`, or `interrupted` after a crash). A pause, a seek, a stream recovery or
+a failed load adds no row and no listened time. The Library view's **Recently played** lists each song once, the
+latest play first. A file made by a newer Lumen, or a damaged one, is reported and left as it is; likes and
+history stay off until it is dealt with. Songs of the library play one at a time, as a search result does, until
+Milestone 4.
+
 ### Notice
 The small error message over the app, for a refused command or a failed load or playback. It never holds a
 Stream URL, headers or the Engine's own words.
@@ -149,7 +160,7 @@ The YouTube gate (the only one so far) is ready, cooling down or paused:
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
 | `recs` | Autoplay picks (static until Milestone 6) | Play audio |
 | `audio` | Engine (libmpv), playback state, transport rules | Resolve URLs |
-| `library` | SQLite: Tracks, playlists, history, caches, Matches | Store secrets |
+| `library` | SQLite: Tracks, likes, history (playlists, caches and Matches later) | Store secrets |
 
 ## Invariants
 
