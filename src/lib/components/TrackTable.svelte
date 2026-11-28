@@ -162,7 +162,7 @@
               </button>
             {/if}
             <span class="text-ink-faint text-right text-[13px] tabular-nums">
-              {formatDuration(track.durationMs)}
+              {track.durationMs > 0 ? formatDuration(track.durationMs) : ''}
             </span>
           </span>
         {:else}
