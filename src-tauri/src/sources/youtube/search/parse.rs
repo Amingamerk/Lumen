@@ -113,7 +113,8 @@ pub(super) fn video_of(row: &Value) -> Option<&str> {
 
 /// A Track from a title and its lines of details. The first line names the
 /// artists and the album; any line may end with the duration. `typed` means the
-/// first line starts with a type word.
+/// first line starts with a type word, as in the unfiltered reply, where the
+/// duration may be missing.
 pub(super) fn track(
     video: &str,
     title: String,
@@ -137,11 +138,14 @@ pub(super) fn track(
         }
     }
     let album = linked(details, "_ALBUM").next().map(str::to_owned);
-    let duration_ms = lines.iter().find_map(|line| {
+    let found = lines.iter().find_map(|line| {
         let line: String = line.iter().filter_map(|&run| text(run)).collect();
         line.rsplit(SEPARATOR)
             .find_map(|part| duration_ms(part.trim()))
-    })?;
+    });
+    // A song row of the unfiltered reply shows its play count instead of its
+    // length. Zero stands for unknown; the player learns the length on play.
+    let duration_ms = if typed { found.unwrap_or(0) } else { found? };
     if title.trim().is_empty() || artists.is_empty() {
         return None;
     }
@@ -550,6 +554,95 @@ mod tests {
 
         assert_eq!(found.playlists[0].by, ["A listener"]);
         assert_eq!(found.playlists[0].detail.as_deref(), Some("12 songs"));
+    }
+
+    /// One unfiltered reply for "lofi hip hop" as YouTube Music sent it, with
+    /// the account data taken out. Its interface language is Danish, each row
+    /// sits in an item section of its own, and a song row holds no duration.
+    fn recorded() -> Results {
+        let reply: Value =
+            serde_json::from_str(include_str!("../fixtures/search_all_real.json")).unwrap();
+        match results(&reply, SearchKind::All) {
+            Some(Parsed::Found(found)) => *found,
+            other => panic!("expected results, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_recorded_unfiltered_reply_gives_its_songs_by_where_they_lead() {
+        let found = recorded();
+
+        let songs: Vec<(&str, &[String])> = found
+            .songs
+            .iter()
+            .map(|t| (t.title.as_str(), t.artists.as_slice()))
+            .collect();
+        let by = |artists: &'static [&'static str]| -> Vec<String> {
+            artists.iter().map(|a| (*a).to_owned()).collect()
+        };
+        // The videos, the podcast episode and the channels are not songs.
+        assert_eq!(
+            songs,
+            [
+                (
+                    "Lofi Rain Chill Beats for Sleep, Study & Relax (1 Hour)",
+                    by(&["Zyra Music"]).as_slice()
+                ),
+                ("lofi hip hop", by(&["LOFI BEATS"]).as_slice()),
+                ("Fall Lofi Hiphop", by(&["Calm Chill Girl"]).as_slice()),
+                ("Back In The Day Lofi", by(&["Sad Music"]).as_slice()),
+                (
+                    "Chilling Hip Hop Beats",
+                    by(&[
+                        "Lofi Sleep Chill & Study",
+                        "ChillHop Music",
+                        "Lo Fi Hip Hop"
+                    ])
+                    .as_slice()
+                ),
+                (
+                    "Chill Lofi Beats",
+                    by(&["Lofi Hip-Hop Beats", "LO-FI BEATS", "Lofi Study Bandit"]).as_slice()
+                ),
+                ("90s Hip Hop Lofi", by(&["Lofi Hip Hop"]).as_slice()),
+                ("I Need a Girl", by(&["Lee"]).as_slice()),
+                (
+                    "Tum Mile (Lofi Flip)",
+                    by(&["KSW", "Neeraj Shridhar", "Pritam"]).as_slice()
+                ),
+            ]
+        );
+        let first = &found.songs[0];
+        assert_eq!(first.sources[0].id, "1N8hOpMqvYs");
+        // Such a row has no duration; the player learns it when the song plays.
+        assert_eq!(first.duration_ms, 0);
+        assert_eq!(first.album, None);
+        assert!(first.artwork_url.is_some());
+    }
+
+    #[test]
+    fn a_recorded_reply_keeps_its_other_shelves() {
+        let found = recorded();
+
+        assert_eq!(found.albums.len(), 3);
+        assert_eq!(found.artists.len(), 3);
+        assert_eq!(found.playlists.len(), 6);
+    }
+
+    #[test]
+    fn the_top_result_of_a_recorded_reply_plays_the_songs_its_card_holds() {
+        let top = recorded().top.expect("a top result");
+
+        assert_eq!(top.best.kind, HitKind::Playlist);
+        assert_eq!(top.best.title, "Mix • Lofi hip hop");
+        // The card also lists a video and a podcast episode; neither is a song.
+        let songs: Vec<(&str, u32)> = top
+            .songs
+            .iter()
+            .map(|t| (t.title.as_str(), t.duration_ms))
+            .collect();
+        assert_eq!(songs, [("Coffee and Cigarettes", 194_000)]);
+        assert_eq!(top.songs[0].artists, ["Jazzinuf"]);
     }
 
     /// The fixtures are written by hand and may never hold account data.

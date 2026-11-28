@@ -61,7 +61,7 @@
           </button>
         {/if}
         <p class="text-ink-faint text-right text-[13px] tabular-nums">
-          {formatDuration(track.durationMs)}
+          {track.durationMs > 0 ? formatDuration(track.durationMs) : ''}
         </p>
       </div>
       <!-- Lies over the whole row. -->
