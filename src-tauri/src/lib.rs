@@ -65,6 +65,7 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::get_search,
             ipc::search::submit_search,
             ipc::search::set_search_filter,
+            ipc::search::set_search_kind,
             ipc::toggle_queue,
             ipc::player::get_player_state,
             ipc::player::play_collection,

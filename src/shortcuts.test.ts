@@ -6,7 +6,7 @@ import { appStores, fakeBridge, playerState } from './lib/testing';
 
 async function openApp(bridge = fakeBridge()) {
   bridge.accountStatus = 'connected';
-  bridge.remembered = { query: '', filter: 'all' };
+  bridge.remembered = { query: '', filter: 'all', kind: 'all' };
   render(App, { props: appStores(bridge) });
   await screen.findByRole('link', { name: /^night shift, playlist$/i });
   await waitFor(() => expect(bridge.calls).toContain('getPlayerState'));

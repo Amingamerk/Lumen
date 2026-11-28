@@ -14,6 +14,7 @@ import type {
   PlaylistSummary,
   QueueSlice,
   Route,
+  SearchKind,
   SearchView,
   ServiceStatus,
   Shelf,
@@ -211,8 +212,13 @@ export function searchView(
     revision: 0,
     query,
     filter,
+    kind: 'all',
     status: 'results',
+    top: null,
     tracks: tracks(),
+    albums: [],
+    artists: [],
+    playlists: [],
     // Only the sample catalog has any.
     collections: filter === 'soundcloud' ? [collection('low-tide')] : [],
     ...overrides,
@@ -230,7 +236,11 @@ export function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-type Answer = (query: string, filter: SourceFilter) => SearchView | Promise<SearchView>;
+type Answer = (
+  query: string,
+  filter: SourceFilter,
+  kind: SearchKind,
+) => SearchView | Promise<SearchView>;
 
 /** A local playlist the fake keeps. */
 interface List {
@@ -284,8 +294,8 @@ export function fakeBridge({ announce = true } = {}) {
   /** Answers a search the way Rust does: with an event. */
   async function announceSearch() {
     const revision = ++searchRevision;
-    const { query, filter } = bridge.remembered;
-    const view = await bridge.answer(query, filter);
+    const { query, filter, kind } = bridge.remembered;
+    const view = await bridge.answer(query, filter, kind);
     bridge.emitSearch({ ...view, revision });
   }
 
@@ -489,8 +499,9 @@ export function fakeBridge({ announce = true } = {}) {
     /** What was submitted with Enter or "Try again". */
     searches: [] as { query: string; filter: SourceFilter }[],
     filterChanges: [] as SourceFilter[],
-    remembered: { query: '', filter: 'all' as SourceFilter },
-    answer: searchView as Answer,
+    kindChanges: [] as SearchKind[],
+    remembered: { query: '', filter: 'all' as SourceFilter, kind: 'all' as SearchKind },
+    answer: ((query, filter, kind) => searchView(query, filter, { kind })) as Answer,
     failNavigate: null as string | null,
     failSnapshot: null as Error | null,
     failCatalog: null as string | null,
@@ -592,21 +603,27 @@ export function fakeBridge({ announce = true } = {}) {
     },
     async getSearch(): Promise<SearchView> {
       catalogCall('getSearch');
-      const { query, filter } = bridge.remembered;
+      const { query, filter, kind } = bridge.remembered;
       const asOf = searchRevision;
       await bridge.beforeRemembered?.();
-      return { ...(await bridge.answer(query, filter)), revision: asOf };
+      return { ...(await bridge.answer(query, filter, kind)), revision: asOf };
     },
     async submitSearch(query: string, filter: SourceFilter) {
       catalogCall('submitSearch');
       bridge.searches.push({ query, filter });
-      bridge.remembered = { query, filter };
+      bridge.remembered = { ...bridge.remembered, query, filter };
       await announceSearch();
     },
     async setSearchFilter(filter: SourceFilter) {
       catalogCall('setSearchFilter');
       bridge.filterChanges.push(filter);
       bridge.remembered = { ...bridge.remembered, filter };
+      await announceSearch();
+    },
+    async setSearchKind(kind: SearchKind) {
+      catalogCall('setSearchKind');
+      bridge.kindChanges.push(kind);
+      bridge.remembered = { ...bridge.remembered, kind };
       await announceSearch();
     },
     get searchListeners() {

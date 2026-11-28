@@ -145,7 +145,7 @@ describe('the notice', () => {
   it('says a sample track cannot be played and leaves playback alone', async () => {
     const bridge = await openApp();
     bridge.emitAccount('connected');
-    bridge.remembered = { query: '', filter: 'all' };
+    bridge.remembered = { query: '', filter: 'all', kind: 'all' };
     bridge.emitPlayer(fileState());
     await bar().findByText('tone');
     bridge.failCommands = 'sample track, cannot be played';

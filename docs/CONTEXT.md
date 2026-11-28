@@ -39,13 +39,16 @@ stays in Rust; the playlist route asks for the slices it is about to show.
 One horizontal row of Collection cards on Home.
 
 ### Search
-A query plus a source chip: `All`, `YouTube` or `SoundCloud`. Rust does the searching and remembers the last
-query and chip.
+A query plus a source chip (`All`, `YouTube` or `SoundCloud`) and a type chip (`All`, `Songs`, `Albums`, `Artists`
+or `Playlists`). Rust does the searching and remembers the last query and chips.
 
-- With `All` or `YouTube`, YouTube Music is searched live for songs. Only Enter sends a search, and only for a
-  query that is not blank; changing the chip sends nothing. One search makes at most one request through the
-  Account-safety gate, and what it found is kept in memory for an hour (50 queries at most), for that one
-  Session.
+- With `All` or `YouTube`, YouTube Music is searched live. Only Enter and a type chip send a search, and only
+  for a query that is not blank; changing the source chip sends nothing. One search makes at most one request
+  through the Account-safety gate, and what it found is kept in memory for an hour (50 queries and chips at
+  most), for that one Session. A type chip that was already answered shows its answer without a request.
+- The `All` type chip finds a **top result** (the best match, with up to 3 quick-play songs), songs, albums,
+  artists and playlists. The other type chips ask for one type only. Albums, artists and playlists are listed with
+  their pictures; opening their pages comes later. Unknown shelves in a reply are skipped.
 - With `SoundCloud`, nothing is searched: the page says SoundCloud arrives later (Milestone 7). The sample
   catalog is searched only by tests: every word must appear in a Track's title, artists or album, a
   playlist's name, or an album's title or artists. A blank query matches everything.

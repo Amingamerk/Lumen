@@ -32,3 +32,16 @@ export function formatTotalDuration(ms: number): string {
 export function countLabel(count: number, one: string, many: string): string {
   return `${numbers.format(count)} ${count === 1 ? one : many}`;
 }
+
+const HIT_LABELS = { song: 'Song', album: 'Album', artist: 'Artist', playlist: 'Playlist' } as const;
+
+/** What a search hit is called in a row: its type. */
+export function hitLabel(kind: keyof typeof HIT_LABELS): string {
+  return HIT_LABELS[kind];
+}
+
+/** A hit's one line under its title: `Album · Ada Brook · 2021`. */
+export function hitLine(hit: { kind: keyof typeof HIT_LABELS; by: string[]; detail: string | null }): string {
+  const by = hit.by.join(', ');
+  return [hitLabel(hit.kind), by, hit.detail].filter(Boolean).join(' · ');
+}

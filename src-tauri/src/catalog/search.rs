@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{Catalog, CollectionSummary, SourceKind, TrackRow};
+use super::{Catalog, CollectionSummary, HitRow, SearchKind, SourceKind, TopView, TrackRow};
 
 /// The source chip chosen on the Search view. Spotify has no chip of its own:
 /// it shows up under `All`.
@@ -50,8 +50,15 @@ pub struct SearchView {
     /// The query exactly as it was typed.
     pub query: String,
     pub filter: SourceFilter,
+    /// The type chip. Only live results are narrowed by it.
+    pub kind: SearchKind,
     pub status: SearchStatus,
+    /// The best match and its songs, when the service named one.
+    pub top: Option<TopView>,
     pub tracks: Vec<TrackRow>,
+    pub albums: Vec<HitRow>,
+    pub artists: Vec<HitRow>,
+    pub playlists: Vec<HitRow>,
     pub collections: Vec<CollectionSummary>,
 }
 
@@ -100,8 +107,13 @@ impl Catalog {
             revision: 0,
             query: query.to_owned(),
             filter,
+            kind: SearchKind::All,
             status,
+            top: None,
             tracks,
+            albums: Vec::new(),
+            artists: Vec::new(),
+            playlists: Vec::new(),
             collections,
         }
     }

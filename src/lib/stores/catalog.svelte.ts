@@ -1,5 +1,5 @@
 import { describeError } from '../errors';
-import type { Bridge, SearchView, Shelf, SourceFilter } from '../ipc';
+import type { Bridge, SearchKind, SearchView, Shelf, SourceFilter } from '../ipc';
 
 /**
  * A mirror of the Home shelves and the search Rust builds. Each view asks when it
@@ -53,6 +53,14 @@ export class CatalogStore {
   setSearchFilter(filter: SourceFilter): Promise<void> {
     return this.#ask(
       () => this.#bridge.setSearchFilter(filter),
+      () => {},
+    );
+  }
+
+  /** The type chip. Rust shows what is known or searches; nothing is asked from here. */
+  setSearchKind(kind: SearchKind): Promise<void> {
+    return this.#ask(
+      () => this.#bridge.setSearchKind(kind),
       () => {},
     );
   }
