@@ -20,7 +20,7 @@ mod history;
 mod recovery;
 
 use entries::NoTracks;
-pub use entries::TrackLookup;
+pub use entries::{Placement, TrackLookup};
 use recovery::PlayerClock;
 use recovery::Recovery;
 pub use recovery::{Fetch, NoStream};

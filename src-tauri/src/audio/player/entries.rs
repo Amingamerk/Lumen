@@ -18,6 +18,16 @@ impl TrackLookup for NoTracks {
     }
 }
 
+/// Where a queued song goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Placement {
+    /// Right after the current song.
+    Next,
+    /// After what the user queued, ahead of the Recommender's picks.
+    Last,
+}
+
 /// Songs passed over one after the other before playback stops, so a list of
 /// songs that all fail does not send a request for each.
 const MAX_SKIPS: usize = 5;
@@ -39,6 +49,49 @@ impl<E: Engine> Player<E> {
         self.skips = 0;
         self.start_entry();
         Ok(self.commit())
+    }
+
+    /// Adds a song the library knows to the Queue. The current song is left
+    /// alone: it is neither restarted nor reloaded. With nothing in the Queue
+    /// the song plays at once, unless a stand-alone song is playing: that one
+    /// becomes the current entry and the new song follows it.
+    pub fn enqueue(
+        &mut self,
+        id: Uuid,
+        placement: Placement,
+    ) -> Result<Option<PlayerState>, PlayerError> {
+        if self.find(id).is_none() {
+            return Err(PlayerError::UnknownTrack { id });
+        }
+        if self.queue.current().is_none() {
+            let standalone = self
+                .direct
+                .as_ref()
+                .filter(|_| !matches!(self.phase, Phase::Failed(_)));
+            let Some(direct) = standalone else {
+                return self.play_list(vec![id], 0).map(Some);
+            };
+            self.queue.adopt(direct.key, direct.row.id);
+            if let Some(direct) = &mut self.direct {
+                direct.queued = true;
+            }
+        }
+        match placement {
+            Placement::Next => self.queue.insert_next(id),
+            Placement::Last => self.queue.insert_last(id),
+        };
+        Ok(Some(self.commit()))
+    }
+
+    /// Takes one upcoming entry out. The current one is refused.
+    pub fn remove_queue_entry(&mut self, key: u32) -> Result<PlayerState, PlayerError> {
+        self.queue.remove(key)?;
+        Ok(self.commit())
+    }
+
+    /// Drops every upcoming entry, if there are any.
+    pub fn clear_queue(&mut self) -> Option<PlayerState> {
+        self.queue.clear_upcoming().then(|| self.commit())
     }
 
     /// Up to `limit` entries before the current one, the latest first.

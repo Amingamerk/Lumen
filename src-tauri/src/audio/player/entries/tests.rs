@@ -397,3 +397,146 @@ fn a_queued_song_that_gave_up_is_asked_for_again_by_play() {
     assert_eq!(state.upcoming, 0);
     assert_eq!(rig.due().unwrap().1, "v2");
 }
+
+fn upcoming_titles(rig: &Rig) -> Vec<String> {
+    let items = rig.player.queue_slice(0, 50).items;
+    items.into_iter().map(|i| i.track.title).collect()
+}
+
+#[test]
+fn play_next_while_playing_neither_restarts_nor_reloads_the_song() {
+    let mut rig = rig(5);
+    rig.player.play_list(FakeTracks::ids(3), 0).unwrap();
+    rig.open();
+    let loads = rig.engine.fake().loads.len();
+    let before = rig.player.state();
+
+    let state = rig
+        .player
+        .enqueue(Uuid::from_u128(5), Placement::Next)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(upcoming_titles(&rig), ["Track 5", "Track 2", "Track 3"]);
+    assert_eq!(title(&state), "Track 1");
+    assert_eq!(state.status, PlaybackStatus::Playing);
+    assert_eq!(state.position_ms, before.position_ms);
+    assert!(state.queue_revision > before.queue_revision);
+    assert_eq!(rig.engine.fake().loads.len(), loads);
+    assert_eq!(rig.due(), None);
+    assert!(rig.engine.fake().playing);
+}
+
+#[test]
+fn add_to_queue_puts_the_song_last_and_the_same_song_twice_is_two_entries() {
+    let mut rig = rig(3);
+    rig.player.play_list(FakeTracks::ids(3), 0).unwrap();
+
+    rig.player
+        .enqueue(Uuid::from_u128(2), Placement::Last)
+        .unwrap();
+
+    assert_eq!(upcoming_titles(&rig), ["Track 2", "Track 3", "Track 2"]);
+    let keys: Vec<u32> = rig
+        .player
+        .queue_slice(0, 9)
+        .items
+        .iter()
+        .map(|i| i.key)
+        .collect();
+    assert_ne!(keys[0], keys[2]);
+}
+
+#[test]
+fn queueing_a_song_the_library_does_not_know_is_refused() {
+    let mut rig = rig(3);
+    rig.player.play_list(FakeTracks::ids(3), 0).unwrap();
+    let before = rig.player.state();
+
+    let refused = rig.player.enqueue(Uuid::from_u128(99), Placement::Next);
+
+    assert_eq!(
+        refused,
+        Err(PlayerError::UnknownTrack {
+            id: Uuid::from_u128(99)
+        })
+    );
+    assert_eq!(rig.player.state().queue_revision, before.queue_revision);
+}
+
+#[test]
+fn queueing_with_nothing_playing_starts_that_song() {
+    let mut rig = rig(3);
+
+    let state = rig
+        .player
+        .enqueue(Uuid::from_u128(2), Placement::Last)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(title(&state), "Track 2");
+    assert_eq!(state.status, PlaybackStatus::Loading);
+    assert_eq!(rig.due().unwrap().1, "v2");
+}
+
+#[test]
+fn queueing_while_a_standalone_song_plays_keeps_it_playing_and_queues_behind_it() {
+    let mut rig = rig(3);
+    let row = TrackRow::from(&FakeTracks::track(1));
+    let (key, _) = rig.player.begin_stream("v1".to_owned(), row);
+    rig.player.finish_stream(key, Ok(stream("v1")));
+    rig.player.on_engine_event(EngineEvent::Loaded);
+    let loads = rig.engine.fake().loads.len();
+
+    let state = rig
+        .player
+        .enqueue(Uuid::from_u128(3), Placement::Next)
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(title(&state), "Track 1");
+    assert_eq!(state.current.as_ref().unwrap().key, key);
+    assert_eq!(upcoming_titles(&rig), ["Track 3"]);
+    assert_eq!(rig.engine.fake().loads.len(), loads);
+    // When it ends, the queued song follows.
+    rig.engine.fake().position = Duration::from_secs(200);
+    rig.player.on_engine_event(EngineEvent::Ended);
+    assert_eq!(rig.due().unwrap().1, "v3");
+}
+
+#[test]
+fn the_current_entry_cannot_be_removed_and_an_unknown_key_errors() {
+    let mut rig = rig(3);
+    let state = rig.player.play_list(FakeTracks::ids(3), 0).unwrap();
+    let current = state.current.unwrap().key;
+
+    assert_eq!(
+        rig.player.remove_queue_entry(current),
+        Err(PlayerError::Queue(QueueError::NotUpcoming { key: current }))
+    );
+    assert_eq!(
+        rig.player.remove_queue_entry(999),
+        Err(PlayerError::Queue(QueueError::UnknownEntry { key: 999 }))
+    );
+    assert_eq!(upcoming_titles(&rig), ["Track 2", "Track 3"]);
+}
+
+#[test]
+fn removing_and_clearing_leave_the_playing_song_alone() {
+    let mut rig = rig(4);
+    rig.player.play_list(FakeTracks::ids(4), 1).unwrap();
+    rig.open();
+    let loads = rig.engine.fake().loads.len();
+    let three = rig.player.queue_slice(0, 9).items[0].key;
+
+    let removed = rig.player.remove_queue_entry(three).unwrap();
+    assert_eq!(upcoming_titles(&rig), ["Track 4"]);
+    assert_eq!(removed.status, PlaybackStatus::Playing);
+
+    let cleared = rig.player.clear_queue().unwrap();
+    assert_eq!((cleared.upcoming, cleared.history), (0, 1));
+    assert_eq!(title(&cleared), "Track 2");
+    assert_eq!(cleared.status, PlaybackStatus::Playing);
+    assert_eq!(rig.player.clear_queue(), None);
+    assert_eq!(rig.engine.fake().loads.len(), loads);
+}
