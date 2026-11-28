@@ -3,6 +3,7 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub mod account;
+pub mod art;
 #[cfg(debug_assertions)]
 mod break_url;
 pub mod library;

@@ -29,7 +29,7 @@
     <li class="track">
       <!-- Tracks of one album share its cover. -->
       <div class="size-10">
-        <CoverArt title={track.album ?? track.title} />
+        <CoverArt title={track.album ?? track.title} trackId={track.hasArt ? track.id : null} />
       </div>
       <div class="min-w-0">
         <p class="truncate text-[15px] font-semibold" title={track.title}>{track.title}</p>

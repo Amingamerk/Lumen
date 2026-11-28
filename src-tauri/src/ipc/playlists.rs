@@ -379,6 +379,7 @@ mod tests {
                 name: "Mix".to_owned(),
                 track_count: 2,
                 duration_ms: 400_000,
+                cover_track: None,
             }],
             changed: Some("p1".to_owned()),
         };
@@ -387,7 +388,7 @@ mod tests {
             serde_json::to_value(event).unwrap(),
             json!({
                 "revision": 4,
-                "playlists": [{ "id": "p1", "name": "Mix", "trackCount": 2, "durationMs": 400000 }],
+                "playlists": [{ "id": "p1", "name": "Mix", "trackCount": 2, "durationMs": 400000, "coverTrack": null }],
                 "changed": "p1"
             })
         );

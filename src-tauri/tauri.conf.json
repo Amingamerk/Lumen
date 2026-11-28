@@ -27,7 +27,7 @@
         "default-src": "'self'",
         "script-src": "'self'",
         "style-src": "'self' 'unsafe-inline'",
-        "img-src": "'self' data:",
+        "img-src": "'self' data: http://lumen.localhost",
         "font-src": "'self'",
         "connect-src": "ipc: http://ipc.localhost",
         "media-src": "'none'",

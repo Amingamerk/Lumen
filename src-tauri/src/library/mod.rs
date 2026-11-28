@@ -127,6 +127,12 @@ impl Library {
         tracks::find(&self.conn(), id)
     }
 
+    /// Where the picture of the Track under `id` comes from. The webview never
+    /// sees it; the art cache fetches it.
+    pub fn artwork_url(&self, id: Uuid) -> Result<Option<String>, LibraryError> {
+        tracks::artwork_url(&self.conn(), id)
+    }
+
     fn conn(&self) -> MutexGuard<'_, Connection> {
         self.conn.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -229,5 +235,21 @@ mod tests {
 
         assert!(matches!(error, LibraryError::Corrupt(_)), "{error}");
         assert_eq!(fs::read(&path).unwrap(), before);
+    }
+
+    #[test]
+    fn the_library_gives_the_artwork_address_of_a_kept_track() {
+        let (library, _) = testing::memory();
+        let mut with = testing::song(1);
+        with.artwork_url = Some("https://i.ytimg.com/vi/a/hq720.jpg".to_owned());
+        library.like(&with).unwrap();
+        library.like(&testing::song(2)).unwrap();
+
+        assert_eq!(
+            library.artwork_url(with.id).unwrap().as_deref(),
+            with.artwork_url.as_deref()
+        );
+        assert_eq!(library.artwork_url(Uuid::from_u128(2)).unwrap(), None);
+        assert_eq!(library.artwork_url(Uuid::from_u128(3)).unwrap(), None);
     }
 }

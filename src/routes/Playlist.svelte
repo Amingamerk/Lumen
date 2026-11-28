@@ -51,7 +51,7 @@
     <!-- The backdrop takes the dominant colour of the cover. -->
     <header class="hero" data-tone={placeholderArt(playlist.name).tone}>
       <div class="cover">
-        <CoverArt title={playlist.name} />
+        <CoverArt title={playlist.name} trackId={playlist.coverTrack} size={300} />
       </div>
       <div class="min-w-0">
         {#if renaming}

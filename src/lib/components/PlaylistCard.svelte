@@ -25,7 +25,7 @@
   aria-label="{playlist.name}, playlist, {countLabel(playlist.trackCount, 'track', 'tracks')}"
   onclick={open}
 >
-  <CoverArt title={playlist.name} />
+  <CoverArt title={playlist.name} trackId={playlist.coverTrack} size={300} />
   <span class="card-title">{playlist.name}</span>
   <span class="card-meta">
     <span class="min-w-0 truncate">{countLabel(playlist.trackCount, 'track', 'tracks')}</span>

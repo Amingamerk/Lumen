@@ -164,6 +164,7 @@ describe('playlist page', () => {
         name: list.name,
         trackCount: list.entries.length,
         durationMs: 0,
+        coverTrack: null,
       })),
       changed: 'p2',
     });

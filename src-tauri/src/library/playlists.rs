@@ -17,6 +17,9 @@ pub struct PlaylistSummary {
     pub track_count: usize,
     /// The length of all its entries together.
     pub duration_ms: u64,
+    /// The first of its songs that has a picture, which the playlist's cover is
+    /// drawn from.
+    pub cover_track: Option<Uuid>,
 }
 
 /// A name as it is kept: trimmed, and never empty.
@@ -63,7 +66,10 @@ fn append(tx: &Transaction<'_>, id: &str, track: &Track) -> Result<usize, Librar
     Ok(position)
 }
 
-const SUMMARY: &str = "SELECT p.id, p.name, COUNT(e.id), COALESCE(SUM(t.duration_ms), 0)
+const SUMMARY: &str = "SELECT p.id, p.name, COUNT(e.id), COALESCE(SUM(t.duration_ms), 0),
+            (SELECT c.id FROM playlist_entries ce JOIN tracks c ON c.id = ce.track_id
+              WHERE ce.playlist_id = p.id AND c.artwork_url IS NOT NULL
+              ORDER BY ce.position LIMIT 1)
      FROM playlists p
      LEFT JOIN playlist_entries e ON e.playlist_id = p.id
      LEFT JOIN tracks t ON t.id = e.track_id";
@@ -74,6 +80,9 @@ fn summary_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<PlaylistSummary> {
         name: row.get(1)?,
         track_count: usize::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
         duration_ms: u64::try_from(row.get::<_, i64>(3)?).unwrap_or(0),
+        cover_track: row
+            .get::<_, Option<String>>(4)?
+            .and_then(|id| Uuid::parse_str(&id).ok()),
     })
 }
 
@@ -239,6 +248,24 @@ impl Library {
 mod tests {
     use crate::library::testing::{library_at, memory, reopen, song};
     use crate::library::{EndReason, LibraryError};
+
+    #[test]
+    fn a_playlist_is_covered_by_its_first_song_with_a_picture() {
+        let (library, _) = memory();
+        let playlist = library.create_playlist("Covers").unwrap();
+        assert_eq!(playlist.cover_track, None);
+        library.add_to_playlist(&playlist.id, &song(1)).unwrap();
+        let mut drawn = song(2);
+        drawn.artwork_url = Some("https://i.ytimg.com/vi/b/hq720.jpg".to_owned());
+        library.add_to_playlist(&playlist.id, &drawn).unwrap();
+        let mut later = song(3);
+        later.artwork_url = Some("https://i.ytimg.com/vi/c/hq720.jpg".to_owned());
+        library.add_to_playlist(&playlist.id, &later).unwrap();
+
+        let summary = library.playlists().unwrap();
+
+        assert_eq!(summary[0].cover_track, Some(drawn.id));
+    }
 
     #[test]
     fn positions_stay_in_order_after_a_removal() {

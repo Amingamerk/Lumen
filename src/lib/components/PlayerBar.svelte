@@ -62,7 +62,7 @@
       {@const track = current.track}
       {@const artists = track.artists.join(', ')}
       <div class="now-art">
-        <CoverArt title={track.album ?? track.title} />
+        <CoverArt title={track.album ?? track.title} trackId={track.hasArt ? track.id : null} />
       </div>
       <div class="min-w-0">
         <p class="truncate text-[15px] font-semibold" title={track.title}>{track.title}</p>
