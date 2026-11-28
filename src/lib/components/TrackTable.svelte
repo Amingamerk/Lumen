@@ -8,10 +8,11 @@
   import XIcon from 'phosphor-svelte/lib/XIcon';
   import { releasePointerFocus } from '../focus';
   import { formatDuration, formatNumber } from '../format';
-  import type { TrackRow } from '../ipc';
+  import type { QueuePlacement, TrackRow } from '../ipc';
   import type { TrackWindow } from '../stores/trackWindow.svelte';
   import { rowRange } from '../virtual';
   import LikeButton from './LikeButton.svelte';
+  import QueueButtons from './QueueButtons.svelte';
   import SourceBadge from './SourceBadge.svelte';
 
   interface Props {
@@ -25,11 +26,13 @@
     onlike?: (trackId: string) => void;
     /** Without it, rows have no button for adding to a playlist. */
     onadd?: (track: TrackRow) => void;
+    /** Without it, rows have no buttons for the queue. */
+    onqueue?: (trackId: string, placement: QueuePlacement) => void;
     /** Called with a row's position and song. Without it, rows have no remove button. */
     onremove?: (position: number, track: TrackRow) => void;
   }
 
-  let { tracks, labelledby, onplay, liked, onlike, onadd, onremove }: Props = $props();
+  let { tracks, labelledby, onplay, liked, onlike, onadd, onqueue, onremove }: Props = $props();
 
   const ROW_HEIGHT = 56;
   const OVERSCAN = 8;
@@ -133,6 +136,12 @@
                 liked={liked(track.id)}
                 title={track.title}
                 ontoggle={() => onlike(track.id)}
+              />
+            {/if}
+            {#if onqueue}
+              <QueueButtons
+                title={track.title}
+                onqueue={(placement) => onqueue(track.id, placement)}
               />
             {/if}
             {#if onadd}

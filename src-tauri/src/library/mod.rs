@@ -129,6 +129,12 @@ impl Library {
         tracks::find(&self.conn(), id)
     }
 
+    /// Stores a song without liking it, so the Queue can find it by id. Gives
+    /// the id it is kept under.
+    pub fn keep(&self, track: &Track) -> Result<Uuid, LibraryError> {
+        tracks::ensure(&self.conn(), track)
+    }
+
     /// Where the picture of the Track under `id` comes from. The webview never
     /// sees it; the art cache fetches it.
     pub fn artwork_url(&self, id: Uuid) -> Result<Option<String>, LibraryError> {
@@ -253,5 +259,23 @@ mod tests {
         );
         assert_eq!(library.artwork_url(Uuid::from_u128(2)).unwrap(), None);
         assert_eq!(library.artwork_url(Uuid::from_u128(3)).unwrap(), None);
+    }
+
+    #[test]
+    fn keeping_a_song_makes_it_known_under_the_id_it_already_had() {
+        let (library, _) = testing::memory();
+        let first = testing::song(1);
+        library.like(&first).unwrap();
+        let mut again = testing::song(2);
+        again.sources = first.sources.clone();
+
+        assert_eq!(library.keep(&again).unwrap(), first.id);
+        assert_eq!(library.keep(&testing::song(3)).unwrap(), Uuid::from_u128(3));
+
+        assert_eq!(
+            library.track(Uuid::from_u128(3)).unwrap().unwrap().title,
+            "Song 3"
+        );
+        assert_eq!(library.liked_count().unwrap(), 1);
     }
 }

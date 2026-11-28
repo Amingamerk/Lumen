@@ -892,7 +892,7 @@
 
   .track-line {
     display: grid;
-    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 176px;
+    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 240px;
     align-items: center;
     column-gap: 16px;
     padding-right: 8px;
@@ -955,7 +955,7 @@
 
   @container (max-width: 599px) {
     .track-line {
-      grid-template-columns: 48px minmax(0, 1fr) 72px 176px;
+      grid-template-columns: 48px minmax(0, 1fr) 72px 240px;
     }
   }
 

@@ -43,6 +43,10 @@ describe('player store', () => {
     await player.setVolume(35);
     await player.changeVolume(5);
     await player.moveQueueEntry(13, null);
+    await player.queueTrack('t2', 'next');
+    await player.queueTrack('t3', 'last');
+    await player.removeQueueEntry(14);
+    await player.clearQueue();
 
     expect(bridge.commands).toEqual([
       ['playSearchResult', 't1'],
@@ -54,6 +58,10 @@ describe('player store', () => {
       ['setVolume', 35],
       ['changeVolume', 5],
       ['moveQueueEntry', 13, null],
+      ['queueTrack', 't2', 'next'],
+      ['queueTrack', 't3', 'last'],
+      ['removeQueueEntry', 14],
+      ['clearQueue'],
     ]);
   });
 

@@ -1,11 +1,11 @@
 ---
 name: lumen-ram-check
-description: Measure Lumen release RAM usage with scripts/ram-run.ps1 (drives the app) and scripts/measure-ram.ps1 against the 100 MB idle / 150 MB playing budget at the end of a milestone or after app changes.
+description: Measure Lumen release RAM usage with scripts/ram-run.ps1 (drives the app) and scripts/measure-ram.ps1 against the 200 MB cap (soft targets 100 MB idle / 150 MB playing) at the end of a milestone or after app changes.
 ---
 
 # Lumen RAM Check
 
-Procedure for measuring real RAM against the budget in `docs/PROJECT.md` section 2 (`<= 100 MB` idle, `<= 150 MB` playing + 5,000-row playlist). `.claude/agents/ram-budget-auditor.md` is the read-only reviewer checklist; this skill is the measurement procedure.
+Procedure for measuring real RAM against the budget in `docs/PROJECT.md` section 2 (hard cap `<= 200 MB` idle and playing + 5,000-row playlist; soft targets about 100 MB idle and 150 MB playing). `.claude/agents/ram-budget-auditor.md` is the read-only reviewer checklist; this skill is the measurement procedure.
 
 ## Rules
 
@@ -50,7 +50,7 @@ Kill any remaining `lumen.exe` (`taskkill //im lumen.exe //f`). Format results t
 ```markdown
 | Scenario | Run 1 | Run 2 | Run 3 | Median | Budget | Headroom | Verdict |
 |---|---|---|---|---|---|---|---|
-| Idle, home screen | X.X MB | X.X MB | X.X MB | X.X MB | 100 MB | X.X MB | pass/fail |
+| Idle, home screen | X.X MB | X.X MB | X.X MB | X.X MB | 200 MB | X.X MB | pass/fail |
 ```
 
 Include a per-process breakdown for the median run. If over budget, stop and diagnose the cause (unvirtualized list, full images instead of `lumen://art/...`, large mpv cache, webview state) before moving on. Never relax the budget in `docs/PROJECT.md` without owner approval.

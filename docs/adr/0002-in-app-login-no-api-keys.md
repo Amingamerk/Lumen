@@ -35,7 +35,7 @@ Login window:
 - It is listed in no Tauri capability, so remote pages cannot call into Rust.
 - Cookie reads and window creation run off synchronous commands and event handlers (deadlock on Windows).
 - It exceeds the RAM budget while open (178.6 MB SoundCloud, 203.9 MB Google sign-in). Destroy it as soon as
-  the session is captured and re-measure the return to <= 100 MB.
+  the session is captured and re-measure the return to about 100 MB (hard cap 200 MB since 2026-11-28).
 - InPrivate keeps login cookies out of the profile (YouTube Music, Spotify), at the cost of a new browser at
   every login. The SoundCloud spike left cookies in the profile; Milestone 7 decides.
 

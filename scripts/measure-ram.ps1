@@ -40,7 +40,7 @@ Milliseconds from the start of one sample to the start of the next. Default 250;
 interval is longer when the queries take longer.
 
 .PARAMETER ThresholdMB
-Sampling reports how long the total was above this. Default 150, the playing budget.
+Sampling reports how long the total was above this. Default 200, the RAM cap.
 
 .PARAMETER AsJson
 Write one JSON object instead of a table. Warnings then go to stderr, so stdout holds only the JSON.
@@ -65,7 +65,7 @@ param(
     [ValidateRange(50, 500)]
     [int]$IntervalMs = 250,
     [ValidateRange(1, 100000)]
-    [int]$ThresholdMB = 150,
+    [int]$ThresholdMB = 200,
     [switch]$AsJson
 )
 

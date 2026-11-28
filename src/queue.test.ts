@@ -289,3 +289,37 @@ describe('reordering the queue', () => {
     expect(moves(bridge)).toEqual([]);
   });
 });
+
+describe('removing and clearing', () => {
+  // Entry n has the key n + 9.
+  it('removes one upcoming entry by key', async () => {
+    const bridge = await open();
+
+    await fireEvent.click(panel().getByRole('button', { name: 'Remove Track 3 from the queue' }));
+
+    expect(bridge.commands).toEqual([['removeQueueEntry', 12]]);
+  });
+
+  it('clears the upcoming entries', async () => {
+    const bridge = await open();
+
+    await fireEvent.click(panel().getByRole('button', { name: 'Clear queue' }));
+
+    expect(bridge.commands).toEqual([['clearQueue']]);
+  });
+
+  it('offers no clear button when nothing is up next', async () => {
+    await open(0);
+
+    expect(panel().queryByRole('button', { name: 'Clear queue' })).toBeNull();
+  });
+
+  it('asks for the visible slice again when the revision changes', async () => {
+    const bridge = await open();
+    const before = bridge.queueRequests.length;
+
+    bridge.emitPlayer(playerState({ upcoming: 4, queueRevision: 7, revision: 2 }));
+
+    await waitFor(() => expect(bridge.queueRequests.length).toBeGreaterThan(before));
+  });
+});

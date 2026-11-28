@@ -362,6 +362,9 @@ export function fakeBridge({ announce = true } = {}) {
     setVolume: (volume: number) => command('setVolume', volume),
     changeVolume: (delta: number) => command('changeVolume', delta),
     moveQueueEntry: (key: number, before: number | null) => command('moveQueueEntry', key, before),
+    queueTrack: (trackId: string, placement: string) => command('queueTrack', trackId, placement),
+    removeQueueEntry: (key: number) => command('removeQueueEntry', key),
+    clearQueue: () => command('clearQueue'),
     toggleQueue: () => command('toggleQueue'),
     /** The ids of the liked songs, newest like first. */
     likedIds: [] as string[],

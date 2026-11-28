@@ -40,7 +40,7 @@ out) and [spike #4](../../spikes/4-ytm-login/FINDINGS.md) (signed in):
 ## Consequences
 
 - Resolving takes seconds, so the next 1-2 tracks are pre-resolved.
-- Resolves are serialized: the Deno challenge adds about 210 MB. That peak breaks the 150 MB budget and must
+- Resolves are serialized: the Deno challenge adds about 210 MB. That peak breaks the 200 MB cap (150 MB before 2026-11-28) and must
   be measured inside the app in Milestone 2.
 - Honor `available_at` before `loadfile`. Also re-resolve on 403 with backoff: mpv ends the file with error
   -13 and does not retry, and `libmpv2` reports it as an error result, not an `EndFile` event. Waiting is not

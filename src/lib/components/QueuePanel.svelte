@@ -224,6 +224,18 @@
 
   <div class="flex items-center justify-between gap-3">
     <h3 class="queue-label">{view === 'history' ? 'History' : 'Next up'}</h3>
+    {#if view === 'next' && upcoming > 0}
+      <button
+        type="button"
+        class="chip"
+        onclick={(event) => {
+          releasePointerFocus(event);
+          void player.clearQueue();
+        }}
+      >
+        Clear queue
+      </button>
+    {/if}
     {#if playedCount > 0}
       <button
         type="button"
@@ -280,6 +292,18 @@
                 onkeydown={(event) => void step(event, item, position)}
               >
                 <DotsSixVerticalIcon size={18} weight="bold" aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                class="queue-handle"
+                aria-label="Remove {item.track.title} from the queue"
+                title="Remove from queue"
+                onclick={(event) => {
+                  releasePointerFocus(event);
+                  void player.removeQueueEntry(item.key);
+                }}
+              >
+                <XIcon size={16} aria-hidden="true" />
               </button>
               {/if}
             </li>
