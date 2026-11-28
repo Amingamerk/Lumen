@@ -107,6 +107,7 @@ async fn fetch(
         .map_err(|error| NoStream {
             reason: error.to_string(),
             retry: error.worth_retrying(),
+            skip: error.is_about_the_song(),
         });
     let finished = lock(player).finish_fetch(request.ticket, outcome);
     announce(finished, sink);
@@ -119,5 +120,7 @@ fn announce(state: Option<PlayerState>, sink: &impl EventSink) {
     }
 }
 
+#[cfg(test)]
+mod queue_tests;
 #[cfg(test)]
 mod tests;

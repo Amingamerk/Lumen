@@ -98,6 +98,22 @@ impl ResolveError {
         )
     }
 
+    /// Whether the song is the problem, so that the next one may do better. A
+    /// refusal, a block or a missing tool is not about the song.
+    pub fn is_about_the_song(self) -> bool {
+        !matches!(
+            self,
+            Self::MissingYtDlp
+                | Self::MissingDeno
+                | Self::Closed
+                | Self::AuthRejected
+                | Self::RateLimited
+                | Self::BotCheck
+                | Self::AccountChanged
+                | Self::Service(_)
+        )
+    }
+
     /// What a run that ended this way means to the gate.
     fn verdict(self) -> Verdict {
         match self {

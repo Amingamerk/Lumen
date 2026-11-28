@@ -4,15 +4,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager, Runtime, State};
 use uuid::Uuid;
 
-use super::playback::play_stream;
 use super::player::PlayerHandle;
 use super::{EventSink, IpcError, SharedState, lock};
 use crate::audio::PlayerError;
-use crate::catalog::{Catalog, LONG_PLAYLIST_ID, SourceKind, Track, TrackRow, TrackSlice};
+use crate::catalog::{Catalog, LONG_PLAYLIST_ID, Track, TrackSlice};
 use crate::library::{HistoryChange, HistoryWriter, Library, LibraryError, LikeChange};
 use crate::sources::youtube::SystemClock;
 
@@ -243,16 +242,6 @@ fn unlike_and_notify(
     announce_like(handle, change, sink)
 }
 
-/// The YouTube video a song plays from.
-fn video_of(track: &Track) -> Result<String, IpcError> {
-    track
-        .sources
-        .iter()
-        .find(|source| source.kind == SourceKind::YouTube)
-        .map(|source| source.id.clone())
-        .ok_or(IpcError::NotPlayable)
-}
-
 /// Runs database work on a blocking thread. Commands that wait for the library
 /// must never wait on the thread that serves the window.
 pub(super) async fn blocking<T: Send + 'static>(
@@ -350,24 +339,55 @@ pub async fn get_recent_slice(
     blocking(move || Ok(handle.library()?.recent_slice(offset, limit)?)).await
 }
 
-/// Plays a song of the library by itself.
+/// A list of the library that plays through the Queue.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum PlayList {
+    Playlist { id: String },
+    Liked,
+    Recent,
+}
+
+/// The songs of `list` by id, in the order the UI shows them.
+fn list_ids(handle: &LibraryHandle, list: &PlayList) -> Result<Vec<Uuid>, IpcError> {
+    let library = handle.library()?;
+    Ok(match list {
+        PlayList::Playlist { id } => library.playlist_track_ids(id)?,
+        PlayList::Liked => library.liked_list()?,
+        PlayList::Recent => library.recent_list()?,
+    })
+}
+
+/// Where in `ids` playing starts: at `position` when that is the song pressed,
+/// else where the song now is, as the list may have changed since it was drawn.
+fn start_of(ids: &[Uuid], position: usize, track: Uuid) -> Result<usize, IpcError> {
+    if ids.get(position) == Some(&track) {
+        return Ok(position);
+    }
+    ids.iter()
+        .position(|id| *id == track)
+        .ok_or(IpcError::Player(PlayerError::UnknownTrack { id: track }))
+}
+
+/// Queues the whole list and plays from the song pressed. Only ids are read; the
+/// rows reach the UI a window at a time.
 #[tauri::command]
-pub async fn play_library_track<R: Runtime>(
+pub async fn play_list<R: Runtime>(
     app: AppHandle<R>,
     library: State<'_, LibraryHandle>,
     player: State<'_, PlayerHandle>,
+    list: PlayList,
+    position: usize,
     track_id: Uuid,
 ) -> Result<(), IpcError> {
     let handle = library.inner().clone();
-    let track = blocking(move || {
-        Ok(handle
-            .library()?
-            .track(track_id)?
-            .ok_or(PlayerError::UnknownTrack { id: track_id })?)
+    let (ids, start) = blocking(move || {
+        let ids = list_ids(&handle, &list)?;
+        let start = start_of(&ids, position, track_id)?;
+        Ok((ids, start))
     })
     .await?;
-    let video = video_of(&track)?;
-    play_stream(&app, &player, video, TrackRow::from(&track))
+    player.play_list(&app, ids, start)
 }
 
 #[cfg(test)]
@@ -441,10 +461,11 @@ mod tests {
 
     #[test]
     fn a_failure_on_the_blocking_thread_reaches_the_caller() {
-        let result: Result<(), IpcError> =
-            tauri::async_runtime::block_on(blocking(|| Err(IpcError::NotPlayable)));
+        let result: Result<(), IpcError> = tauri::async_runtime::block_on(blocking(|| {
+            Err(IpcError::LibraryUnavailable(String::new()))
+        }));
 
-        assert!(matches!(result, Err(IpcError::NotPlayable)));
+        assert!(matches!(result, Err(IpcError::LibraryUnavailable(_))));
     }
 
     #[test]
@@ -541,12 +562,62 @@ mod tests {
     }
 
     #[test]
-    fn a_song_plays_from_its_youtube_ref_only() {
-        assert_eq!(video_of(&song(3)).unwrap(), "video000003");
-        let mut elsewhere = song(3);
-        elsewhere.sources[0].kind = SourceKind::Spotify;
+    fn each_list_hands_over_its_songs_by_id_in_the_order_shown() {
+        let handle = handle();
+        let sink = RecordingSink::default();
+        let library = handle.library().unwrap();
+        let mix = library.create_playlist("Mix").unwrap();
+        for n in [2, 1, 2] {
+            library.add_to_playlist(&mix.id, &song(n)).unwrap();
+        }
+        like_and_notify(&handle, &song(3), &sink).unwrap();
+        like_and_notify(&handle, &song(1), &sink).unwrap();
+        library.begin_play(1, &song(2), 10).unwrap();
+        library.begin_play(2, &song(3), 20).unwrap();
+        let ids = |list: PlayList| list_ids(&handle, &list).unwrap();
 
-        assert!(matches!(video_of(&elsewhere), Err(IpcError::NotPlayable)));
+        assert_eq!(
+            ids(PlayList::Playlist { id: mix.id }),
+            [song(2).id, song(1).id, song(2).id]
+        );
+        assert_eq!(ids(PlayList::Liked), [song(1).id, song(3).id]);
+        assert_eq!(ids(PlayList::Recent), [song(3).id, song(2).id]);
+        let gone = list_ids(
+            &handle,
+            &PlayList::Playlist {
+                id: "nope".to_owned(),
+            },
+        );
+        assert!(matches!(gone, Err(IpcError::Library(_))));
+    }
+
+    #[test]
+    fn a_list_starts_at_the_row_pressed_or_where_its_song_has_moved_to() {
+        let ids = [song(1).id, song(2).id, song(1).id, song(3).id];
+
+        assert_eq!(start_of(&ids, 2, song(1).id).unwrap(), 2);
+        // The list changed since the row was drawn.
+        assert_eq!(start_of(&ids, 0, song(3).id).unwrap(), 3);
+        assert_eq!(start_of(&ids, 9, song(2).id).unwrap(), 1);
+        let gone = start_of(&ids, 1, song(9).id).expect_err("not in the list");
+        assert_eq!(
+            serde_json::to_value(&gone).unwrap(),
+            json!(format!("no track has the id {}", song(9).id))
+        );
+    }
+
+    #[test]
+    fn a_list_of_the_ui_names_its_kind() {
+        let read = |text: &str| serde_json::from_str::<PlayList>(text).unwrap();
+
+        assert_eq!(read(r#"{"kind":"liked"}"#), PlayList::Liked);
+        assert_eq!(read(r#"{"kind":"recent"}"#), PlayList::Recent);
+        assert_eq!(
+            read(r#"{"kind":"playlist","id":"p1"}"#),
+            PlayList::Playlist {
+                id: "p1".to_owned()
+            }
+        );
     }
 
     #[test]

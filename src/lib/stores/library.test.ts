@@ -102,12 +102,12 @@ describe('LibraryStore', () => {
     expect(library.summary?.problem).toBe('the library was made by a newer Lumen');
   });
 
-  it('plays a song of the library through Rust', async () => {
+  it('plays a list of the library through Rust, from one of its rows', async () => {
     const { bridge, library } = setUp();
 
-    await library.play(tracks()[0].id);
+    await library.play({ kind: 'recent' }, 4, tracks()[0].id);
 
-    expect(bridge.commands).toEqual([['playLibraryTrack', 't1']]);
+    expect(bridge.commands).toEqual([['playList', { kind: 'recent' }, 4, 't1']]);
   });
 
   it('says why a command was refused', async () => {

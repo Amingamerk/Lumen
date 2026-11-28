@@ -122,6 +122,7 @@ fn no_stream(retry: bool) -> NoStream {
     NoStream {
         reason: "no answer".to_owned(),
         retry,
+        skip: false,
     }
 }
 

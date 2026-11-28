@@ -139,6 +139,23 @@ describe('player store', () => {
     expect(player.notice?.message).toBe('broken');
   });
 
+  it('gives notice once of a song that was skipped, and again for the next one', async () => {
+    const { bridge, player } = await connected();
+    const skipped = { key: 4, message: 'Lumen skipped “Paper”: this song is unavailable.' };
+
+    bridge.emitPlayer(playerState({ revision: 2, skipped }));
+    const first = player.notice;
+    expect(first?.message).toBe(skipped.message);
+    bridge.emitPlayer(playerState({ revision: 3, skipped, volume: 10 }));
+    expect(player.notice).toBe(first);
+    player.dismissNotice();
+    bridge.emitPlayer(playerState({ revision: 4, skipped }));
+    expect(player.notice).toBeNull();
+
+    bridge.emitPlayer(playerState({ revision: 5, skipped: { ...skipped, key: 5 } }));
+    expect(player.notice).not.toBeNull();
+  });
+
   it('says a failure again when Play is pressed and it fails again', async () => {
     const { bridge, player } = await connected();
     const failed = playerState({ revision: 2, status: 'error', error: 'missing' });

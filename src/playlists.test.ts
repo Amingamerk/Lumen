@@ -124,12 +124,12 @@ describe('adding songs', () => {
 });
 
 describe('a playlist page', () => {
-  it('plays the song of a row by its id', async () => {
+  it('plays the playlist from the row, by its place and id', async () => {
     const bridge = await openNightShift();
 
     await fireEvent.click(await main().findByRole('button', { name: /^Play Track 2 by/ }));
 
-    expect(bridge.commands).toEqual([['playLibraryTrack', 'n2']]);
+    expect(bridge.commands).toEqual([['playList', { kind: 'playlist', id: 'night-shift' }, 1, 'n2']]);
   });
 
   it('removes the entry of a row and shows the new count', async () => {

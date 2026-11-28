@@ -10,6 +10,7 @@ import type {
   NavigationState,
   PlayerPosition,
   PlayerState,
+  PlayList,
   PlaylistsChanged,
   PlaylistSummary,
   QueueSlice,
@@ -60,8 +61,10 @@ export function playerState(overrides: Partial<PlayerState> = {}): PlayerState {
     canNext: true,
     canPrevious: true,
     upcoming: 3,
+    history: 0,
     queueRevision: 1,
     error: null,
+    skipped: null,
     ...overrides,
   };
 }
@@ -75,6 +78,7 @@ export function idleState(): PlayerState {
     canNext: false,
     canPrevious: false,
     upcoming: 0,
+    history: 0,
     queueRevision: 0,
   });
 }
@@ -319,6 +323,12 @@ export function fakeBridge({ announce = true } = {}) {
       offset: number,
       limit: number,
     ) => QueueSlice | Promise<QueueSlice>,
+    historyRequests: [] as { offset: number; limit: number }[],
+    /** What `getQueueHistory` answers. */
+    answerHistory: ((offset: number, limit: number) => queueSlice(offset, limit, 0)) as (
+      offset: number,
+      limit: number,
+    ) => QueueSlice | Promise<QueueSlice>,
     get playerListeners() {
       return playerHandlers.size + positionHandlers.size;
     },
@@ -349,6 +359,10 @@ export function fakeBridge({ announce = true } = {}) {
     async getQueue(offset: number, limit: number): Promise<QueueSlice> {
       bridge.queueRequests.push({ offset, limit });
       return bridge.answerQueue(offset, limit);
+    },
+    async getQueueHistory(offset: number, limit: number): Promise<QueueSlice> {
+      bridge.historyRequests.push({ offset, limit });
+      return bridge.answerHistory(offset, limit);
     },
     playSearchResult: (trackId: string) => command('playSearchResult', trackId),
     togglePlay: () => command('togglePlay'),
@@ -422,7 +436,8 @@ export function fakeBridge({ announce = true } = {}) {
       const rows = bridge.played;
       return { total: rows.length, offset, tracks: rows.slice(offset, offset + limit) };
     },
-    playLibraryTrack: (trackId: string) => command('playLibraryTrack', trackId),
+    playList: (list: PlayList, position: number, trackId: string) =>
+      command('playList', list, position, trackId),
     async onLikesChanged(handler: (change: LikesChanged) => void) {
       bridge.calls.push('onLikesChanged');
       likesHandlers.add(handler);

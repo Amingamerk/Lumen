@@ -132,7 +132,7 @@ describe('Library', () => {
     expect(bridge.calls).toContain('getLikedSlice');
   });
 
-  it('plays a liked song alone by its id', async () => {
+  it('plays a liked song through the liked list, by its place and id', async () => {
     const bridge = connected();
     bridge.likedIds = ['t1'];
     bridge.rowsById.set('t1', tracks()[0]);
@@ -141,7 +141,7 @@ describe('Library', () => {
 
     await fireEvent.click(await main().findByRole('button', { name: /^Play Harbor Lights/ }));
 
-    expect(bridge.commands).toEqual([['playLibraryTrack', 't1']]);
+    expect(bridge.commands).toEqual([['playList', { kind: 'liked' }, 0, 't1']]);
   });
 
   it('drops a song from the liked list when it is unliked', async () => {

@@ -161,7 +161,7 @@ describe('playing from a list', () => {
     expect(await bar().findByText('Harbor Lights')).toBeTruthy();
   });
 
-  it('plays the song of a playlist row far down the list, by its id', async () => {
+  it('plays a playlist from a row far down the list, by its place and id', async () => {
     const bridge = fakeBridge();
     bridge.lists[0].entries = trackSlice(0, 5000, 5000).tracks;
     await openApp(bridge);
@@ -174,6 +174,6 @@ describe('playing from a list', () => {
     await fireEvent.scroll(scroller);
     await fireEvent.click(await main().findByRole('button', { name: /^Play Track 4000 by/ }));
 
-    expect(bridge.commands).toEqual([['playLibraryTrack', 'n4000']]);
+    expect(bridge.commands).toEqual([['playList', { kind: 'playlist', id: 'night-shift' }, 3999, 'n4000']]);
   });
 });

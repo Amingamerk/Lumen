@@ -84,7 +84,7 @@
           labelledby="library-liked"
           onplay={(position) => {
             const row = liked.row(position);
-            if (row) void library.play(row.id);
+            if (row) void library.play({ kind: 'liked' }, position, row.id);
           }}
           liked={(id) => library.isLiked(id)}
           onlike={(id) => void library.toggle(id)}
@@ -109,7 +109,7 @@
           labelledby="library-recent"
           onplay={(position) => {
             const row = recent.row(position);
-            if (row) void library.play(row.id);
+            if (row) void library.play({ kind: 'recent' }, position, row.id);
           }}
           liked={(id) => library.isLiked(id)}
           onlike={(id) => void library.toggle(id)}

@@ -43,8 +43,6 @@ pub enum IpcError {
     LibraryUnavailable(String),
     #[error(transparent)]
     Library(#[from] LibraryError),
-    #[error("this song has no source Lumen can play it from")]
-    NotPlayable,
     #[error("the window failed: {0}")]
     Window(#[from] tauri::Error),
 }
