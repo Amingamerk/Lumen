@@ -206,7 +206,7 @@ describe('Search', () => {
 
     const [first, second] = section('Songs').getAllByRole('listitem');
 
-    for (const text of ['Harbor Lights', 'Mira Sol, Juno Park', 'Low Tide', '3:21', 'YT']) {
+    for (const text of ['Harbor Lights', 'Mira Sol, Juno Park · Low Tide · 3:21', 'YT']) {
       expect(within(first).getByText(text)).toBeTruthy();
     }
     expect(within(second).getByText('YT')).toBeTruthy();
