@@ -16,6 +16,8 @@ export interface PlaylistSummary {
   trackCount: number;
   /** The length of all its entries together. */
   durationMs: number;
+  /** The song whose picture covers the playlist, if one of its songs has a picture. */
+  coverTrack: string | null;
 }
 
 /** A playlist or album as a card or a page header shows it. */
@@ -33,6 +35,8 @@ export interface TrackRow {
   artists: string[];
   album: string | null;
   durationMs: number;
+  /** Whether `lumen://art/` has a picture for this row. See `artUrl`. */
+  hasArt: boolean;
   sources: SourceTag[];
 }
 

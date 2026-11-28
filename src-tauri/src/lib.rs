@@ -1,5 +1,6 @@
 //! Lumen's Rust core. Application state lives here; the webview only renders it.
 
+mod art;
 mod audio;
 mod catalog;
 mod ipc;
@@ -36,10 +37,19 @@ pub fn run() -> Result<(), tauri::Error> {
                 let _ = ipc::account::close_login(window.app_handle());
             }
         })
+        .register_asynchronous_uri_scheme_protocol(ipc::art::SCHEME, |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let webview = ctx.webview_label().to_owned();
+            let path = request.uri().path().to_owned();
+            tauri::async_runtime::spawn(async move {
+                responder.respond(ipc::art::serve(&app, &webview, &path).await);
+            });
+        })
         .manage(ipc::SharedState::new(state::AppState::without_samples(
             args,
         )))
         .setup(move |app| {
+            ipc::art::start(app.handle())?;
             ipc::youtube::start(app.handle())?;
             ipc::library::start(app.handle(), list)?;
             ipc::playback::start(app.handle())?;

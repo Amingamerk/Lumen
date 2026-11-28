@@ -10,6 +10,12 @@ One song as Lumen knows it: own `id`, title, artists, optional album, duration, 
 and a list of `SourceRef`. The same song on several services is one Track with several refs. A Track is
 metadata; it holds no Stream URL. Queue, playlists, likes and history refer to Tracks.
 
+### Artwork
+The picture of a Track (or of a playlist, drawn from its first song that has one). The webview never learns where
+it lives: it asks for `lumen://art/<size>/<track id>`, with a size of 64 (rows, the player bar) or 300 (cards, page
+heads), and Rust fetches it once from an allowlisted image host, resizes it and keeps it on disk. A picture that
+cannot be had leaves the placeholder cover showing.
+
 ### SourceRef and SourceKind
 `SourceRef` is a pointer to one item on one service: `kind` + the service's own `id`.
 `SourceKind` is `YouTube` (YouTube Music), `SoundCloud` or `Spotify`.
@@ -172,6 +178,7 @@ The YouTube gate (the only one so far) is ready, cooling down or paused:
 | `recs` | Autoplay picks (static until Milestone 6) | Play audio |
 | `audio` | Engine (libmpv), playback state, transport rules | Resolve URLs |
 | `library` | SQLite: Tracks, likes, history, local playlists (caches and Matches later) | Store secrets |
+| `art` | Artwork: fetch from allowlisted hosts, resize, cap and keep on disk, answer `lumen://art` | Send a remote address to the webview, send cookies, use the account gate |
 
 ## Invariants
 

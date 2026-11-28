@@ -413,6 +413,7 @@
    * dominant colour a page backdrop is drawn from.
    */
   .art {
+    position: relative;
     --x: 20%;
     --y: 16%;
     display: flex;
@@ -438,6 +439,20 @@
     box-shadow: inset 0 0 0 1px var(--color-edge);
     container-type: inline-size;
     user-select: none;
+  }
+
+  /* The real picture fades in over the placeholder once it has loaded. */
+  .art-picture {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+  }
+
+  .art-picture[data-loaded] {
+    opacity: 1;
   }
 
   .art > span {
@@ -1209,6 +1224,10 @@
 
 /* One entrance when the window opens: the lamp comes on, then the room appears. */
 @media (prefers-reduced-motion: no-preference) {
+  .art-picture {
+    transition: opacity 160ms var(--ease-glide);
+  }
+
   .nav-link,
   .card,
   .chip,

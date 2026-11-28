@@ -499,6 +499,7 @@ mod tests {
             artists: vec!["Mira Sol".to_owned()],
             album: None,
             duration_ms: 201_000,
+            has_art: true,
             sources: vec![SourceTag {
                 source: SourceKind::YouTube,
                 badge: "YT",

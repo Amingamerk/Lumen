@@ -73,6 +73,18 @@ pub(super) fn ensure(conn: &Connection, track: &Track) -> Result<Uuid, LibraryEr
     Ok(id)
 }
 
+/// Where the picture of the Track under `id` is fetched from, if it has one.
+pub(super) fn artwork_url(conn: &Connection, id: Uuid) -> Result<Option<String>, LibraryError> {
+    let url = conn
+        .query_row(
+            "SELECT artwork_url FROM tracks WHERE id = ?1",
+            [id.to_string()],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()?;
+    Ok(url.flatten())
+}
+
 /// The Track kept under `id`.
 pub(super) fn find(conn: &Connection, id: Uuid) -> Result<Option<Track>, LibraryError> {
     let row = conn

@@ -16,6 +16,8 @@ tauri-build = { version = "2", features = [] }
 anyhow = "1"
 # Reads the HTTP-date form of `Retry-After`.
 httpdate = "1"
+# Decodes and resizes artwork; only the formats the image hosts send.
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "webp"] }
 # The `keyring` project's core and Windows store, used directly: `keyring`'s own
 # `Entry` cannot set a credential's persistence.
 keyring-core = "1"

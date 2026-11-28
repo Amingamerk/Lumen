@@ -29,6 +29,7 @@ function fileState(overrides: Partial<PlayerState> = {}): PlayerState {
         artists: [],
         album: null,
         durationMs: 10_000,
+        hasArt: false,
         sources: [],
       },
     },

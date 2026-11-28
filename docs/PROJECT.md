@@ -330,6 +330,19 @@ app itself starts with an empty catalog. `library/` keeps Tracks, likes, history
 `ipc/playlists.rs` run every database command on a blocking thread, and `--list` opens its library in the temp
 folder, never the user's own.
 
+`art/` serves artwork. The webview asks for `lumen://art/<64 or 300>/<track id>` (on Windows WebView2 reaches
+it as `http://lumen.localhost/art/...`, which the CSP's `img-src` allows) and never sees a remote address: a Track
+row only says `hasArt`, a playlist names its `coverTrack`. `ipc/art.rs` looks the track's artwork URL up (the
+results on show, the catalog, then the library) and `art/` does the rest: `host.rs` allows only HTTPS, port 443
+and a few named image hosts (`i.ytimg.com`, `lh3.googleusercontent.com`, `yt3.ggpht.com`,
+`yt3.googleusercontent.com`, `i1.sndcdn.com`, `i.scdn.co`), redirects included; `fetch.rs` sends no cookies or
+credentials and reads at most 2 MiB; `resize.rs` decodes at most 2,048 px a side, cuts a square from the middle
+and writes both sizes as JPEG; `disk.rs` keeps them in the `art` folder of the app's cache folder under a 160 MiB
+cap, dropping the longest unused first. `ArtCache` makes callers asking for one picture share one fetch, runs
+at most three fetches at once, waits as long as a 429 asks (or 30 s, doubling to 15 min) and leaves a failed
+picture alone for 10 minutes. The limiter is its own: the account gate is for the account, and image requests
+carry no session. Only the main window may ask; paths are parsed strictly and never reach the file system.
+
 `sources/youtube/` holds the YouTube Music session (`account.rs`, `cookies.rs`, `session.rs`), the
 account-safety gate (`gate/`: rules, saved state, clock) and the web client (`auth.rs`, `client.rs`,
 `transport.rs`, `http.rs`, which follows the Windows system proxy like the login window). `service.rs` owns the

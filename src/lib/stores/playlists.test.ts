@@ -40,7 +40,7 @@ describe('PlaylistsStore', () => {
 
     bridge.emitPlaylists({
       revision: 4,
-      playlists: [{ id: 'old', name: 'Old', trackCount: 0, durationMs: 0 }],
+      playlists: [{ id: 'old', name: 'Old', trackCount: 0, durationMs: 0, coverTrack: null }],
       changed: 'old',
     });
 

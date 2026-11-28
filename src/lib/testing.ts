@@ -169,6 +169,7 @@ export function tracks(): TrackRow[] {
       artists: ['Mira Sol', 'Juno Park'],
       album: 'Low Tide',
       durationMs: 201_000,
+      hasArt: true,
       sources: [{ source: 'youtube', badge: 'YT' }],
     },
     {
@@ -177,6 +178,7 @@ export function tracks(): TrackRow[] {
       artists: ['Juno Park'],
       album: null,
       durationMs: 189_000,
+      hasArt: false,
       sources: [
         { source: 'spotify', badge: 'SP' },
         { source: 'youtube', badge: 'YT' },
@@ -256,7 +258,8 @@ export function fakeBridge({ announce = true } = {}) {
 
   function summaryOf(list: List): PlaylistSummary {
     const durationMs = list.entries.reduce((sum, row) => sum + row.durationMs, 0);
-    return { id: list.id, name: list.name, trackCount: list.entries.length, durationMs };
+    const coverTrack = list.entries.find((row) => row.hasArt)?.id ?? null;
+    return { id: list.id, name: list.name, trackCount: list.entries.length, durationMs, coverTrack };
   }
 
   const summaries = (): PlaylistSummary[] => bridge.lists.map(summaryOf);
