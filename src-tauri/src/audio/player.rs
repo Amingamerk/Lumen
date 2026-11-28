@@ -15,11 +15,13 @@ use crate::queue::{Entry, Queue, QueueError, Repeat};
 use crate::recs::{RECENT_HISTORY, Recommender};
 use crate::sources::youtube::SystemClock;
 
+mod ahead;
 mod entries;
 mod history;
 mod modes;
 mod recovery;
 
+use ahead::Ahead;
 use entries::NoTracks;
 pub use entries::{Placement, TrackLookup};
 use recovery::PlayerClock;
@@ -102,6 +104,8 @@ pub struct Player<E: Engine> {
     wake: Option<Box<dyn Fn() + Send>>,
     /// The last fetch number given out.
     tickets: u32,
+    /// The entries resolved before their turn.
+    ahead: Ahead,
     /// Both recovery attempts have just been used up.
     gave_up: bool,
     /// The video whose stream was just let go of.
@@ -138,6 +142,7 @@ impl<E: Engine> Player<E> {
             clock: Box::new(SystemClock::default()),
             wake: None,
             tickets: 0,
+            ahead: Ahead::default(),
             gave_up: false,
             dropped: None,
             log: Box::new(NoLog),

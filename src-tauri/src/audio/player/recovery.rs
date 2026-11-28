@@ -110,8 +110,12 @@ impl<E: Engine> Player<E> {
         Some(self.commit())
     }
 
-    /// Takes the planned fetch once its time has come.
+    /// Takes the planned fetch once its time has come. While the same song is
+    /// being resolved ahead, it waits for that answer.
     pub fn due_fetch(&mut self) -> Option<Fetch> {
+        if self.resolving_current() {
+            return None;
+        }
         let now = self.clock.monotonic();
         let direct = self.direct.as_mut()?;
         let video = direct.video.clone()?;
@@ -192,7 +196,7 @@ impl<E: Engine> Player<E> {
     pub fn recovery_wake(&self) -> Option<Duration> {
         let fetch = self
             .planned()
-            .filter(|planned| !planned.started)
+            .filter(|planned| !planned.started && !self.resolving_current())
             .map(|planned| planned.due);
         let next = fetch.into_iter().chain(self.stall_deadline()).min()?;
         Some(next.saturating_sub(self.clock.monotonic()))
@@ -365,6 +369,11 @@ impl<E: Engine> Player<E> {
         self.direct.as_ref()?.recovery.planned.as_ref()
     }
 
+    fn resolving_current(&self) -> bool {
+        let current = self.direct.as_ref().and_then(|d| d.video.as_deref());
+        current.is_some() && current == self.ahead.resolving()
+    }
+
     /// When the playing stream counts as stalled.
     fn stall_deadline(&self) -> Option<Duration> {
         let watched = self.playing && matches!(self.phase, Phase::Loading | Phase::Open);
@@ -387,6 +396,9 @@ impl<E: Engine> Player<E> {
             direct.recovery.planned = None;
             direct.recovery.reconnecting = false;
             self.dropped = direct.video.clone();
+            if let Some(video) = &direct.video {
+                self.ahead.forget(video);
+            }
         }
     }
 

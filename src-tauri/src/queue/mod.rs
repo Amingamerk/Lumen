@@ -32,7 +32,7 @@ pub enum QueueError {
 /// Entries in play order with one of them current. History is the entries before
 /// the current one. The list order is kept beside the play order, which differs
 /// from it once shuffle has been on.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Queue {
     entries: Vec<Entry>,
     /// Index of the current entry; 0 while the Queue is empty.

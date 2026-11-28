@@ -258,6 +258,13 @@ Both traits use native `async fn` and are used through generics, so tests swap i
   more than 5 s early drops the stream and resolves again through the gate, at least 2 s and then 10 s later.
   After those two attempts it stops with a manual retry and counts one gate failure. An expired URL is
   replaced before a resume or seek uses it. A debug build started with `--break-url` spoils the first stream.
+- Pre-resolving: while a queued song plays, the next two entries in play order are resolved, one at a time,
+  into the same stream cache; moving on to one of them then starts no run. "Next" follows shuffle and
+  repeat all; nothing is resolved ahead while one song repeats. A run is ended when its entry is no longer
+  the one to resolve (queue edit, shuffle, skip), or when the current song needs a run of its own; a skip to
+  the entry being resolved waits for that run. A failed run is not repeated, and no more start until another
+  song is current. None starts while the song is paused or loading, or while the gate cools down or is paused.
+  Only stream URLs are fetched ahead, no audio.
 - Gapless via mpv `playlist-append` of pre-resolved URLs (a suggestion, to be verified in a spike).
 - YouTube needs PO tokens / SABR handling in some clients. Bundle Deno + yt-dlp-ejs, optionally a token
   provider later, and auto-update yt-dlp.

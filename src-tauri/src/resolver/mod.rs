@@ -37,7 +37,7 @@ use crate::sources::youtube::{
 };
 
 /// A cached URL is used again only with at least this much left of it.
-const REUSE_MS: u64 = 600_000;
+pub const REUSE_MS: u64 = 600_000;
 
 /// Why there is no stream. Fixed texts only: the user is shown them.
 #[derive(Debug, Clone, Copy, PartialEq, thiserror::Error)]
@@ -418,20 +418,53 @@ where
 #[cfg(test)]
 pub(crate) mod testing {
     use std::collections::VecDeque;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use tokio::sync::oneshot;
 
     use super::*;
+
+    type Answer = Result<StreamInfo, ResolveError>;
+
+    enum Queued {
+        Now(Answer),
+        Later(oneshot::Receiver<Answer>),
+    }
 
     /// Gives the queued answers in order and remembers what it was asked.
     #[derive(Default)]
     pub struct FakeResolver {
-        answers: Mutex<VecDeque<Result<StreamInfo, ResolveError>>>,
+        answers: Mutex<VecDeque<Queued>>,
         resolved: Mutex<Vec<SourceRef>>,
         forgotten: Mutex<Vec<SourceRef>>,
+        alive: AtomicUsize,
+    }
+
+    /// Counts one resolve for as long as its future lives.
+    struct Alive<'a>(&'a AtomicUsize);
+
+    impl Drop for Alive<'_> {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
+        }
     }
 
     impl FakeResolver {
-        pub fn answer(&self, answer: Result<StreamInfo, ResolveError>) {
-            self.answers.lock().unwrap().push_back(answer);
+        pub fn answer(&self, answer: Answer) {
+            self.answers.lock().unwrap().push_back(Queued::Now(answer));
+        }
+
+        /// The next resolve stays in progress until it is answered here. The
+        /// sender is closed once that resolve was dropped.
+        pub fn answer_later(&self) -> oneshot::Sender<Answer> {
+            let (answer, later) = oneshot::channel();
+            self.answers.lock().unwrap().push_back(Queued::Later(later));
+            answer
+        }
+
+        /// Resolves in progress now.
+        pub fn alive(&self) -> usize {
+            self.alive.load(Ordering::SeqCst)
         }
 
         pub fn resolved(&self) -> Vec<SourceRef> {
@@ -455,8 +488,14 @@ pub(crate) mod testing {
                     ServiceError::Gate(crate::sources::youtube::GateError::Superseded).into(),
                 );
             }
+            self.alive.fetch_add(1, Ordering::SeqCst);
+            let _alive = Alive(&self.alive);
             let answer = self.answers.lock().unwrap().pop_front();
-            answer.unwrap_or(Err(ResolveError::Failed))
+            match answer {
+                Some(Queued::Now(answer)) => answer,
+                Some(Queued::Later(later)) => later.await.unwrap_or(Err(ResolveError::Failed)),
+                None => Err(ResolveError::Failed),
+            }
         }
 
         fn forget(&self, reference: &SourceRef) {

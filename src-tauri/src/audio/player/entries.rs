@@ -186,7 +186,7 @@ impl<E: Engine> Player<E> {
 }
 
 /// The YouTube video a Track plays from.
-fn youtube_video(track: &Track) -> Option<String> {
+pub(super) fn youtube_video(track: &Track) -> Option<String> {
     track
         .sources
         .iter()

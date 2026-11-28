@@ -1,7 +1,10 @@
 //! Carries out what the player's stream recovery asks for: one watcher wakes
 //! when something changes or a deadline passes, resolves through the gate and
-//! hands the player what came of it.
+//! hands the player what came of it. The same watcher runs the resolves ahead
+//! of the Queue, one at a time.
 
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -15,16 +18,21 @@ use super::{EventSink, lock};
 use crate::audio::{Fetch, NoStream, PlayerState};
 use crate::resolver::Resolver;
 use crate::secrets::SecretStore;
-use crate::sources::youtube::{GateClock, Transport, YouTube};
+use crate::sources::youtube::{GateClock, GateView, Transport, YouTube};
 
 /// What the watcher does next.
 #[derive(Debug)]
 enum Next {
-    /// Resolve this, then look again.
+    /// Resolve this for the current song, then look again.
     Fetch(Fetch),
+    /// Resolve this before its turn, then look again.
+    Ahead(Fetch),
     /// Nothing to do until then, or until something changes.
     Sleep(Option<Duration>),
 }
+
+/// The resolve ahead in progress. Dropping it ends its run.
+type Running<'a> = (u32, Pin<Box<dyn Future<Output = ()> + Send + 'a>>);
 
 /// Looks after the player for as long as the app runs. `wake` is told of every
 /// change to the player.
@@ -35,17 +43,45 @@ pub async fn watch<R: Runtime>(
     resolver: Arc<AppResolver>,
     wake: Arc<Notify>,
 ) {
+    let start = |request| {
+        let (app, player) = (app.clone(), Arc::clone(&player));
+        let resolver = Arc::clone(&resolver);
+        // On its own, so it can be cancelled while it runs.
+        tauri::async_runtime::spawn(async move {
+            fetch(&player, resolver.as_ref(), &app, request).await;
+        });
+    };
+    look_after(&player, &youtube, resolver.as_ref(), &app, &wake, start).await;
+}
+
+/// The watcher's loop. `start` runs a fetch for the current song.
+async fn look_after<S: SecretStore, T: Transport, G: GateClock>(
+    player: &Mutex<AppPlayer>,
+    youtube: &YouTube<S, T, G>,
+    resolver: &impl Resolver,
+    sink: &impl EventSink,
+    wake: &Notify,
+    mut start: impl FnMut(Fetch),
+) {
     // A cool-down or an expired session shows here.
     let mut statuses = youtube.watch();
+    // It runs in here, one at a time, so that it can be dropped.
+    let mut ahead: Option<Running> = None;
+    let mut account = youtube.account().generation();
     loop {
-        match step(&player, &youtube, resolver.as_ref(), &app) {
-            Next::Fetch(request) => {
-                let (app, player) = (app.clone(), Arc::clone(&player));
-                let resolver = Arc::clone(&resolver);
-                // On its own, so it can be cancelled while it runs.
-                tauri::async_runtime::spawn(async move {
-                    fetch(&player, resolver.as_ref(), &app, request).await;
-                });
+        let generation = youtube.account().generation();
+        if std::mem::replace(&mut account, generation) != generation {
+            // What was found ahead belonged to the other session.
+            lock(player).stop_ahead();
+        }
+        let next = step(player, youtube, resolver, sink);
+        ahead = ahead.filter(|(ticket, _)| lock(player).awaits_ahead(*ticket));
+        match next {
+            Next::Fetch(request) => start(request),
+            Next::Ahead(request) => {
+                let ticket = request.ticket;
+                let run = resolve_ahead(player, resolver, request);
+                ahead = Some((ticket, Box::pin(run)));
             }
             Next::Sleep(wait) => tokio::select! {
                 () = wake.notified() => {}
@@ -55,8 +91,17 @@ pub async fn watch<R: Runtime>(
                     }
                 }
                 () = tokio::time::sleep(wait.unwrap_or_default()), if wait.is_some() => {}
+                () = finished(&mut ahead), if ahead.is_some() => ahead = None,
             },
         }
+    }
+}
+
+/// Returns once the resolve ahead is done; never without one.
+async fn finished(ahead: &mut Option<Running<'_>>) {
+    match ahead {
+        Some((_, run)) => run.await,
+        None => std::future::pending().await,
     }
 }
 
@@ -84,11 +129,30 @@ fn step<S: SecretStore, T: Transport, G: GateClock>(
     if let Some(video) = dropped {
         resolver.forget(&youtube_ref(&video));
     }
+    // Nothing is resolved ahead while the gate is closed.
+    let open = youtube.status().gate == GateView::Ready;
     let mut player = lock(player);
-    match player.due_fetch() {
-        Some(request) => Next::Fetch(request),
+    if open {
+        player.review_ahead();
+    } else {
+        player.stop_ahead();
+    }
+    if let Some(request) = player.due_fetch() {
+        return Next::Fetch(request);
+    }
+    match open.then(|| player.due_ahead()).flatten() {
+        Some(request) => Next::Ahead(request),
         None => Next::Sleep(player.recovery_wake()),
     }
+}
+
+/// Resolves an entry before its turn. The resolver keeps the stream, which the
+/// entry's own fetch then finds. Dropping this ends the run.
+async fn resolve_ahead(player: &Mutex<AppPlayer>, resolver: &impl Resolver, request: Fetch) {
+    let wanted = || lock(player).awaits_ahead(request.ticket);
+    let outcome = resolver.resolve(&youtube_ref(&request.video), wanted).await;
+    let expires_at = outcome.ok().and_then(|stream| stream.expires_at);
+    lock(player).finish_ahead(request.ticket, expires_at);
 }
 
 /// Resolves the stream asked for and hands the player the outcome, unless
@@ -120,6 +184,8 @@ fn announce(state: Option<PlayerState>, sink: &impl EventSink) {
     }
 }
 
+#[cfg(test)]
+mod ahead_tests;
 #[cfg(test)]
 mod queue_tests;
 #[cfg(test)]
