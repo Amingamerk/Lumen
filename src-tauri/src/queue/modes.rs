@@ -30,16 +30,6 @@ impl Repeat {
     }
 }
 
-/// What a shuffled Queue remembers.
-#[derive(Debug, Default)]
-pub(super) struct Shuffle {
-    /// Every entry in list order, the one it has without shuffle.
-    pub(super) list: Vec<Entry>,
-    /// How many entries at the front of the play order were there before
-    /// shuffle was turned on. They are shuffled when the Queue starts over.
-    ordered: usize,
-}
-
 /// A small seeded source of random places (SplitMix64). Unseeded, it starts
 /// from the system's random numbers.
 #[derive(Debug)]
@@ -90,26 +80,25 @@ impl Queue {
     }
 
     pub fn shuffled(&self) -> bool {
-        self.shuffle.is_some()
+        self.shuffled
     }
 
     /// Turns shuffle on or off. The current entry and the played ones stay as
     /// they are; only what waits changes order. Returns whether it changed.
     pub fn set_shuffle(&mut self, on: bool) -> bool {
-        if on == self.shuffled() {
+        if on == self.shuffled {
             return false;
         }
         let from = (self.current + 1).min(self.entries.len());
         if on {
-            self.shuffle = Some(Shuffle {
-                list: self.entries.clone(),
-                ordered: from,
-            });
+            self.ordered = from;
             self.dice.shuffle(&mut self.entries[from..]);
-        } else if let Some(shuffle) = self.shuffle.take() {
-            self.restore(&shuffle.list, from);
+        } else {
+            self.restore(from);
         }
-        self.lap_end = None;
+        self.shuffled = on;
+        // The pass to go on to belonged to the other mode.
+        self.pass_after = None;
         self.revision += 1;
         true
     }
@@ -125,41 +114,76 @@ impl Queue {
         changed
     }
 
-    /// Puts a Queue that was just replaced into a shuffled order: the chosen
-    /// entry leads, and every other one waits behind it.
+    /// Puts a Queue that was just replaced into a shuffled order, if shuffle is
+    /// on: the chosen entry leads, and every other one waits behind it.
     pub(super) fn shuffle_replaced(&mut self) {
-        let Some(shuffle) = &mut self.shuffle else {
+        if !self.shuffled {
             return;
-        };
-        shuffle.list.clone_from(&self.entries);
-        shuffle.ordered = 0;
+        }
+        self.ordered = 0;
         let chosen = self.entries.remove(self.current);
         self.entries.insert(0, chosen);
         self.current = 0;
         self.dice.shuffle(&mut self.entries[1..]);
     }
 
-    /// Starts the Queue over from its first entry.
+    /// Starts the Queue over from its first entry: in list order, or shuffled.
     pub(super) fn wrap(&mut self) {
-        self.lap_end = self.current().map(|entry| entry.key);
-        if let Some(shuffle) = &mut self.shuffle {
-            // The last entry stays put, so going back finds it.
-            let ordered = shuffle.ordered.min(self.entries.len().saturating_sub(1));
+        let left = self.keys();
+        if !self.shuffled {
+            self.entries.clone_from(&self.list);
+        } else if let Some(after) = self.pass_after.take() {
+            self.arrange(&after);
+        } else {
+            // The last entry is not moved, so it does not come right back.
+            let ordered = self.ordered.min(self.entries.len().saturating_sub(1));
             self.dice.shuffle(&mut self.entries[..ordered]);
-            shuffle.ordered = 0;
+            self.ordered = 0;
         }
+        self.pass_after = None;
+        self.pass_before = Some(left);
         self.current = 0;
+    }
+
+    /// Goes back to the end of the pass before this one, if it is still known.
+    /// Entries added since then wait after it.
+    pub(super) fn return_to_pass_before(&mut self) -> bool {
+        let Some(before) = self.pass_before.take() else {
+            return false;
+        };
+        let left = self.keys();
+        let Some(last) = self.arrange(&before).checked_sub(1) else {
+            return false;
+        };
+        self.current = last;
+        self.pass_after = Some(left);
+        true
+    }
+
+    pub(super) fn forget_passes(&mut self) {
+        self.pass_before = None;
+        self.pass_after = None;
+    }
+
+    fn keys(&self) -> Vec<u32> {
+        self.entries.iter().map(|entry| entry.key).collect()
+    }
+
+    /// Puts the play order into that of `keys`, with the entries it does not
+    /// name behind. Returns how many it names.
+    fn arrange(&mut self, keys: &[u32]) -> usize {
+        let place = places(keys.iter().copied());
+        let at = |entry: &Entry| place.get(&entry.key).copied();
+        self.entries
+            .sort_by_key(|entry| at(entry).unwrap_or(usize::MAX));
+        self.entries.iter().filter(|e| at(e).is_some()).count()
     }
 
     /// Puts the entries from `from` on back into list order: those after the
     /// current one in the list, then those before it that still wait. The
     /// picks at the end stay at the end.
-    fn restore(&mut self, list: &[Entry], from: usize) {
-        let place: HashMap<u32, usize> = list
-            .iter()
-            .enumerate()
-            .map(|(at, entry)| (entry.key, at))
-            .collect();
+    fn restore(&mut self, from: usize) {
+        let place = places(self.list.iter().map(|entry| entry.key));
         let at = |entry: &Entry| place.get(&entry.key).copied();
         let here = self.current().and_then(at);
         let mut waiting = self.entries.split_off(from);
@@ -171,6 +195,11 @@ impl Queue {
         waiting.splice(gap..gap, earlier);
         self.entries.append(&mut waiting);
     }
+}
+
+/// Where each key comes in an order.
+fn places(keys: impl Iterator<Item = u32>) -> HashMap<u32, usize> {
+    keys.enumerate().map(|(at, key)| (key, at)).collect()
 }
 
 #[cfg(test)]

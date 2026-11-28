@@ -371,7 +371,8 @@ impl<E: Engine> Player<E> {
         if !self.advance() {
             return None;
         }
-        self.end_reason = Some(EndReason::Skipped);
+        // Ended here: a repeating Queue of one comes back to the same entry.
+        self.end_listen(EndReason::Skipped);
         self.skips = 0;
         self.start_entry();
         Some(self.commit())

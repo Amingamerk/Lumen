@@ -65,12 +65,14 @@ Rust; the UI asks for the upcoming or history rows it shows, a window at a time.
 ### Shuffle and repeat
 **Shuffle** changes only the play order: the upcoming entries play in a random order, each once, ahead of the
 autoplay picks. A list started while shuffled leads with the chosen row and keeps every other song upcoming. The
-history stays what played, so Previous walks back through it. Turning shuffle off goes back to the list order from
-the current entry: the songs after it, then those before it that have not played. Play next and Add to queue also
-take their place in the list order; a drag made while shuffled changes the play order only.
-**Repeat** is `off`, `all` or `one`. With `all` the Queue starts over after its last entry (shuffled, the songs
-that were there before shuffle was turned on are shuffled then). With `one` a song that ends by itself plays again,
-while Next still moves on. The Recommender adds picks only with repeat off. Both settings are kept between launches.
+history stays what played, so Previous walks back through it. The list order is kept beside the play order. Turning
+shuffle off goes back to it from the current entry: the songs after it, then those before it that have not played.
+Play next and Add to queue also take their place in the list order, and so does a drag made without shuffle; a drag
+made while shuffled changes the play order only.
+**Repeat** is `off`, `all` or `one`. With `all` the Queue starts over after its last entry, in list order without
+shuffle (shuffled, the songs that were there before shuffle was turned on are shuffled then). Previous goes back
+over the latest such wrap, not further. With `one` a song that ends by itself plays again, while Next still moves
+on. The Recommender adds picks only with repeat off. Both settings are kept between launches.
 
 ### Queue entry
 One place in the Queue: a Track plus a `key` that is unique and never reused, so the same Track twice is two

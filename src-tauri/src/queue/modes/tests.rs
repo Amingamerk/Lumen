@@ -315,3 +315,145 @@ fn the_repeat_control_goes_off_all_one() {
     assert_eq!(Repeat::All.following(), Repeat::One);
     assert_eq!(Repeat::One.following(), Repeat::Off);
 }
+
+/// Starts the Queue over and gives the whole pass it then plays.
+fn next_pass(queue: &mut Queue) -> Vec<u128> {
+    queue.set_repeat(Repeat::All);
+    walk_one_lap(queue);
+    assert!(queue.advance());
+    walk_one_lap(queue)
+}
+
+/// Tracks 1 to 10, three songs on in a shuffle that is then turned off.
+fn unshuffled_after_three_songs() -> Queue {
+    let mut queue = queue(10, 0);
+    queue.set_shuffle(true);
+    for _ in 0..3 {
+        queue.advance();
+    }
+    queue.set_shuffle(false);
+    assert_ne!(numbers(queue.history()), [1, 2, 3]);
+    queue
+}
+
+#[test]
+fn without_shuffle_the_queue_starts_over_in_list_order() {
+    let mut queue = unshuffled_after_three_songs();
+
+    assert_eq!(next_pass(&mut queue), (1..=10).collect::<Vec<u128>>());
+}
+
+#[test]
+fn shuffling_again_keeps_the_original_list_order() {
+    let mut queue = unshuffled_after_three_songs();
+    let upcoming = numbers(queue.upcoming());
+
+    queue.set_shuffle(true);
+    queue.set_shuffle(false);
+
+    assert_eq!(numbers(queue.upcoming()), upcoming);
+    assert_eq!(next_pass(&mut queue), (1..=10).collect::<Vec<u128>>());
+}
+
+#[test]
+fn going_back_over_a_wrap_walks_what_played_and_stops_where_it_began() {
+    let mut queue = unshuffled_after_three_songs();
+    queue.set_repeat(Repeat::All);
+    let mut played = numbers(queue.history());
+    played.extend(walk_one_lap(&mut queue));
+    queue.advance();
+
+    for want in played.iter().rev() {
+        assert!(queue.retreat());
+        assert_eq!(current(&queue), *want);
+    }
+
+    assert!(
+        !queue.retreat(),
+        "nothing is known to have played before that"
+    );
+    assert_eq!(current(&queue), played[0]);
+}
+
+#[test]
+fn going_back_over_a_wrap_still_works_after_shuffle_is_toggled() {
+    let mut queue = queue(5, 0);
+    queue.set_repeat(Repeat::All);
+    walk_one_lap(&mut queue);
+    queue.advance();
+
+    queue.set_shuffle(true);
+
+    assert!(queue.retreat());
+    assert_eq!(current(&queue), 5);
+    assert_eq!(numbers(queue.history()), [1, 2, 3, 4]);
+}
+
+#[test]
+fn going_on_again_returns_to_the_pass_that_going_back_left() {
+    let mut queue = queue(40, 30);
+    queue.set_repeat(Repeat::All);
+    queue.set_shuffle(true);
+    walk_one_lap(&mut queue);
+    queue.advance();
+    let here = *queue.current().unwrap();
+    let upcoming = queue.upcoming().to_vec();
+
+    queue.retreat();
+    queue.advance();
+
+    assert_eq!(queue.current(), Some(&here));
+    assert_eq!(queue.upcoming(), upcoming);
+}
+
+#[test]
+fn going_back_over_a_wrap_keeps_new_songs_and_leaves_removed_ones_out() {
+    let mut queue = queue(5, 0);
+    queue.set_repeat(Repeat::All);
+    walk_one_lap(&mut queue);
+    queue.advance();
+    queue.remove(key_of(&queue, 3)).unwrap();
+    queue.insert_last(id(9));
+
+    queue.retreat();
+
+    assert_eq!(current(&queue), 5);
+    assert_eq!(numbers(queue.history()), [1, 2, 4]);
+    assert_eq!(numbers(queue.upcoming()), [9]);
+}
+
+#[test]
+fn a_drag_without_shuffle_changes_the_list_order() {
+    let mut queue = unshuffled_after_three_songs();
+    let here = current(&queue);
+    let (first, last) = (queue.upcoming()[0], *queue.upcoming().last().unwrap());
+
+    queue.move_before(last.key, Some(first.key)).unwrap();
+
+    // It was dropped right behind the current song, and stays there.
+    let pass = next_pass(&mut queue);
+    let at = pass.iter().position(|n| *n == here).unwrap();
+    assert_eq!(pass[at + 1], last.track.as_u128());
+}
+
+#[test]
+fn a_drag_made_while_shuffled_leaves_the_list_order() {
+    let mut queue = queue(10, 0);
+    queue.set_shuffle(true);
+    let (first, last) = (queue.upcoming()[0], *queue.upcoming().last().unwrap());
+    queue.move_before(last.key, Some(first.key)).unwrap();
+
+    queue.set_shuffle(false);
+
+    assert_eq!(numbers(queue.upcoming()), (2..=10).collect::<Vec<u128>>());
+}
+
+/// The key of the first entry holding track `n`.
+fn key_of(queue: &Queue, n: u32) -> u32 {
+    let mut entries = queue
+        .history()
+        .iter()
+        .chain(queue.current())
+        .chain(queue.upcoming());
+    entries.find(|e| e.track == id(n)).unwrap().key
+}
