@@ -144,6 +144,9 @@ export interface NowPlaying {
   autoplay: boolean;
 }
 
+/** What repeats when the Queue, or a song, runs out. */
+export type RepeatMode = 'off' | 'all' | 'one';
+
 /** Everything about playback but the Queue's rows. */
 export interface PlayerState {
   revision: number;
@@ -160,6 +163,8 @@ export interface PlayerState {
   /** How many entries came before it. */
   history: number;
   queueRevision: number;
+  shuffle: boolean;
+  repeat: RepeatMode;
   /** Why playback failed, in words for the user. Set in the error state only. */
   error: string | null;
   /** The latest queued song that could not be played and was passed over. */
@@ -309,6 +314,9 @@ export interface Bridge {
   removeQueueEntry(key: number): Promise<void>;
   /** Drops every upcoming entry. The playing song carries on. */
   clearQueue(): Promise<void>;
+  toggleShuffle(): Promise<void>;
+  /** Off, all, one, and off again. */
+  cycleRepeat(): Promise<void>;
   toggleQueue(): Promise<void>;
   onPlayerChanged(handler: (state: PlayerState) => void): Promise<() => void>;
   onPlayerPosition(handler: (position: PlayerPosition) => void): Promise<() => void>;
@@ -403,6 +411,8 @@ export const tauriBridge: Bridge = {
   queueTrack: (trackId, placement) => invoke('queue_track', { trackId, placement }),
   removeQueueEntry: (key) => invoke('remove_queue_entry', { key }),
   clearQueue: () => invoke('clear_queue'),
+  toggleShuffle: () => invoke('toggle_shuffle'),
+  cycleRepeat: () => invoke('cycle_repeat'),
   toggleQueue: () => invoke('toggle_queue'),
   onPlayerChanged: (handler) =>
     listen<PlayerState>(PLAYER_CHANGED, (event) => handler(event.payload)),

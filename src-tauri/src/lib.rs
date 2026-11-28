@@ -77,6 +77,8 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::player::seek_by,
             ipc::player::set_volume,
             ipc::player::change_volume,
+            ipc::player::toggle_shuffle,
+            ipc::player::cycle_repeat,
             ipc::player::get_queue,
             ipc::player::get_queue_history,
             ipc::player::move_queue_entry,

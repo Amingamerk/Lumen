@@ -4,6 +4,7 @@
 use serde::Serialize;
 
 use crate::catalog::TrackRow;
+use crate::queue::Repeat;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -53,6 +54,8 @@ pub struct PlayerState {
     pub history: usize,
     /// Grows when the Queue changes.
     pub queue_revision: u64,
+    pub shuffle: bool,
+    pub repeat: Repeat,
     /// Why playback failed, in words for the user. Set in the error state only.
     pub error: Option<String>,
     /// The latest queued song that could not be played and was passed over.

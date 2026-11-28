@@ -1,6 +1,13 @@
 //! The play order. Pure logic: no clock, no Tauri, no catalog.
 
+use std::collections::HashSet;
+
 use uuid::Uuid;
+
+mod modes;
+
+pub use modes::Repeat;
+use modes::{Dice, Shuffle};
 
 /// One place in the Queue. The same Track queued twice has two entries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +30,7 @@ pub enum QueueError {
 }
 
 /// Entries in play order with one of them current. History is the entries before
-/// the current one.
+/// the current one. Without shuffle, the play order is the list order.
 #[derive(Debug, Default)]
 pub struct Queue {
     entries: Vec<Entry>,
@@ -31,6 +38,12 @@ pub struct Queue {
     current: usize,
     next_key: u32,
     revision: u64,
+    repeat: Repeat,
+    /// Set while shuffled.
+    shuffle: Option<Shuffle>,
+    dice: Dice,
+    /// The entry that played last before the Queue started over.
+    lap_end: Option<u32>,
 }
 
 impl Queue {
@@ -48,6 +61,8 @@ impl Queue {
             self.entries.push(entry);
         }
         self.current = start;
+        self.lap_end = None;
+        self.shuffle_replaced();
         self.revision += 1;
         Ok(())
     }
@@ -70,6 +85,9 @@ impl Queue {
     pub fn append_autoplay(&mut self, track: Uuid) {
         let entry = self.entry(track, true);
         self.entries.push(entry);
+        if let Some(shuffle) = &mut self.shuffle {
+            shuffle.list.push(entry);
+        }
         self.revision += 1;
     }
 
@@ -83,6 +101,11 @@ impl Queue {
         } else {
             self.current + 1
         };
+        let current = self.current().map(|entry| entry.key);
+        if let Some(shuffle) = &mut self.shuffle {
+            let after = shuffle.list.iter().position(|e| Some(e.key) == current);
+            shuffle.list.insert(after.map_or(0, |at| at + 1), entry);
+        }
         self.entries.insert(at, entry);
         self.revision += 1;
         key
@@ -98,10 +121,13 @@ impl Queue {
         } else {
             self.current + 1
         };
-        let at = self.entries[start..]
-            .iter()
-            .position(|e| e.autoplay)
-            .map_or(self.entries.len(), |n| start + n);
+        let current = self.current().map(|entry| entry.key);
+        if let Some(shuffle) = &mut self.shuffle {
+            let after = shuffle.list.iter().position(|e| Some(e.key) == current);
+            let at = before_picks(&shuffle.list, after.map_or(0, |at| at + 1));
+            shuffle.list.insert(at, entry);
+        }
+        let at = before_picks(&self.entries, start);
         self.entries.insert(at, entry);
         self.revision += 1;
         key
@@ -110,12 +136,16 @@ impl Queue {
     /// Makes `track` the current entry of an empty Queue under a key that
     /// `clear` handed out, for the song that is already playing.
     pub fn adopt(&mut self, key: u32, track: Uuid) {
-        self.entries.clear();
-        self.entries.push(Entry {
+        let entry = Entry {
             key,
             track,
             autoplay: false,
-        });
+        };
+        self.entries = vec![entry];
+        if let Some(shuffle) = &mut self.shuffle {
+            shuffle.list = vec![entry];
+        }
+        self.lap_end = None;
         self.current = 0;
         self.revision += 1;
     }
@@ -127,6 +157,9 @@ impl Queue {
             return Err(QueueError::NotUpcoming { key });
         }
         self.entries.remove(at);
+        if let Some(shuffle) = &mut self.shuffle {
+            shuffle.list.retain(|entry| entry.key != key);
+        }
         self.revision += 1;
         Ok(())
     }
@@ -137,7 +170,10 @@ impl Queue {
         if self.entries.len() == keep {
             return false;
         }
-        self.entries.truncate(keep);
+        let dropped: HashSet<u32> = self.entries.drain(keep..).map(|e| e.key).collect();
+        if let Some(shuffle) = &mut self.shuffle {
+            shuffle.list.retain(|entry| !dropped.contains(&entry.key));
+        }
         self.revision += 1;
         true
     }
@@ -146,6 +182,10 @@ impl Queue {
     /// outside it.
     pub fn clear(&mut self) -> u32 {
         self.entries.clear();
+        if let Some(shuffle) = &mut self.shuffle {
+            shuffle.list.clear();
+        }
+        self.lap_end = None;
         self.current = 0;
         self.revision += 1;
         let key = self.next_key;
@@ -153,22 +193,33 @@ impl Queue {
         key
     }
 
-    /// Makes the next entry current. `false` when there is none.
+    /// Makes the next entry current, starting over after the last one when the
+    /// whole Queue repeats. `false` when there is none.
     pub fn advance(&mut self) -> bool {
-        if self.upcoming().is_empty() {
+        if !self.upcoming().is_empty() {
+            self.current += 1;
+        } else if self.repeat == Repeat::All && !self.entries.is_empty() {
+            self.wrap();
+        } else {
             return false;
         }
-        self.current += 1;
         self.revision += 1;
         true
     }
 
-    /// Makes the previous entry current. `false` when there is none.
+    /// Makes the entry that played before current. From the first entry of a
+    /// Queue that started over, that is the one it ended on. `false` when there
+    /// is none.
     pub fn retreat(&mut self) -> bool {
-        if self.current == 0 {
-            return false;
+        if self.current > 0 {
+            self.current -= 1;
+        } else {
+            let last = self.lap_end.and_then(|key| self.index_of(key).ok());
+            match last.filter(|&at| at > 0) {
+                Some(at) => self.current = at,
+                None => return false,
+            }
         }
-        self.current -= 1;
         self.revision += 1;
         true
     }
@@ -216,6 +267,15 @@ impl Queue {
     pub fn revision(&self) -> u64 {
         self.revision
     }
+}
+
+/// Where a song the user adds goes: ahead of the first pick from `start` on, or
+/// at the end.
+fn before_picks(entries: &[Entry], start: usize) -> usize {
+    entries[start..]
+        .iter()
+        .position(|e| e.autoplay)
+        .map_or(entries.len(), |n| start + n)
 }
 
 #[cfg(test)]

@@ -114,6 +114,37 @@ describe('player bar', () => {
     expect(bridge.commands).toEqual([['setVolume', 35]]);
   });
 
+  it('shows shuffle and repeat as Rust says, and only asks for a change', async () => {
+    const { bridge } = await playing();
+    const pressed = (name: string) => button(name).getAttribute('aria-pressed');
+    expect([pressed('Shuffle'), pressed('Repeat')]).toEqual(['false', 'false']);
+
+    await fireEvent.click(button('Shuffle'));
+    await fireEvent.click(button('Repeat'));
+
+    expect(bridge.commands).toEqual([['toggleShuffle'], ['cycleRepeat']]);
+    // Nothing shows until Rust answers.
+    expect([pressed('Shuffle'), pressed('Repeat')]).toEqual(['false', 'false']);
+
+    bridge.emitPlayer(playerState({ revision: 2, shuffle: true, repeat: 'all' }));
+    await waitFor(() => expect(pressed('Shuffle')).toBe('true'));
+    expect(pressed('Repeat all')).toBe('true');
+
+    bridge.emitPlayer(playerState({ revision: 3, repeat: 'one' }));
+    await waitFor(() => expect(pressed('Repeat one')).toBe('true'));
+    expect(pressed('Shuffle')).toBe('false');
+  });
+
+  it('takes shuffle and repeat with nothing playing', async () => {
+    const { bridge } = await openApp();
+    await waitFor(() => expect(button('Shuffle').disabled).toBe(false));
+
+    await fireEvent.click(button('Shuffle'));
+    await fireEvent.click(button('Repeat'));
+
+    expect(bridge.commands).toEqual([['toggleShuffle'], ['cycleRepeat']]);
+  });
+
   it('asks Rust to toggle the queue', async () => {
     const { bridge } = await openApp();
 

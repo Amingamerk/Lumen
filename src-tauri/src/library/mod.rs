@@ -16,6 +16,7 @@ mod likes;
 mod matches;
 mod playlists;
 mod schema;
+mod settings;
 mod streams;
 mod tracks;
 mod writer;
