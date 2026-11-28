@@ -4,10 +4,13 @@
   import PauseIcon from 'phosphor-svelte/lib/PauseIcon';
   import PlayIcon from 'phosphor-svelte/lib/PlayIcon';
   import QueueIcon from 'phosphor-svelte/lib/QueueIcon';
+  import RepeatIcon from 'phosphor-svelte/lib/RepeatIcon';
+  import RepeatOnceIcon from 'phosphor-svelte/lib/RepeatOnceIcon';
+  import ShuffleIcon from 'phosphor-svelte/lib/ShuffleIcon';
   import SkipBackIcon from 'phosphor-svelte/lib/SkipBackIcon';
   import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
   import { releasePointerFocus } from '../focus';
-  import type { PlaybackStatus } from '../ipc';
+  import type { PlaybackStatus, RepeatMode } from '../ipc';
   import type { LibraryStore } from '../stores/library.svelte';
   import type { PlayerStore } from '../stores/player.svelte';
   import CoverArt from './CoverArt.svelte';
@@ -32,6 +35,12 @@
     error: 'Could not play',
   };
 
+  const REPEAT_LABELS: Record<RepeatMode, string> = {
+    off: 'Repeat',
+    all: 'Repeat all',
+    one: 'Repeat one',
+  };
+
   const current = $derived(player.state?.current ?? null);
   const idle = $derived(current === null);
   const status = $derived(player.state?.status ?? 'idle');
@@ -42,6 +51,8 @@
   const seekable = $derived(!idle && !waiting && status !== 'error');
   const canNext = $derived(player.state?.canNext ?? false);
   const canPrevious = $derived(player.state?.canPrevious ?? false);
+  const shuffle = $derived(player.state?.shuffle ?? false);
+  const repeat = $derived(player.state?.repeat ?? 'off');
 
   // Asks Rust about the song that plays, once per song.
   $effect(() => {
@@ -100,6 +111,17 @@
 
   <div class="flex flex-col items-center gap-2">
     <div class="flex items-center gap-4">
+      <button
+        type="button"
+        class="transport transport-mode"
+        disabled={player.state === null}
+        aria-label="Shuffle"
+        aria-pressed={shuffle}
+        title="Shuffle"
+        onclick={(event) => press(event, () => player.toggleShuffle())}
+      >
+        <ShuffleIcon size={18} weight="bold" aria-hidden="true" />
+      </button>
       <!-- aria-disabled here and on Next, so losing one does not throw the focus away. -->
       <button
         type="button"
@@ -133,6 +155,21 @@
         onclick={(event) => press(event, () => canNext && player.next())}
       >
         <SkipForwardIcon size={20} weight="fill" aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        class="transport transport-mode"
+        disabled={player.state === null}
+        aria-label={REPEAT_LABELS[repeat]}
+        aria-pressed={repeat !== 'off'}
+        title={REPEAT_LABELS[repeat]}
+        onclick={(event) => press(event, () => player.cycleRepeat())}
+      >
+        {#if repeat === 'one'}
+          <RepeatOnceIcon size={18} weight="bold" aria-hidden="true" />
+        {:else}
+          <RepeatIcon size={18} weight="bold" aria-hidden="true" />
+        {/if}
       </button>
     </div>
     <!-- A new track drops a half-made drag. -->

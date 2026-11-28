@@ -19,6 +19,7 @@ use crate::audio::{
 };
 use crate::catalog::{Catalog, Track, TrackRow};
 use crate::library::{Library, PlayLog};
+use crate::queue::Repeat;
 use crate::recs::StaticRecommender;
 use crate::state::SearchPick;
 
@@ -29,16 +30,27 @@ pub const PLAYER_POSITION: &str = "player-position";
 /// libmpv in the app, stand-ins in tests.
 pub(super) type AppPlayer = Player<Box<dyn Engine>>;
 
-/// The player behind its own lock, so playback never waits for a search.
+/// The settings shuffle and repeat are kept under.
+const SHUFFLE_SETTING: &str = "shuffle";
+const REPEAT_SETTING: &str = "repeat";
+
+/// The player behind its own lock, so playback never waits for a search. Clones
+/// share it, so one can move to a blocking thread.
+#[derive(Clone)]
 pub struct PlayerHandle {
     player: Arc<Mutex<AppPlayer>>,
+    /// Held while shuffle and repeat are written.
+    saving: Arc<Mutex<()>>,
 }
 
 impl PlayerHandle {
     fn new(catalog: Arc<Catalog>, engine: Box<dyn Engine>) -> Self {
         let recommender = Box::new(StaticRecommender::new(Arc::clone(&catalog)));
         let player = Arc::new(Mutex::new(Player::new(engine, catalog, recommender)));
-        Self { player }
+        Self {
+            player,
+            saving: Arc::default(),
+        }
     }
 
     /// Where the plays of this run are written.
@@ -138,6 +150,58 @@ impl PlayerHandle {
     }
 }
 
+impl PlayerHandle {
+    /// Takes up shuffle and repeat as the last run left them. A setting that
+    /// is missing or cannot be read means off.
+    fn restore_modes(&self, library: &Library) {
+        let kept = |key| library.setting(key).ok().flatten();
+        let shuffle = kept(SHUFFLE_SETTING).as_deref() == Some("on");
+        let repeat = match kept(REPEAT_SETTING).as_deref() {
+            Some("all") => Repeat::All,
+            Some("one") => Repeat::One,
+            _ => Repeat::Off,
+        };
+        let mut player = lock(&self.player);
+        player.set_shuffle(shuffle);
+        player.set_repeat(repeat);
+    }
+
+    /// Changes shuffle or repeat, announces it and keeps both for the next
+    /// launch. Writes to the database, so it belongs on a blocking thread.
+    fn change_modes(
+        &self,
+        sink: &impl EventSink,
+        library: Option<&Library>,
+        act: impl FnOnce(&mut AppPlayer) -> Option<PlayerState>,
+    ) -> Result<(), IpcError> {
+        let announced = command(self, sink, |p| Ok(act(p)));
+        if let Some(library) = library {
+            self.save_modes(library);
+        }
+        announced
+    }
+
+    fn save_modes(&self, library: &Library) {
+        // The player is read once it is this write's turn, so the last write
+        // holds the latest modes.
+        let _turn = lock(&self.saving);
+        let (shuffle, repeat) = lock(&self.player).modes();
+        let shuffle = if shuffle { "on" } else { "off" };
+        let repeat = match repeat {
+            Repeat::Off => "off",
+            Repeat::All => "all",
+            Repeat::One => "one",
+        };
+        let saved = library
+            .set_setting(SHUFFLE_SETTING, shuffle)
+            .and_then(|()| library.set_setting(REPEAT_SETTING, repeat));
+        // The modes hold for this run either way.
+        if let Err(error) = saved {
+            eprintln!("lumen: could not keep shuffle and repeat: {error}");
+        }
+    }
+}
+
 /// How long [`AudioThread::stop`] waits for mpv to shut down.
 const STOP_PATIENCE: Duration = Duration::from_secs(2);
 
@@ -185,6 +249,7 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::R
         handle.log_to(Box::new(writer));
     }
     if let Some(library) = super::library::open_shared(app) {
+        handle.restore_modes(&library);
         lock(&handle.player).set_tracks(Box::new(LibraryTracks(library)));
     }
     if let Some(path) = file {
@@ -372,6 +437,35 @@ pub fn change_volume<R: Runtime>(
     command(&player, &app, |p| Ok(p.change_volume(delta)))
 }
 
+#[tauri::command]
+pub async fn toggle_shuffle<R: Runtime>(
+    app: AppHandle<R>,
+    player: State<'_, PlayerHandle>,
+    library: State<'_, LibraryHandle>,
+) -> Result<(), IpcError> {
+    let (player, library) = (player.inner().clone(), library.inner().clone());
+    blocking(move || {
+        let library = library.library().ok().map(Arc::as_ref);
+        player.change_modes(&app, library, AppPlayer::toggle_shuffle)
+    })
+    .await
+}
+
+/// Moves the repeat mode on: off, all, one.
+#[tauri::command]
+pub async fn cycle_repeat<R: Runtime>(
+    app: AppHandle<R>,
+    player: State<'_, PlayerHandle>,
+    library: State<'_, LibraryHandle>,
+) -> Result<(), IpcError> {
+    let (player, library) = (player.inner().clone(), library.inner().clone());
+    blocking(move || {
+        let library = library.library().ok().map(Arc::as_ref);
+        player.change_modes(&app, library, AppPlayer::cycle_repeat)
+    })
+    .await
+}
+
 /// The visible window of the upcoming entries. Their rows come from the library,
 /// so this waits on a blocking thread.
 #[tauri::command]
@@ -474,6 +568,7 @@ mod tests {
         SimulatedEngine, Skipped, SystemClock,
     };
     use crate::catalog::{SourceKind, SourceTag};
+    use crate::library::testing::{library_at, memory, reopen};
 
     /// A player that can play the catalog's samples.
     fn handle() -> PlayerHandle {
@@ -601,6 +696,98 @@ mod tests {
         assert_eq!(sink.positions.borrow().len(), 1);
     }
 
+    /// Changes the modes as the two commands do.
+    fn press(handle: &PlayerHandle, library: Option<&Library>, sink: &RecordingSink) {
+        handle
+            .change_modes(sink, library, AppPlayer::toggle_shuffle)
+            .unwrap();
+        for _ in 0..2 {
+            handle
+                .change_modes(sink, library, AppPlayer::cycle_repeat)
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn shuffle_and_repeat_are_announced_and_survive_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lumen.db");
+        let (library, _) = library_at(&path);
+        let before = handle();
+        let sink = RecordingSink::default();
+
+        press(&before, Some(&library), &sink);
+
+        let announced: Vec<_> = sink
+            .states
+            .borrow()
+            .iter()
+            .map(|s| (s.shuffle, s.repeat))
+            .collect();
+        assert_eq!(
+            announced,
+            [
+                (true, Repeat::Off),
+                (true, Repeat::All),
+                (true, Repeat::One)
+            ]
+        );
+        drop(library);
+
+        let after = handle();
+        after.restore_modes(&reopen(&path));
+
+        let state = lock(&after.player).state();
+        assert_eq!((state.shuffle, state.repeat), (true, Repeat::One));
+    }
+
+    #[test]
+    fn modes_go_back_off_for_the_next_launch_too() {
+        let (library, _) = memory();
+        let handle_before = handle();
+        let sink = RecordingSink::default();
+        press(&handle_before, Some(&library), &sink);
+        handle_before
+            .change_modes(&sink, Some(&library), AppPlayer::toggle_shuffle)
+            .unwrap();
+        handle_before
+            .change_modes(&sink, Some(&library), AppPlayer::cycle_repeat)
+            .unwrap();
+
+        let after = handle();
+        after.restore_modes(&library);
+
+        assert_eq!(lock(&after.player).modes(), (false, Repeat::Off));
+        assert_eq!(library.setting("shuffle").unwrap().as_deref(), Some("off"));
+        assert_eq!(library.setting("repeat").unwrap().as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn a_new_or_unreadable_setting_leaves_the_mode_off() {
+        let (library, _) = memory();
+        let fresh = handle();
+        fresh.restore_modes(&library);
+        assert_eq!(lock(&fresh.player).modes(), (false, Repeat::Off));
+
+        library.set_setting("shuffle", "maybe").unwrap();
+        library.set_setting("repeat", "twice").unwrap();
+        fresh.restore_modes(&library);
+
+        assert_eq!(lock(&fresh.player).modes(), (false, Repeat::Off));
+        assert_eq!(lock(&fresh.player).state().revision, 0);
+    }
+
+    #[test]
+    fn without_a_library_the_modes_still_change() {
+        let handle = handle();
+        let sink = RecordingSink::default();
+
+        press(&handle, None, &sink);
+
+        assert_eq!(lock(&handle.player).modes(), (true, Repeat::One));
+        assert_eq!(sink.states.borrow().len(), 3);
+    }
+
     #[test]
     fn engine_events_go_out_as_changes_or_positions() {
         let handle = handle();
@@ -649,6 +836,8 @@ mod tests {
             upcoming: 5,
             history: 2,
             queue_revision: 3,
+            shuffle: true,
+            repeat: Repeat::One,
             error: None,
             skipped: Some(Box::new(Skipped {
                 key: 1,
@@ -670,6 +859,8 @@ mod tests {
                 "upcoming": 5,
                 "history": 2,
                 "queueRevision": 3,
+                "shuffle": true,
+                "repeat": "one",
                 "error": null,
                 "skipped": { "key": 1, "message": "Lumen skipped “Harbor Lights”." }
             })

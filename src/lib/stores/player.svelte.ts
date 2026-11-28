@@ -102,6 +102,14 @@ export class PlayerStore {
     return this.#send(() => this.#bridge.clearQueue());
   }
 
+  toggleShuffle() {
+    return this.#send(() => this.#bridge.toggleShuffle());
+  }
+
+  cycleRepeat() {
+    return this.#send(() => this.#bridge.cycleRepeat());
+  }
+
   dismissNotice() {
     this.notice = null;
   }

@@ -3,7 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use super::*;
-use crate::audio::{EngineEvent, FakeEngine};
+use crate::audio::{EngineEvent, FakeEngine, FakeTracks};
 use crate::recs::StaticRecommender;
 use crate::sources::youtube::testing::FakeClock;
 
@@ -412,5 +412,46 @@ mod queued {
         player.shutdown();
 
         assert_eq!(journal.starts(), 1, "{:?}", journal.all());
+    }
+}
+
+#[test]
+fn next_on_a_repeating_queue_of_one_ends_the_play_as_skipped_and_starts_another() {
+    let mut rig = rig();
+    // A library song: no sample has its id.
+    let only = FakeTracks::track(900_001);
+    let id = only.id;
+    let tracks = FakeTracks::default();
+    tracks.add(only);
+    rig.player.set_tracks(Box::new(tracks));
+    rig.player.set_repeat(Repeat::All);
+    rig.player.play_list(vec![id], 0).unwrap();
+    rig.resolve();
+    rig.listen(secs(30));
+
+    rig.player.next_track().expect("the queue starts over");
+    rig.resolve();
+
+    let plays = rig.journal.all();
+    assert_eq!(
+        plays[1],
+        Logged::Ended {
+            play: 1,
+            listened: secs(30),
+            reason: EndReason::Skipped,
+        }
+    );
+    assert_eq!(rig.journal.starts(), 2);
+    assert_eq!(plays.len(), 3);
+}
+
+impl Rig {
+    /// The queued song's stream arrives and its audio starts.
+    fn resolve(&mut self) {
+        let fetch = self.player.due_fetch().expect("a fetch is due");
+        self.player
+            .finish_fetch(fetch.ticket, Ok(stream()))
+            .unwrap();
+        self.open();
     }
 }

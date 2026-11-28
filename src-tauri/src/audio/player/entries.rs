@@ -172,7 +172,10 @@ impl<E: Engine> Player<E> {
             key: direct.key,
             message: format!("Lumen skipped “{}”: {reason}.", direct.row.title),
         });
-        if self.skips < MAX_SKIPS && self.advance() {
+        // A repeating Queue does not come round to a song it just passed over.
+        let entries = self.queue.history().len() + 1 + self.queue.upcoming().len();
+        let round = self.queue.repeat() == Repeat::All && self.skips + 1 >= entries;
+        if self.skips < MAX_SKIPS && !round && self.advance() {
             self.skips += 1;
             self.skipped = Some(skipped);
             self.start_entry();

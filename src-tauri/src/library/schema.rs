@@ -81,6 +81,13 @@ const STEPS: &[&str] = &[
         PRIMARY KEY (from_kind, from_id)
     ) STRICT;
     ",
+    // 4: Choices kept between launches, such as shuffle and repeat.
+    "
+    CREATE TABLE settings (
+        key TEXT PRIMARY KEY NOT NULL,
+        value TEXT NOT NULL
+    ) STRICT;
+    ",
 ];
 
 /// The version a fresh database ends at.

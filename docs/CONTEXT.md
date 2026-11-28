@@ -62,6 +62,18 @@ stops with the error instead). A live YouTube Music result empties it and plays 
 pick and keeps a few upcoming. The history is the entries before the current one. The whole Queue stays in
 Rust; the UI asks for the upcoming or history rows it shows, a window at a time.
 
+### Shuffle and repeat
+**Shuffle** changes only the play order: the upcoming entries play in a random order, each once, ahead of the
+autoplay picks. A list started while shuffled leads with the chosen row and keeps every other song upcoming. The
+history stays what played, so Previous walks back through it. The list order is kept beside the play order. Turning
+shuffle off goes back to it from the current entry: the songs after it, then those before it that have not played.
+Play next and Add to queue also take their place in the list order, and so does a drag made without shuffle; a drag
+made while shuffled changes the play order only.
+**Repeat** is `off`, `all` or `one`. With `all` the Queue starts over after its last entry, in list order without
+shuffle (shuffled, the songs that were there before shuffle was turned on are shuffled then). Previous goes back
+over the latest such wrap, not further. With `one` a song that ends by itself plays again, while Next still moves
+on. The Recommender adds picks only with repeat off. Both settings are kept between launches.
+
 ### Queue entry
 One place in the Queue: a Track plus a `key` that is unique and never reused, so the same Track twice is two
 entries. Reordering moves an upcoming entry before another, by key.
@@ -78,8 +90,9 @@ happens before the Engine sees Media.
 
 ### Playback status
 `idle`, `loading`, `playing`, `paused`, `ended` or `error`. Real audio (a local file or a live YouTube Music
-song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends. A
-queued library song moves on to the next entry when it ends, and Next and Previous work.
+song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends
+(with repeat on, it plays again). A queued library song moves on to the next entry when it ends, and Next and
+Previous work.
 
 ### Library, like and history
 The library is the SQLite file `library.db` in the app's local data folder. It keeps each Track it has met once,
@@ -89,7 +102,8 @@ a song is chosen or resolved), with its start time, the time it actually sounded
 `skipped`, `replaced`, `failed`, `exit`, or `interrupted` after a crash). A pause, a seek, a stream recovery or
 a failed load adds no row and no listened time. The Library view's **Recently played** lists each song once, the
 latest play first. A file made by a newer Lumen, or a damaged one, is reported and left as it is; likes and
-history stay off until it is dealt with. It also holds the **kept streams** of the Resolver and the **match** cache. Pressing a song of the library, or a row of a local playlist, queues
+history stay off until it is dealt with. It also holds the **kept streams** of the Resolver, the **match** cache and a
+few **settings** (shuffle and repeat). Pressing a song of the library, or a row of a local playlist, queues
 that whole list and plays from the row. A run with `--list` opens a **throwaway library** in the system's
 temp folder, holding one sample playlist of 5,000 songs, and never reads or writes the user's `library.db`.
 

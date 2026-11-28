@@ -1229,6 +1229,25 @@
     cursor: default;
   }
 
+  /* Shuffle and repeat. On shows as light and a dot, not by colour alone. */
+  .transport-mode {
+    position: relative;
+  }
+
+  .transport-mode[aria-pressed='true'] {
+    color: var(--color-lume-hi);
+  }
+
+  .transport-mode[aria-pressed='true']::after {
+    content: '';
+    position: absolute;
+    bottom: 1px;
+    width: 4px;
+    height: 4px;
+    border-radius: 999px;
+    background: currentColor;
+  }
+
   /* The cover of the current Track, small: its initials sit in the middle. */
   .now-art {
     flex: none;

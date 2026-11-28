@@ -11,12 +11,13 @@ use super::{
 };
 use crate::catalog::{Catalog, MAX_SLICE, TrackRow};
 use crate::library::{EndReason, NoLog, PlayLog};
-use crate::queue::{Entry, Queue, QueueError};
+use crate::queue::{Entry, Queue, QueueError, Repeat};
 use crate::recs::{RECENT_HISTORY, Recommender};
 use crate::sources::youtube::SystemClock;
 
 mod entries;
 mod history;
+mod modes;
 mod recovery;
 
 use entries::NoTracks;
@@ -188,6 +189,13 @@ impl<E: Engine> Player<E> {
         };
         let queued = self.queue.current().is_some();
         let upcoming = self.queue.upcoming().len();
+        // Past the last entry there is the first one, or a pick.
+        let can_go_on = upcoming > 0
+            || match self.queue.repeat() {
+                Repeat::Off => self.recommendation().is_some(),
+                Repeat::All => true,
+                Repeat::One => false,
+            };
         PlayerState {
             revision: self.revision,
             status,
@@ -198,11 +206,13 @@ impl<E: Engine> Player<E> {
             },
             duration_ms,
             volume: self.volume,
-            can_next: queued && (upcoming > 0 || self.recommendation().is_some()),
+            can_next: queued && can_go_on,
             can_previous: queued,
             upcoming,
             history: self.queue.history().len(),
             queue_revision: self.queue.revision(),
+            shuffle: self.queue.shuffled(),
+            repeat: self.queue.repeat(),
             error: match &self.phase {
                 Phase::Failed(message) => Some(message.clone()),
                 _ => None,
@@ -361,7 +371,8 @@ impl<E: Engine> Player<E> {
         if !self.advance() {
             return None;
         }
-        self.end_reason = Some(EndReason::Skipped);
+        // Ended here: a repeating Queue of one comes back to the same entry.
+        self.end_listen(EndReason::Skipped);
         self.skips = 0;
         self.start_entry();
         Some(self.commit())
@@ -518,6 +529,8 @@ impl<E: Engine> Player<E> {
                 }
                 if self.recoverable() && self.ended_early() {
                     self.drop_failed(self.reached());
+                } else if self.repeats_song() {
+                    self.replay();
                 } else if self.direct.is_some() && !self.is_queued() {
                     self.end_listen(EndReason::Finished);
                     // Real audio by itself stops here. Nothing advances.
@@ -670,14 +683,18 @@ impl<E: Engine> Player<E> {
         self.load(Duration::ZERO, true);
     }
 
-    /// Makes the following entry current, adding a pick first if there is none.
-    /// While a pick is current, more are kept waiting behind it.
+    /// Makes the following entry current. With repeat off, a pick is added
+    /// first if there is none, and while a pick is current, more are kept
+    /// waiting behind it.
     fn advance(&mut self) -> bool {
-        if self.queue.upcoming().is_empty() && !self.append_pick() {
+        let picks = self.queue.repeat() == Repeat::Off;
+        if picks && self.queue.upcoming().is_empty() && !self.append_pick() {
             return false;
         }
-        self.queue.advance();
-        if self.queue.current().is_some_and(|entry| entry.autoplay) {
+        if !self.queue.advance() {
+            return false;
+        }
+        if picks && self.queue.current().is_some_and(|entry| entry.autoplay) {
             while self.waiting_picks() < AUTOPLAY_AHEAD && self.append_pick() {}
         }
         true
