@@ -99,6 +99,12 @@ pub(crate) mod fake {
             self.sent.lock().unwrap().len()
         }
 
+        /// The body of every request sent.
+        pub fn bodies(&self) -> Vec<String> {
+            let sent = self.sent.lock().unwrap();
+            sent.iter().map(|request| request.body.clone()).collect()
+        }
+
         pub fn urls(&self) -> Vec<String> {
             let sent = self.sent.lock().unwrap();
             sent.iter().map(|request| request.url.clone()).collect()

@@ -1,6 +1,8 @@
-//! Live song search: the cache first, then one request through the gate.
+//! Live search: the cache first, then one request through the gate.
+//! Each chip is a search of its own.
 
 mod cache;
+mod hits;
 mod parse;
 
 pub use cache::{Cache, key};
@@ -12,50 +14,59 @@ use super::gate::{GateClock, Kind, Verdict};
 use super::service::{ServiceError, YouTube};
 use super::session::Session;
 use super::transport::Transport;
+use crate::catalog::SearchKind;
 use crate::secrets::SecretStore;
 
 impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
-    /// What a recent search for `query` found. While nothing may be sent,
-    /// nothing is shown either: the error says why.
-    pub fn cached_songs(&self, query: &str) -> Result<Option<Parsed>, ServiceError> {
+    /// What a recent search for `query` with this chip found. While nothing may
+    /// be sent, nothing is shown either: the error says why.
+    pub fn cached_results(
+        &self,
+        query: &str,
+        kind: SearchKind,
+    ) -> Result<Option<Parsed>, ServiceError> {
         let generation = self.ready().inspect_err(|error| {
             if matches!(error, ServiceError::Disconnected | ServiceError::Expired) {
                 self.searches().clear();
             }
         })?;
-        Ok(self.recall(generation, query))
+        Ok(self.recall(generation, query, kind))
     }
 
-    /// The songs matching `query`. Sends one request at most, and none if the
-    /// query is blank, the answer is cached or `wanted` says no once it is this
-    /// search's turn.
-    pub async fn search_songs(
+    /// What matches `query` under this chip. Sends one request at most, and
+    /// none if the query is blank, the answer is cached or `wanted` says no once
+    /// it is this search's turn.
+    pub async fn search_results(
         &self,
         query: &str,
+        kind: SearchKind,
         wanted: impl Fn() -> bool,
     ) -> Result<Parsed, ServiceError> {
         let query = query.trim();
         if query.is_empty() {
             return Ok(Parsed::NoResults);
         }
-        if let Some(found) = self.cached_songs(query)? {
+        if let Some(found) = self.cached_results(query, kind)? {
             return Ok(found);
         }
         let outcome = self
             .through_gate(Kind::Api, wanted, |lease| async move {
                 // The same query may have been answered while this one waited.
-                if let Some(found) = self.recall(lease.generation, query) {
+                if let Some(found) = self.recall(lease.generation, query, kind) {
                     return (Verdict::Neutral, Ok(found));
                 }
-                let build = |session: &Session, now_ms| client::search(session, query, now_ms);
+                let build =
+                    |session: &Session, now_ms| client::search(session, query, kind, now_ms);
                 let (verdict, found) = self
-                    .send("search", lease.session, build, parse::songs)
+                    .send("search", lease.session, build, |reply| {
+                        parse::results(reply, kind)
+                    })
                     .await;
                 // An answer that was paid for is kept, wanted or not.
                 if let Ok(found) = &found {
                     let now = self.gate().monotonic();
                     self.searches()
-                        .put(lease.generation, query, found.clone(), now);
+                        .put(lease.generation, query, kind, found.clone(), now);
                 }
                 (verdict, found)
             })
@@ -66,11 +77,11 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
         Ok(outcome?)
     }
 
-    fn recall(&self, generation: Generation, query: &str) -> Option<Parsed> {
+    fn recall(&self, generation: Generation, query: &str, kind: SearchKind) -> Option<Parsed> {
         let now = self.gate().monotonic();
         let mut searches = self.searches();
         searches.follow(generation);
-        searches.get(query, now)
+        searches.get(query, kind, now)
     }
 }
 
@@ -150,12 +161,14 @@ mod tests {
     }
 
     async fn search(f: &Fixture, query: &str) -> Result<Parsed, ServiceError> {
-        f.service.search_songs(query, || true).await
+        f.service
+            .search_results(query, SearchKind::Songs, || true)
+            .await
     }
 
     fn song_count(found: Result<Parsed, ServiceError>) -> usize {
         match found {
-            Ok(Parsed::Songs(tracks)) => tracks.len(),
+            Ok(Parsed::Found(found)) => found.songs.len(),
             other => panic!("expected songs, got {other:?}"),
         }
     }
@@ -182,12 +195,62 @@ mod tests {
         assert_eq!(song_count(search(&f, "  PAPER ").await), 3);
         assert_eq!(search(&f, "zzz").await, Ok(Parsed::NoResults));
         assert_eq!(
-            song_count(f.service.cached_songs("Paper").map(Option::unwrap)),
+            song_count(
+                f.service
+                    .cached_results("Paper", SearchKind::Songs)
+                    .map(Option::unwrap)
+            ),
             3
         );
-        assert_eq!(f.service.cached_songs("unseen"), Ok(None));
+        assert_eq!(
+            f.service.cached_results("unseen", SearchKind::Songs),
+            Ok(None)
+        );
 
         assert_eq!(f.transport.sent(), 2);
+    }
+
+    /// The body of each request sent, as JSON.
+    fn bodies(f: &Fixture) -> Vec<serde_json::Value> {
+        f.transport
+            .bodies()
+            .iter()
+            .map(|body| serde_json::from_str(body).unwrap())
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn each_chip_is_one_request_of_its_own_with_its_own_filter() {
+        let f = fixture();
+        for _ in 0..3 {
+            f.transport.answer(ok(NOTHING));
+        }
+        let ask = |kind| f.service.search_results("paper", kind, || true);
+
+        ask(SearchKind::All).await.unwrap();
+        ask(SearchKind::Albums).await.unwrap();
+        ask(SearchKind::Playlists).await.unwrap();
+        // Back on a chip already answered: nothing is sent.
+        ask(SearchKind::Albums).await.unwrap();
+        ask(SearchKind::All).await.unwrap();
+
+        assert_eq!(f.transport.sent(), 3);
+        let params: Vec<Option<String>> = bodies(&f)
+            .iter()
+            .map(|body| body["params"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(
+            params,
+            [
+                None,
+                Some("EgWKAQIYAWoMEA4QChADEAQQCRAF".to_owned()),
+                Some("Eg-KAQwIABAAGAAgACgBMABqChAEEAMQCRAFEAo%3D".to_owned()),
+            ]
+        );
+        assert_eq!(
+            f.service.cached_results("paper", SearchKind::Artists),
+            Ok(None)
+        );
     }
 
     #[tokio::test]
@@ -216,7 +279,9 @@ mod tests {
         let (service, newest) = (f.service.clone(), newest.clone());
         tokio::spawn(async move {
             let wanted = || newest.load(Ordering::SeqCst) == number;
-            service.search_songs(query, wanted).await
+            service
+                .search_results(query, SearchKind::Songs, wanted)
+                .await
         })
     }
 
@@ -292,7 +357,11 @@ mod tests {
         let sent = f.transport.sent();
         for query in ["kept", "new"] {
             assert_eq!(search(f, query).await, Err(error), "{query}");
-            assert_eq!(f.service.cached_songs(query), Err(error), "{query}");
+            assert_eq!(
+                f.service.cached_results(query, SearchKind::Songs),
+                Err(error),
+                "{query}"
+            );
         }
         assert_eq!(f.transport.sent(), sent);
     }
@@ -358,7 +427,10 @@ mod tests {
 
         sign_in(&f.service);
 
-        assert_eq!(f.service.cached_songs("salt"), Ok(None));
+        assert_eq!(
+            f.service.cached_results("salt", SearchKind::Songs),
+            Ok(None)
+        );
         assert_eq!(search(&f, "salt").await, Ok(Parsed::NoResults));
         assert_eq!(f.transport.sent(), 2);
     }

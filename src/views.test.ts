@@ -131,7 +131,7 @@ describe('Search', () => {
   /** A bridge whose search stands at `status`, with nothing found. */
   function standing(status: SearchStatus, filter: SourceFilter = 'all') {
     const bridge = connected();
-    bridge.remembered = { query: 'zzz', filter };
+    bridge.remembered = { query: 'zzz', filter, kind: 'all' };
     bridge.answer = (query, chosen) =>
       searchView(query, chosen, { status, tracks: [], collections: [] });
     return bridge;
@@ -152,7 +152,7 @@ describe('Search', () => {
 
   it('starts with the search Rust remembers', async () => {
     const bridge = connected();
-    bridge.remembered = { query: 'lamp', filter: 'youtube' };
+    bridge.remembered = { query: 'lamp', filter: 'youtube', kind: 'all' };
 
     await openResults(bridge);
 
@@ -164,7 +164,7 @@ describe('Search', () => {
     await openResults();
 
     expect(
-      main()
+      within(main().getByRole('group', { name: 'Source' }))
         .getAllByRole<HTMLInputElement>('radio')
         .map((radio) => [radio.labels?.[0]?.textContent?.trim(), radio.checked]),
     ).toEqual([
@@ -225,7 +225,7 @@ describe('Search', () => {
 
   it('says SoundCloud arrives later on its chip and sends nothing to a service', async () => {
     const bridge = connected();
-    bridge.remembered = { query: '', filter: 'soundcloud' };
+    bridge.remembered = { query: '', filter: 'soundcloud', kind: 'all' };
     await openSearch(bridge);
 
     expect(await heading('SoundCloud arrives later')).toBeTruthy();

@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::catalog::{
-    Catalog, CollectionDetail, Library, SearchStatus, SearchView, Shelf, SourceFilter, SourceKind,
-    Track, TrackRow, TrackSlice,
+    Catalog, CollectionDetail, HitRow, Library, Results, SearchKind, SearchStatus, SearchView,
+    Shelf, SourceFilter, SourceKind, TopView, Track, TrackRow, TrackSlice,
 };
 use crate::sources::youtube::{GateError, Parsed, ServiceError, search_key};
 
@@ -93,6 +93,7 @@ pub struct Ticket {
     /// Only the newest ticket is still wanted.
     pub number: u64,
     pub query: String,
+    pub kind: SearchKind,
 }
 
 /// What a submit or a chip change leads to.
@@ -109,14 +110,16 @@ pub struct Submitted {
 struct SearchState {
     query: String,
     filter: SourceFilter,
+    /// The type chip.
+    kind: SearchKind,
     revision: u64,
     /// The number of the newest live search.
     newest: u64,
     /// The query in flight, as the cache keys it.
     pending: Option<String>,
     status: SearchStatus,
-    /// The live songs shown, kept whole: their video ids stay here.
-    live: Vec<Track>,
+    /// What the live search found, kept whole: the songs' video ids stay here.
+    found: Results,
 }
 
 #[derive(Debug)]
@@ -252,7 +255,7 @@ impl AppState {
     pub fn search_pick(&self, track_id: Uuid) -> Result<SearchPick, StateError> {
         let missing = StateError::NotInSearch { id: track_id };
         if self.search.filter != SourceFilter::SoundCloud {
-            let track = self.search.live.iter().find(|t| t.id == track_id);
+            let track = self.search.found.track(track_id);
             let video = track.and_then(|t| {
                 let youtube = t.sources.iter().find(|s| s.kind == SourceKind::YouTube);
                 Some((youtube?.id.clone(), TrackRow::from(t)))
@@ -272,16 +275,21 @@ impl AppState {
 
     /// The Track with this id, from the live results on show or the catalog.
     pub fn known_track(&self, id: Uuid) -> Option<Track> {
-        let live = self.search.live.iter().find(|track| track.id == id);
+        let live = self.search.found.track(id);
         live.or_else(|| self.catalog.track(id)).cloned()
+    }
+
+    /// Where the picture of a song or hit among the live results lives.
+    pub fn result_artwork(&self, id: Uuid) -> Option<String> {
+        self.search.found.artwork(id).map(str::to_owned)
     }
 
     /// Enter on the Search view. A ticket means YouTube Music has to be asked.
     /// The SoundCloud chip searches the sample catalog instead.
     pub fn submit_search(&mut self, query: &str, filter: SourceFilter) -> Submitted {
         let live = filter != SourceFilter::SoundCloud;
-        let key = search_key(query);
         let search = &mut self.search;
+        let key = search_key(query, search.kind);
         search.filter = filter;
         // Enter again on the query in flight changes nothing.
         if live && search.pending.as_ref() == Some(&key) {
@@ -289,8 +297,8 @@ impl AppState {
         }
         search.query = query.to_owned();
         search.newest += 1;
-        search.live.clear();
-        let asks = live && !key.is_empty();
+        search.found = Results::default();
+        let asks = live && !query.trim().is_empty();
         search.pending = asks.then_some(key);
         search.status = if asks {
             SearchStatus::Loading
@@ -300,6 +308,7 @@ impl AppState {
         let ticket = asks.then(|| Ticket {
             number: search.newest,
             query: search.query.clone(),
+            kind: search.kind,
         });
         Submitted {
             view: Some(self.next_search_view()),
@@ -341,6 +350,11 @@ impl AppState {
         (self.search.filter != SourceFilter::SoundCloud).then(|| self.next_search_view())
     }
 
+    /// The type chip.
+    pub fn search_kind(&self) -> SearchKind {
+        self.search.kind
+    }
+
     /// The query a chip change shows.
     pub fn submitted_query(&self) -> String {
         self.search.query.clone()
@@ -362,10 +376,10 @@ impl AppState {
             } else {
                 Ok(None)
             };
-            self.search.live.clear();
+            self.search.found = Results::default();
             self.search.status = match cached {
                 Ok(Some(found)) => self.keep(found),
-                Ok(None) if self.search.pending == Some(search_key(&self.search.query)) => {
+                Ok(None) if self.search.pending == Some(self.pending_key()) => {
                     SearchStatus::Loading
                 }
                 Ok(None) => SearchStatus::Idle,
@@ -375,12 +389,66 @@ impl AppState {
         self.next_search_view()
     }
 
+    /// The chip's type is the one now asked for. What is cached shows at once;
+    /// anything else is searched for, one request, through a ticket. `cached` is
+    /// what the cache holds for `query` under this chip. The sample chip keeps
+    /// what it shows.
+    pub fn set_search_kind(
+        &mut self,
+        kind: SearchKind,
+        query: &str,
+        cached: Result<Option<Parsed>, ServiceError>,
+    ) -> Submitted {
+        self.search.kind = kind;
+        if self.search.filter == SourceFilter::SoundCloud {
+            return Submitted {
+                view: Some(self.next_search_view()),
+                ticket: None,
+            };
+        }
+        // Another search may have been submitted since the cache was read.
+        let cached = if query == self.search.query {
+            cached
+        } else {
+            Ok(None)
+        };
+        // Whatever was in flight is for another chip.
+        self.search.newest += 1;
+        self.search.pending = None;
+        self.search.found = Results::default();
+        let blank = self.search.query.trim().is_empty();
+        let mut ticket = None;
+        self.search.status = match cached {
+            Ok(Some(found)) => self.keep(found),
+            Ok(None) if blank => SearchStatus::Idle,
+            Ok(None) => {
+                self.search.pending = Some(self.pending_key());
+                ticket = Some(Ticket {
+                    number: self.search.newest,
+                    query: self.search.query.clone(),
+                    kind: self.search.kind,
+                });
+                SearchStatus::Loading
+            }
+            Err(_) => SearchStatus::Blocked,
+        };
+        Submitted {
+            view: Some(self.next_search_view()),
+            ticket,
+        }
+    }
+
+    /// The submitted query and chip as the cache keys them.
+    fn pending_key(&self) -> String {
+        search_key(&self.search.query, self.search.kind)
+    }
+
     /// The account changed, so what its searches found is gone.
     pub fn forget_live_search(&mut self) -> Option<SearchView> {
         self.search.newest += 1;
         self.search.pending = None;
         self.search.status = SearchStatus::Idle;
-        self.search.live.clear();
+        self.search.found = Results::default();
         (self.search.filter != SourceFilter::SoundCloud).then(|| self.next_search_view())
     }
 
@@ -390,6 +458,7 @@ impl AppState {
         if search.filter == SourceFilter::SoundCloud {
             return SearchView {
                 revision: search.revision,
+                kind: search.kind,
                 ..self.catalog.search(&search.query, search.filter)
             };
         }
@@ -397,8 +466,13 @@ impl AppState {
             revision: search.revision,
             query: search.query.clone(),
             filter: search.filter,
+            kind: search.kind,
             status: search.status,
-            tracks: search.live.iter().map(TrackRow::from).collect(),
+            top: search.found.top.as_ref().map(TopView::from),
+            tracks: search.found.songs.iter().map(TrackRow::from).collect(),
+            albums: search.found.albums.iter().map(HitRow::from).collect(),
+            artists: search.found.artists.iter().map(HitRow::from).collect(),
+            playlists: search.found.playlists.iter().map(HitRow::from).collect(),
             collections: Vec::new(),
         }
     }
@@ -410,12 +484,12 @@ impl AppState {
 
     fn keep(&mut self, found: Parsed) -> SearchStatus {
         match found {
-            Parsed::Songs(tracks) => {
-                self.search.live = tracks;
+            Parsed::Found(found) => {
+                self.search.found = *found;
                 SearchStatus::Results
             }
             Parsed::NoResults => {
-                self.search.live.clear();
+                self.search.found = Results::default();
                 SearchStatus::NoResults
             }
         }
@@ -737,7 +811,9 @@ mod tests {
     }
 
     fn songs(title: &str) -> Result<Parsed, ServiceError> {
-        Ok(Parsed::Songs(vec![song(title)]))
+        Ok(Parsed::Found(Box::new(Results::of_songs(vec![song(
+            title,
+        )]))))
     }
 
     fn submit(state: &mut AppState, query: &str) -> Ticket {
@@ -876,6 +952,110 @@ mod tests {
         // An answer for a query that is no longer the submitted one is ignored.
         let stale = state.set_search_filter(SourceFilter::All, "old", songs("Old").map(Some));
         assert_eq!(shown(&stale), (SearchStatus::Idle, vec![]));
+    }
+
+    fn found_hits() -> Parsed {
+        let hit = |title: &str| crate::catalog::Hit {
+            id: Uuid::from_u128(42),
+            kind: crate::catalog::HitKind::Album,
+            title: title.to_owned(),
+            by: vec!["Ada Brook".to_owned()],
+            detail: Some("2021".to_owned()),
+            artwork_url: Some("https://art.invalid/a.jpg".to_owned()),
+        };
+        Parsed::Found(Box::new(Results {
+            albums: vec![hit("Night Market")],
+            ..Results::default()
+        }))
+    }
+
+    #[test]
+    fn a_type_chip_asks_for_its_own_search_once() {
+        let mut state = AppState::default();
+        let all = submit(&mut state, "ada");
+        state.finish_search(all.number, songs("Live")).unwrap();
+
+        let submitted = state.set_search_kind(SearchKind::Albums, "ada", Ok(None));
+
+        let ticket = submitted.ticket.expect("a ticket for the chip");
+        assert_eq!(ticket.kind, SearchKind::Albums);
+        assert_eq!(ticket.query, "ada");
+        let loading = submitted.view.unwrap();
+        assert_eq!(shown(&loading), (SearchStatus::Loading, vec![]));
+        assert_eq!(loading.kind, SearchKind::Albums);
+        // The first search is no longer wanted.
+        assert!(!state.is_newest_search(all.number));
+
+        let done = state
+            .finish_search(ticket.number, Ok(found_hits()))
+            .unwrap();
+
+        assert_eq!(done.status, SearchStatus::Results);
+        assert_eq!(done.albums.len(), 1);
+        assert!(done.albums[0].has_art);
+        assert!(done.tracks.is_empty());
+        let wire = serde_json::to_string(&done).unwrap();
+        assert!(!wire.contains("http"), "{wire}");
+        assert!(wire.contains(r#""kind":"albums""#), "{wire}");
+        // Enter on the same query asks for the chip that is chosen.
+        let again = state.submit_search("ada", SourceFilter::All);
+        assert_eq!(again.ticket.unwrap().kind, SearchKind::Albums);
+    }
+
+    #[test]
+    fn a_type_chip_that_was_answered_shows_it_and_asks_nothing() {
+        let mut state = AppState::default();
+        submit(&mut state, "ada");
+
+        let submitted = state.set_search_kind(SearchKind::Albums, "ada", Ok(Some(found_hits())));
+
+        assert_eq!(submitted.ticket, None);
+        assert_eq!(submitted.view.unwrap().albums.len(), 1);
+    }
+
+    #[test]
+    fn a_type_chip_without_a_query_or_a_way_to_ask_asks_nothing() {
+        let mut state = AppState::default();
+        let blank = state.set_search_kind(SearchKind::Artists, "", Ok(None));
+        assert_eq!(blank.ticket, None);
+        assert_eq!(blank.view.unwrap().status, SearchStatus::Idle);
+
+        submit(&mut state, "ada");
+        let blocked = state.set_search_kind(SearchKind::Songs, "ada", Err(ServiceError::Expired));
+        assert_eq!(blocked.ticket, None);
+        assert_eq!(blocked.view.unwrap().status, SearchStatus::Blocked);
+
+        state.submit_search("ada", SourceFilter::SoundCloud);
+        let sample = state.set_search_kind(SearchKind::Albums, "ada", Ok(None));
+        assert_eq!(sample.ticket, None);
+    }
+
+    #[test]
+    fn a_hit_and_a_top_song_have_pictures_by_id() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "ada");
+        let mut found = Results::of_songs(vec![song("Live")]);
+        found.albums = match found_hits() {
+            Parsed::Found(f) => f.albums,
+            Parsed::NoResults => unreachable!(),
+        };
+        found.top = Some(crate::catalog::Top {
+            best: found.albums[0].clone(),
+            songs: vec![],
+        });
+        state
+            .finish_search(ticket.number, Ok(Parsed::Found(Box::new(found))))
+            .unwrap();
+
+        assert_eq!(
+            state.result_artwork(Uuid::from_u128(42)).as_deref(),
+            Some("https://art.invalid/a.jpg")
+        );
+        assert_eq!(
+            state.result_artwork(song("Live").id).as_deref(),
+            Some("https://art.invalid/a.jpg")
+        );
+        assert_eq!(state.result_artwork(Uuid::from_u128(1)), None);
     }
 
     #[test]

@@ -26,7 +26,7 @@ describe('CatalogStore', () => {
 
   it('opens the search Rust remembers', async () => {
     const { bridge, catalog } = setUp();
-    bridge.remembered = { query: 'ferry', filter: 'soundcloud' };
+    bridge.remembered = { query: 'ferry', filter: 'soundcloud', kind: 'all' };
 
     await catalog.openSearch();
 

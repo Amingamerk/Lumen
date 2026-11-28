@@ -4,7 +4,7 @@ use super::gate::GateClock;
 use super::search::Parsed;
 use super::service::YouTube;
 use super::transport::Transport;
-use crate::catalog::{SourceRef, Track};
+use crate::catalog::{Results, SearchKind, SourceRef, Track};
 use crate::secrets::SecretStore;
 use crate::sources::{Source, SourceError};
 
@@ -12,15 +12,16 @@ impl<S: SecretStore + Send + Sync, T: Transport, C: GateClock> Source for YouTub
     async fn search(
         &self,
         query: &str,
+        kind: SearchKind,
         limit: usize,
         wanted: impl Fn() -> bool + Send + Sync,
-    ) -> Result<Vec<Track>, SourceError> {
-        let mut tracks = match self.search_songs(query, wanted).await? {
-            Parsed::Songs(tracks) => tracks,
-            Parsed::NoResults => Vec::new(),
+    ) -> Result<Results, SourceError> {
+        let mut found = match self.search_results(query, kind, wanted).await? {
+            Parsed::Found(found) => *found,
+            Parsed::NoResults => Results::default(),
         };
-        tracks.truncate(limit);
-        Ok(tracks)
+        found.truncate(limit);
+        Ok(found)
     }
 
     /// YouTube Music's radio arrives with recommendations (Milestone 6). Until
@@ -99,9 +100,13 @@ mod tests {
             ..Response::default()
         }));
 
-        let tracks = f.service.search("paper", 2, || true).await.unwrap();
+        let found = f
+            .service
+            .search("paper", SearchKind::Songs, 2, || true)
+            .await
+            .unwrap();
 
-        assert_eq!(tracks.len(), 2);
+        assert_eq!(found.songs.len(), 2);
         assert_eq!(f.transport.sent(), 1);
     }
 }

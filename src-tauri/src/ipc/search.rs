@@ -6,7 +6,7 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::account::AccountHandle;
 use super::{EventSink, IpcError, SharedState, lock};
-use crate::catalog::{SearchView, SourceFilter, Track};
+use crate::catalog::{Results, SearchKind, SearchView, SourceFilter};
 use crate::sources::youtube::{Parsed, ServiceError};
 use crate::sources::{Source, SourceError};
 use crate::state::Ticket;
@@ -14,7 +14,7 @@ use crate::state::Ticket;
 /// Sent when the search view changes. Mirrored in `src/lib/ipc.ts`.
 pub const SEARCH_CHANGED: &str = "search-changed";
 
-/// How many songs one search shows.
+/// How many results of each type one search shows.
 const SEARCH_LIMIT: usize = 50;
 
 /// Takes up an Enter on the Search view and announces it.
@@ -45,37 +45,49 @@ pub async fn submit_search<R: Runtime>(
     let Some(ticket) = begin(&state, &app, &query, filter)? else {
         return Ok(());
     };
+    answer(&app, &state, &account, &ticket).await
+}
+
+/// Asks YouTube Music for the ticket's search and announces what it found.
+async fn answer<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &SharedState,
+    account: &AccountHandle,
+    ticket: &Ticket,
+) -> Result<(), IpcError> {
     let youtube = Arc::clone(account.youtube());
-    match search_with(&*youtube, &state, &ticket).await {
+    match search_with(&*youtube, state, ticket).await {
         Some(view) => app.search_changed(&view),
         None => Ok(()),
     }
 }
 
-/// Asks `source` for the ticket's query and takes up the answer. Nothing is
-/// shown for a search that a newer one has replaced.
+/// Asks `source` for the ticket's query and chip and takes up the answer.
+/// Nothing is shown for a search that a newer one has replaced.
 async fn search_with(
     source: &impl Source,
     state: &SharedState,
     ticket: &Ticket,
 ) -> Option<SearchView> {
     let wanted = || lock(state).is_newest_search(ticket.number);
-    let outcome = source.search(&ticket.query, SEARCH_LIMIT, wanted).await;
+    let outcome = source
+        .search(&ticket.query, ticket.kind, SEARCH_LIMIT, wanted)
+        .await;
     lock(state).finish_search(ticket.number, found(outcome))
 }
 
-/// What the search state takes: no songs is an answer, a source that cannot
-/// search is an unexpected one.
-fn found(outcome: Result<Vec<Track>, SourceError>) -> Result<Parsed, ServiceError> {
+/// What the search state takes: nothing found is an answer, a source that
+/// cannot search is an unexpected one.
+fn found(outcome: Result<Results, SourceError>) -> Result<Parsed, ServiceError> {
     match outcome {
-        Ok(tracks) if tracks.is_empty() => Ok(Parsed::NoResults),
-        Ok(tracks) => Ok(Parsed::Songs(tracks)),
+        Ok(found) if found.is_empty() => Ok(Parsed::NoResults),
+        Ok(found) => Ok(Parsed::Found(Box::new(found))),
         Err(SourceError::Service(error)) => Err(error),
         Err(SourceError::Unsupported) => Err(ServiceError::Unexpected),
     }
 }
 
-/// A chip change. Sends nothing to YouTube.
+/// A source chip change. Sends nothing to YouTube.
 #[tauri::command]
 pub async fn set_search_filter<R: Runtime>(
     app: AppHandle<R>,
@@ -85,9 +97,35 @@ pub async fn set_search_filter<R: Runtime>(
 ) -> Result<(), IpcError> {
     let query = lock(&state).submitted_query();
     // Read without the app's lock: an account change takes that lock too.
-    let cached = account.youtube().cached_songs(&query);
+    let cached = {
+        let kind = lock(&state).search_kind();
+        account.youtube().cached_results(&query, kind)
+    };
     let view = lock(&state).set_search_filter(filter, &query, cached);
     app.search_changed(&view)
+}
+
+/// A type chip change. What the chip already found shows at once; otherwise
+/// Rust asks YouTube Music once, through the gate. The webview only names the
+/// chip.
+#[tauri::command]
+pub async fn set_search_kind<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SharedState>,
+    account: State<'_, AccountHandle>,
+    kind: SearchKind,
+) -> Result<(), IpcError> {
+    let query = lock(&state).submitted_query();
+    // Read without the app's lock: an account change takes that lock too.
+    let cached = account.youtube().cached_results(&query, kind);
+    let submitted = lock(&state).set_search_kind(kind, &query, cached);
+    if let Some(view) = submitted.view {
+        app.search_changed(&view)?;
+    }
+    match submitted.ticket {
+        Some(ticket) => answer(&app, &state, &account, &ticket).await,
+        None => Ok(()),
+    }
 }
 
 /// Empties the live results after the account has changed.
@@ -138,7 +176,7 @@ mod tests {
         let ticket = lock(&state)
             .submit_search("paper", SourceFilter::All)
             .ticket;
-        let source = FakeSource::answering(Ok(vec![song(1), song(2)]));
+        let source = FakeSource::answering(Ok(Results::of_songs(vec![song(1), song(2)])));
 
         let view = search_with(&source, &state, &ticket.unwrap())
             .await
@@ -146,14 +184,14 @@ mod tests {
 
         assert_eq!(view.status, SearchStatus::Results);
         assert_eq!(view.tracks.len(), 2);
-        assert_eq!(source.searched(), ["paper"]);
+        assert_eq!(source.searched(), [("paper".to_owned(), SearchKind::All)]);
     }
 
     #[tokio::test]
     async fn a_source_with_no_songs_says_so() {
         let state = SharedState::default();
         let ticket = lock(&state).submit_search("zzz", SourceFilter::All).ticket;
-        let source = FakeSource::answering(Ok(Vec::new()));
+        let source = FakeSource::answering(Ok(Results::default()));
 
         let view = search_with(&source, &state, &ticket.unwrap())
             .await

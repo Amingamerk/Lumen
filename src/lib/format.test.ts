@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { countLabel, formatDuration, formatNumber, formatTotalDuration } from './format';
+import {
+  countLabel,
+  formatDuration,
+  formatNumber,
+  formatTotalDuration,
+  hitLine,
+} from './format';
 
 describe('formatDuration', () => {
   it.each([
@@ -41,5 +47,16 @@ describe('countLabel', () => {
     expect(countLabel(1, 'track', 'tracks')).toBe('1 track');
     expect(countLabel(0, 'track', 'tracks')).toBe('0 tracks');
     expect(countLabel(2, 'track', 'tracks')).toBe('2 tracks');
+  });
+});
+
+describe('hitLine', () => {
+  it.each([
+    [{ kind: 'album', by: ['Ada Brook'], detail: '2021' }, 'Album · Ada Brook · 2021'],
+    [{ kind: 'album', by: ['Ada Brook', 'Mira Sol'], detail: null }, 'Album · Ada Brook, Mira Sol'],
+    [{ kind: 'artist', by: [], detail: '1.2M subscribers' }, 'Artist · 1.2M subscribers'],
+    [{ kind: 'playlist', by: [], detail: null }, 'Playlist'],
+  ] as const)('writes %j as %s', (hit, line) => {
+    expect(hitLine({ ...hit, by: [...hit.by] })).toBe(line);
   });
 });

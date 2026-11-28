@@ -7,10 +7,12 @@ use serde::Serialize;
 use uuid::Uuid;
 
 mod fixtures;
+mod found;
 mod search;
 mod slice;
 
 pub use fixtures::LONG_PLAYLIST_ID;
+pub use found::{Hit, HitKind, HitRow, QUICK_SONGS, Results, SearchKind, Top, TopView};
 pub use search::{SearchStatus, SearchView, SourceFilter};
 pub use slice::{CollectionDetail, MAX_SLICE, TrackSlice};
 

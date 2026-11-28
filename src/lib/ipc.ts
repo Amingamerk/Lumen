@@ -57,6 +57,29 @@ export interface Shelf {
 
 export type SourceFilter = 'all' | 'youtube' | 'soundcloud';
 
+/** The type chip: which kind of result a live search asks for. */
+export type SearchKind = 'all' | 'songs' | 'albums' | 'artists' | 'playlists';
+
+export type HitKind = 'song' | 'album' | 'artist' | 'playlist';
+
+/** An album, artist or playlist a search found. Its picture is at `artUrl(id, size)`. */
+export interface HitRow {
+  id: string;
+  kind: HitKind;
+  title: string;
+  /** The artists of an album or song, or the author of a playlist. */
+  by: string[];
+  /** What else the service said, such as an album's year or a playlist's size. */
+  detail: string | null;
+  hasArt: boolean;
+}
+
+/** The best match with the songs that play from its card. */
+export interface TopView {
+  best: HitRow;
+  songs: TrackRow[];
+}
+
 export type SearchStatus =
   | 'idle'
   | 'loading'
@@ -73,8 +96,14 @@ export interface SearchView {
   /** The query last submitted. */
   query: string;
   filter: SourceFilter;
+  /** The type chip. */
+  kind: SearchKind;
   status: SearchStatus;
+  top: TopView | null;
   tracks: TrackRow[];
+  albums: HitRow[];
+  artists: HitRow[];
+  playlists: HitRow[];
   collections: CollectionSummary[];
 }
 
@@ -231,6 +260,11 @@ export interface Bridge {
   submitSearch(query: string, filter: SourceFilter): Promise<void>;
   /** Switches the chip. Sends nothing to a service. The outcome arrives as an event. */
   setSearchFilter(filter: SourceFilter): Promise<void>;
+  /**
+   * A type chip. Rust shows what that chip already found or makes its one
+   * request; the outcome arrives as events.
+   */
+  setSearchKind(kind: SearchKind): Promise<void>;
   onSearchChanged(handler: (view: SearchView) => void): Promise<() => void>;
   /** Resolves with a function that stops listening. */
   onNavigationChanged(handler: (navigation: NavigationState) => void): Promise<() => void>;
@@ -318,6 +352,7 @@ export const tauriBridge: Bridge = {
   getSearch: () => invoke<SearchView>('get_search'),
   submitSearch: (query, filter) => invoke('submit_search', { query, filter }),
   setSearchFilter: (filter) => invoke('set_search_filter', { filter }),
+  setSearchKind: (kind) => invoke('set_search_kind', { kind }),
   onSearchChanged: (handler) =>
     listen<SearchView>(SEARCH_CHANGED, (event) => handler(event.payload)),
   onNavigationChanged: (handler) =>

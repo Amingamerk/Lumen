@@ -53,7 +53,7 @@ describe('making a playlist', () => {
 describe('adding songs', () => {
   async function openResults(bridge = fakeBridge()) {
     bridge.accountStatus = 'connected';
-    bridge.remembered = { query: '', filter: 'all' };
+    bridge.remembered = { query: '', filter: 'all', kind: 'all' };
     await openApp(bridge);
     await fireEvent.click(sidebar().getByRole('link', { name: 'Search' }));
     await main().findByRole('region', { name: 'Songs' });

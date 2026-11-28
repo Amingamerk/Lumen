@@ -116,11 +116,16 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Where a track's picture comes from: the results on show or the catalog, then
-/// the library.
+/// Where a picture comes from: the results on show (a song, an album, an
+/// artist or a playlist) or the catalog, then the library.
 async fn address_of<R: Runtime>(app: &AppHandle<R>, id: Uuid) -> Option<String> {
-    let known = lock(&app.state::<SharedState>()).known_track(id);
-    if let Some(track) = known {
+    let state = app.state::<SharedState>();
+    let known = lock(&state).result_artwork(id);
+    if known.is_some() {
+        return known;
+    }
+    // The catalog's tracks.
+    if let Some(track) = lock(&state).known_track(id) {
         return track.artwork_url;
     }
     let library = app.try_state::<LibraryHandle>()?.inner().clone();

@@ -3,7 +3,7 @@
 
 use std::future::Future;
 
-use crate::catalog::{SourceRef, Track};
+use crate::catalog::{Results, SearchKind, SourceRef, Track};
 
 pub mod youtube;
 
@@ -22,14 +22,16 @@ pub enum SourceError {
 /// The metadata role of a service: finding Tracks. It never produces audio; that
 /// is the resolver's job.
 pub trait Source: Send + Sync {
-    /// At most `limit` songs matching `query`. Sends nothing for a blank query,
-    /// or if `wanted` says no once it is this search's turn.
+    /// At most `limit` of each type of result matching `query`, narrowed to the
+    /// chip's type. Sends nothing for a blank query, or if `wanted` says no once
+    /// it is this search's turn.
     fn search(
         &self,
         query: &str,
+        kind: SearchKind,
         limit: usize,
         wanted: impl Fn() -> bool + Send + Sync,
-    ) -> impl Future<Output = Result<Vec<Track>, SourceError>> + Send;
+    ) -> impl Future<Output = Result<Results, SourceError>> + Send;
 
     /// Songs like `reference`, as radio seeds.
     // Nothing asks for them before Milestone 6.
@@ -49,20 +51,20 @@ pub(crate) mod testing {
 
     /// Answers every search the same way and remembers what was asked.
     pub struct FakeSource {
-        answer: Result<Vec<Track>, SourceError>,
-        searched: Mutex<Vec<String>>,
+        answer: Result<Results, SourceError>,
+        searched: Mutex<Vec<(String, SearchKind)>>,
     }
 
     impl FakeSource {
-        pub fn answering(answer: Result<Vec<Track>, SourceError>) -> Self {
+        pub fn answering(answer: Result<Results, SourceError>) -> Self {
             Self {
                 answer,
                 searched: Mutex::default(),
             }
         }
 
-        /// The queries it was asked, in order.
-        pub fn searched(&self) -> Vec<String> {
+        /// The queries it was asked, with their chips, in order.
+        pub fn searched(&self) -> Vec<(String, SearchKind)> {
             self.searched.lock().unwrap().clone()
         }
     }
@@ -71,16 +73,17 @@ pub(crate) mod testing {
         async fn search(
             &self,
             query: &str,
+            kind: SearchKind,
             limit: usize,
             wanted: impl Fn() -> bool + Send + Sync,
-        ) -> Result<Vec<Track>, SourceError> {
-            self.searched.lock().unwrap().push(query.to_owned());
+        ) -> Result<Results, SourceError> {
+            self.searched.lock().unwrap().push((query.to_owned(), kind));
             if !wanted() {
                 return Err(youtube::ServiceError::Gate(youtube::GateError::Superseded).into());
             }
-            let mut tracks = self.answer.clone()?;
-            tracks.truncate(limit);
-            Ok(tracks)
+            let mut found = self.answer.clone()?;
+            found.truncate(limit);
+            Ok(found)
         }
 
         async fn related(&self, _reference: &SourceRef) -> Result<Vec<Track>, SourceError> {

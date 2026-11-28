@@ -148,7 +148,7 @@ describe('playing from a list', () => {
     const { bridge } = await openApp();
     // Only the sample catalog can be played from Search so far.
     bridge.emitAccount('connected');
-    bridge.remembered = { query: '', filter: 'all' };
+    bridge.remembered = { query: '', filter: 'all', kind: 'all' };
     await fireEvent.click(screen.getByRole('link', { name: 'Search' }));
 
     await fireEvent.click(

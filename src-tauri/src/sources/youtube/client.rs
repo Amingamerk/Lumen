@@ -9,6 +9,7 @@ use super::cookies::Cookie;
 use super::gate::Verdict;
 use super::session::{ORIGIN, Session};
 use super::transport::{Request, Response, TransportError};
+use crate::catalog::SearchKind;
 
 const HOST: &str = "music.youtube.com";
 const CLIENT_NAME: &str = "WEB_REMIX";
@@ -16,10 +17,19 @@ const CLIENT_NAME: &str = "WEB_REMIX";
 const CLIENT_NAME_ID: &str = "67";
 /// The library's playlists.
 const BROWSE_ID: &str = "FEmusic_liked_playlists";
-/// The search filter that asks for songs only, as ytmusicapi builds it:
-/// `get_search_params("songs", None, False)` in `ytmusicapi/parsers/search.py`
+/// The search filter of each chip, as ytmusicapi builds it:
+/// `get_search_params(filter, None, False)` in `ytmusicapi/parsers/search.py`
 /// of sigma67/ytmusicapi at commit 28e00ddc0fffb69d65656d18af35845d656b3096.
-const SONGS_PARAMS: &str = "EgWKAQIIAWoMEA4QChADEAQQCRAF";
+/// All has none: the plain search also returns the top result.
+fn search_params(kind: SearchKind) -> Option<&'static str> {
+    match kind {
+        SearchKind::All => None,
+        SearchKind::Songs => Some("EgWKAQIIAWoMEA4QChADEAQQCRAF"),
+        SearchKind::Albums => Some("EgWKAQIYAWoMEA4QChADEAQQCRAF"),
+        SearchKind::Artists => Some("EgWKAQIgAWoMEA4QChADEAQQCRAF"),
+        SearchKind::Playlists => Some("Eg-KAQwIABAAGAAgACgBMABqChAEEAMQCRAFEAo%3D"),
+    }
+}
 /// Found in the answers of Google's bot checks.
 const BOT_CHECK_MARKERS: [&str; 3] = ["captcha", "unusual traffic", "/sorry/"];
 
@@ -43,9 +53,13 @@ pub fn browse(session: &Session, now_ms: u64) -> Option<Request> {
     request(session, "browse", json!({ "browseId": BROWSE_ID }), now_ms)
 }
 
-/// A search for songs matching `query`. `None` as for [`browse`].
-pub fn search(session: &Session, query: &str, now_ms: u64) -> Option<Request> {
-    let body = json!({ "query": query, "params": SONGS_PARAMS });
+/// A search for `query`, narrowed to one type by the chip. `None` as for
+/// [`browse`].
+pub fn search(session: &Session, query: &str, kind: SearchKind, now_ms: u64) -> Option<Request> {
+    let mut body = json!({ "query": query });
+    if let Some(params) = search_params(kind) {
+        body["params"] = json!(params);
+    }
     request(session, "search", body, now_ms)
 }
 
@@ -275,8 +289,42 @@ mod tests {
     }
 
     #[test]
+    fn each_chip_sends_its_own_filter() {
+        let params = |kind| {
+            let request = search(&session("da-DK"), "Paper", kind, NOW_MS).unwrap();
+            let body: Value = serde_json::from_str(&request.body).unwrap();
+            body.get("params")
+                .map(|params| params.as_str().unwrap().to_owned())
+        };
+
+        assert_eq!(params(SearchKind::All), None);
+        assert_eq!(
+            params(SearchKind::Songs).as_deref(),
+            Some("EgWKAQIIAWoMEA4QChADEAQQCRAF")
+        );
+        assert_eq!(
+            params(SearchKind::Albums).as_deref(),
+            Some("EgWKAQIYAWoMEA4QChADEAQQCRAF")
+        );
+        assert_eq!(
+            params(SearchKind::Artists).as_deref(),
+            Some("EgWKAQIgAWoMEA4QChADEAQQCRAF")
+        );
+        assert_eq!(
+            params(SearchKind::Playlists).as_deref(),
+            Some("Eg-KAQwIABAAGAAgACgBMABqChAEEAMQCRAFEAo%3D")
+        );
+    }
+
+    #[test]
     fn searches_for_songs_with_the_same_headers() {
-        let request = search(&session("da-DK"), "Paper Lanterns", NOW_MS).unwrap();
+        let request = search(
+            &session("da-DK"),
+            "Paper Lanterns",
+            SearchKind::Songs,
+            NOW_MS,
+        )
+        .unwrap();
 
         assert_eq!(
             request.url,

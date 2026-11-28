@@ -307,7 +307,10 @@ Last.fm is dropped to avoid needing an API key; it can return later as an option
 - **Left sidebar**: Home, Search, Library, list of playlists (with source badges).
 - **Main view**:
   - Home: horizontal rows of album/playlist cards (responsive grid).
-  - Search: tabs or filter chips for All / YouTube / SoundCloud.
+  - Search: source chips (All / YouTube / SoundCloud) and type chips (All / Songs / Albums / Artists /
+    Playlists). With the All type, a Top Result card (the best match and 3 quick-play songs) comes first, then
+    shelves of songs, albums, artists and playlists, each row led by its thumbnail. No Shuffle or Mix/Radio
+    button until the queue (Milestone 4) and recommendations (Milestone 6) exist.
   - Playlist / album page: header with large artwork and a **background gradient taken from the
     artwork's dominant color**, then a virtualized track list.
 - **Player bar (bottom)**: artwork + title, controls, seek bar, volume, queue button.
@@ -332,8 +335,9 @@ folder, never the user's own.
 
 `art/` serves artwork. The webview asks for `lumen://art/<64 or 300>/<track id>` (on Windows WebView2 reaches
 it as `http://lumen.localhost/art/...`, which the CSP's `img-src` allows) and never sees a remote address: a Track
-row only says `hasArt`, a playlist names its `coverTrack`. `ipc/art.rs` looks the track's artwork URL up (the
-results on show, the catalog, then the library) and `art/` does the rest: `host.rs` allows only HTTPS, port 443
+row only says `hasArt`, a playlist names its `coverTrack`. `ipc/art.rs` looks the picture's URL up (the
+results on show, including their albums, artists and playlists, which have ids of their own; the catalog; then the
+library) and `art/` does the rest: `host.rs` allows only HTTPS, port 443
 and a few named image hosts (`i.ytimg.com`, `lh3.googleusercontent.com`, `yt3.ggpht.com`,
 `yt3.googleusercontent.com`, `i1.sndcdn.com`, `i.scdn.co`), redirects included; `fetch.rs` sends no cookies or
 credentials and reads at most 2 MiB; `resize.rs` decodes at most 2,048 px a side, cuts a square from the middle
@@ -347,8 +351,11 @@ carry no session. Only the main window may ask; paths are parsed strictly and ne
 account-safety gate (`gate/`: rules, saved state, clock) and the web client (`auth.rs`, `client.rs`,
 `transport.rs`, `http.rs`, which follows the Windows system proxy like the login window). `service.rs` owns the
 account, the gate and the transport and is the only way a request goes out. The gate moves up only when a second
-service needs it. `sources/youtube/search/` asks YouTube Music for songs, parses the reply into Tracks and
-keeps recent results in memory.
+service needs it. `sources/youtube/search/` asks YouTube Music for what a query matches, one request per query and type chip
+(`client.rs` holds each chip's ytmusicapi filter), parses the reply (`parse.rs` for songs and the shelf walk,
+`hits.rs` for albums, artists, playlists and the Top Result card; rows are told apart by where they lead, never by
+their words, and a shelf or row of an unknown shape is skipped) and keeps recent results in memory, one entry per
+query and chip.
 
 `sources/mod.rs` holds the `Source` trait and `sources/youtube/source.rs` implements it over the service.
 

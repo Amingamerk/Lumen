@@ -18,12 +18,14 @@
     onlike?: (trackId: string) => void;
     /** Without it, rows have no button for adding to a playlist. */
     onadd?: (track: TrackRow) => void;
+    /** Cover, title and length only, for a small space such as the Top Result card. */
+    compact?: boolean;
   }
 
-  let { tracks, labelledby, onplay, liked, onlike, onadd }: Props = $props();
+  let { tracks, labelledby, onplay, liked, onlike, onadd, compact = false }: Props = $props();
 </script>
 
-<ul class="tracks" aria-labelledby={labelledby}>
+<ul class={compact ? 'tracks tracks-compact' : 'tracks'} aria-labelledby={labelledby}>
   {#each tracks as track (track.id)}
     {@const artists = track.artists.join(', ')}
     <li class="track">
@@ -36,7 +38,7 @@
         <p class="text-ink-faint truncate text-[13px]" title={artists}>{artists}</p>
       </div>
       <p class="track-album text-ink-soft truncate" title={track.album}>{track.album}</p>
-      <div class="flex justify-end gap-1">
+      <div class="track-sources flex justify-end gap-1">
         {#each track.sources as tag (tag.source)}
           <SourceBadge source={tag.source} badge={tag.badge} />
         {/each}
