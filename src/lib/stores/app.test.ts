@@ -17,7 +17,6 @@ describe('AppStore', () => {
     await store.connect();
 
     expect(store.navigation).toEqual(snapshot().navigation);
-    expect(store.playlists).toEqual(snapshot().playlists);
     expect(store.error).toBeNull();
   });
 
@@ -44,7 +43,6 @@ describe('AppStore', () => {
     await store.connect();
 
     expect(store.navigation).toEqual({ route: { view: 'search' }, queueOpen: false, revision: 4 });
-    expect(store.playlists).toHaveLength(snapshot().playlists.length);
   });
 
   it('keeps the message when Rust cannot be reached, and clears it on success', async () => {

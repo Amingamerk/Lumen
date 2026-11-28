@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { deferred, fakeBridge, home, library, searchView } from '../testing';
+import { deferred, fakeBridge, home, searchView } from '../testing';
 import { CatalogStore } from './catalog.svelte';
 
 function setUp() {
@@ -11,50 +11,22 @@ describe('CatalogStore', () => {
   it('knows nothing before it asks Rust', () => {
     const { bridge, catalog } = setUp();
 
-    expect([catalog.home, catalog.library, catalog.search, catalog.collection]).toEqual([
-      null,
-      null,
-      null,
-      null,
-    ]);
+    expect([catalog.home, catalog.search]).toEqual([null, null]);
     expect(bridge.calls).toEqual([]);
   });
 
-  it('mirrors the Home shelves and the Library, asking once each', async () => {
+  it('mirrors the Home shelves, asking once', async () => {
     const { bridge, catalog } = setUp();
 
     await catalog.loadHome();
-    await catalog.loadLibrary();
 
     expect(catalog.home).toEqual(home());
-    expect(catalog.library).toEqual(library());
-    expect(bridge.calls).toEqual(['getHome', 'getLibrary']);
-  });
-
-  it('mirrors the collection behind a playlist route', async () => {
-    const { catalog } = setUp();
-
-    await catalog.loadCollection('low-tide');
-
-    expect(catalog.collection?.title).toBe('Low Tide');
-  });
-
-  it('keeps the newest collection when an older answer arrives late', async () => {
-    const { bridge, catalog } = setUp();
-    const slow = deferred<undefined>();
-    bridge.beforeCollection = (id) => (id === 'low-tide' ? slow.promise : undefined);
-
-    const first = catalog.loadCollection('low-tide');
-    await catalog.loadCollection('night-shift');
-    slow.resolve(undefined);
-    await first;
-
-    expect(catalog.collection?.id).toBe('night-shift');
+    expect(bridge.calls).toEqual(['getHome']);
   });
 
   it('opens the search Rust remembers', async () => {
     const { bridge, catalog } = setUp();
-    bridge.remembered = { query: 'ferry', filter: 'soundcloud' };
+    bridge.remembered = { query: 'ferry', filter: 'soundcloud', kind: 'all' };
 
     await catalog.openSearch();
 
@@ -136,7 +108,7 @@ describe('CatalogStore', () => {
     expect(catalog.home).toEqual(home());
 
     bridge.failCatalog = null;
-    await catalog.loadLibrary();
+    await catalog.loadHome();
 
     expect(catalog.error).toBeNull();
   });

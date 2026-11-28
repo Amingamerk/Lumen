@@ -10,6 +10,7 @@ use serde::Deserialize;
 use super::ResolveError;
 use super::process::ProcessOutput;
 use crate::audio::Media;
+use crate::library::StoredStream;
 
 /// Longest `available_at` wait that is accepted.
 pub const MAX_WAIT_MS: u64 = 60_000;
@@ -36,6 +37,42 @@ impl fmt::Debug for StreamInfo {
 }
 
 impl StreamInfo {
+    /// What the library keeps. Never the headers of a login.
+    pub(super) fn to_stored(&self) -> Option<StoredStream> {
+        Some(StoredStream {
+            url: self.url.clone(),
+            headers: self.headers.clone(),
+            available_at: self.available_at,
+            expires_at: self.expires_at?,
+        })
+    }
+
+    /// A stream read back from the library. What was kept is judged as an answer
+    /// of yt-dlp is: the file is not trusted more than the network.
+    pub(super) fn from_stored(stored: StoredStream) -> Option<Self> {
+        Some(Self {
+            url: googlevideo(&stored.url)?,
+            headers: stored
+                .headers
+                .into_iter()
+                .filter(|(name, _)| !is_secret_header(name))
+                .collect(),
+            available_at: stored.available_at,
+            expires_at: Some(stored.expires_at),
+        })
+    }
+
+    /// A stream for the tests of modules that take a [`Resolver`](super::Resolver).
+    #[cfg(test)]
+    pub fn fake(url: &str, expires_at: u64) -> Self {
+        Self {
+            url: url.to_owned(),
+            headers: Vec::new(),
+            available_at: None,
+            expires_at: Some(expires_at),
+        }
+    }
+
     pub fn media(&self) -> Media {
         Media::Stream {
             url: self.url.clone(),
@@ -75,11 +112,7 @@ pub fn read(output: &ProcessOutput, now_ms: u64) -> Result<StreamInfo, ResolveEr
     let headers = json
         .http_headers
         .into_iter()
-        .filter(|(name, _)| {
-            !["cookie", "authorization", "range"]
-                .iter()
-                .any(|blocked| name.eq_ignore_ascii_case(blocked))
-        })
+        .filter(|(name, _)| !is_secret_header(name))
         .collect();
     Ok(StreamInfo {
         url,
@@ -87,6 +120,13 @@ pub fn read(output: &ProcessOutput, now_ms: u64) -> Result<StreamInfo, ResolveEr
         available_at,
         expires_at,
     })
+}
+
+/// Headers that carry a login, and the one yt-dlp's own `Range` that mpv sets.
+fn is_secret_header(name: &str) -> bool {
+    ["cookie", "authorization", "range"]
+        .iter()
+        .any(|blocked| name.eq_ignore_ascii_case(blocked))
 }
 
 /// The URL as it was understood, if it is HTTPS on a `googlevideo.com` host.

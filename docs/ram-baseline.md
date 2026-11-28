@@ -2,6 +2,44 @@
 
 Measured with [`scripts/measure-ram.ps1`](../scripts/measure-ram.ps1) (summed `WorkingSetPrivate` across the app and every descendant process). MB means 1,048,576 bytes.
 
+## Milestone 3 (SQLite library, local playlists, resolver trait and stored streams, artwork cache, search types)
+
+Measured 2026-11-28 on release builds of `dev`, signed in to YouTube Music, with
+[`scripts/measure-ram.ps1`](../scripts/measure-ram.ps1). MB means 1,048,576 bytes.
+
+### Summary and verdict
+
+**The two budget scenarios pass on 3-run medians, on both builds measured.**
+
+`dev` at `5963fa9` (#86 to #77), measured by [`scripts/ram-run.ps1`](../scripts/ram-run.ps1) (`--list`, Windows UI Automation):
+
+| Scenario | Run 1 | Run 2 | Run 3 | Median | Limit | Verdict |
+|---|---|---|---|---|---|---|
+| Idle, Home | 98.3 MB | 98.4 MB | 100.7 MB | **98.4 MB** | 100 MB | pass (1.6 MB headroom) |
+| 5,000-row playlist open | 98.5 MB | 99.8 MB | 101.5 MB | **99.8 MB** | 150 MB | pass |
+| Search + resolve, sampled peak | 389.0 MB | 393.7 MB | 394.1 MB | **393.7 MB** | transient | recorded (#78) |
+| Playing, 5,000-row playlist open | 125.5 MB | 126.4 MB | 127.8 MB | **126.4 MB** | 150 MB | pass |
+| Playing, sampled peak over 30 s | 127.3 MB | 127.9 MB | 129.6 MB | **127.9 MB** | 150 MB | pass |
+| CPU, playing, minimized | 0.1 % | 0.2 % | 0.1 % | **0.1 %** | 2 % | pass |
+| Idle after playback ended | 121.2 MB | 119.5 MB | 121.5 MB | **121.2 MB** | 100 MB | over, within the Milestone 2 decision (127.9 MB) |
+
+`dev` at `7400b25` (adds #97 virtualized search lists and #98 songs in unfiltered search). The UI Automation
+driver could not bring the window to the foreground on a locked desktop, so each launch (`--list`) was driven
+over the WebView debug port (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222`), which
+adds a little memory, and measured with `measure-ram.ps1`:
+
+| Scenario | Run 1 | Run 2 | Run 3 | Median | Limit | Verdict |
+|---|---|---|---|---|---|---|
+| Idle, Home (30 s) | 96.4 MB | 97.4 MB | 97.0 MB | **97.0 MB** | 100 MB | pass |
+| 5,000-row playlist open (10 s) | 96.8 MB | 97.9 MB | 97.4 MB | **97.4 MB** | 150 MB | pass |
+| Playing a search result, playlist open (20 s) | 116.4 MB | 114.5 MB | 117.7 MB | **116.4 MB** | 150 MB | pass |
+
+### Other checks
+
+- Playing with 24 search results and their 64 px artwork loaded through `lumen://art`: 120.7 MB (one reading, debug port open).
+- Replaying a song after a restart starts no `yt-dlp` process (the stored stream is reused).
+- `scripts/ram-run.test.ps1`: 14 passed.
+
 ## Milestone 2 (YouTube Music sign-in, search, stream resolving, playback)
 
 Measured 2026-11-27 on the release build of `ab13adf` (`chore/68-m2-ram-baseline`, which adds only the
@@ -211,6 +249,9 @@ Processes at each peak (MB):
   95.1, 94.3 and 95.5 MB idle and 97.5, 97.4 and 99.3 MB with the playlist; they are not in the medians.
 - Run command, once the app is open: `pwsh -File scripts/measure-ram.ps1 -ProcessName lumen`, or add
   `-WaitSeconds 0 -SampleSeconds 35` for a peak.
+- Since the Milestone 3 check, `pwsh -File scripts/ram-run.ps1` repeats this whole order over three launches and
+  prints the table with medians (`-Login` adds the login window). It resolves once per launch instead of three
+  times. Tests: `pwsh -File scripts/ram-run.test.ps1`.
 
 ### Milestone 2 machine, toolchain and build
 

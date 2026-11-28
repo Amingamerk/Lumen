@@ -115,7 +115,7 @@ pub fn announce<R: Runtime>(app: &AppHandle<R>, status: AccountStatus) {
     // Songs found with another session are no longer shown, and its streams
     // are not used again.
     search::account_changed(app);
-    playback::forget(app, None);
+    playback::forget_all(app);
 }
 
 /// YouTube Music in an InPrivate window of its own: nothing of the login stays

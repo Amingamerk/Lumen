@@ -4,10 +4,14 @@
 -->
 <script lang="ts">
   import type { Attachment } from 'svelte/attachments';
+  import PlusIcon from 'phosphor-svelte/lib/PlusIcon';
+  import XIcon from 'phosphor-svelte/lib/XIcon';
   import { releasePointerFocus } from '../focus';
   import { formatDuration, formatNumber } from '../format';
+  import type { TrackRow } from '../ipc';
   import type { TrackWindow } from '../stores/trackWindow.svelte';
   import { rowRange } from '../virtual';
+  import LikeButton from './LikeButton.svelte';
   import SourceBadge from './SourceBadge.svelte';
 
   interface Props {
@@ -16,9 +20,16 @@
     labelledby: string;
     /** Called with a row's position in the whole list, counted from 0. */
     onplay: (position: number) => void;
+    /** Whether a song is liked. Without it, rows have no heart. */
+    liked?: (trackId: string) => boolean;
+    onlike?: (trackId: string) => void;
+    /** Without it, rows have no button for adding to a playlist. */
+    onadd?: (track: TrackRow) => void;
+    /** Called with a row's position and song. Without it, rows have no remove button. */
+    onremove?: (position: number, track: TrackRow) => void;
   }
 
-  let { tracks, labelledby, onplay }: Props = $props();
+  let { tracks, labelledby, onplay, liked, onlike, onadd, onremove }: Props = $props();
 
   const ROW_HEIGHT = 56;
   const OVERSCAN = 8;
@@ -116,8 +127,43 @@
               <SourceBadge source={tag.source} badge={tag.badge} />
             {/each}
           </span>
-          <span class="text-ink-faint text-right text-[13px] tabular-nums" role="cell">
-            {formatDuration(track.durationMs)}
+          <span class="track-end" role="cell">
+            {#if liked && onlike}
+              <LikeButton
+                liked={liked(track.id)}
+                title={track.title}
+                ontoggle={() => onlike(track.id)}
+              />
+            {/if}
+            {#if onadd}
+              <button
+                type="button"
+                class="row-action"
+                aria-label="Add {track.title} to a playlist"
+                onclick={(event) => {
+                  releasePointerFocus(event);
+                  onadd(track);
+                }}
+              >
+                <PlusIcon size={18} aria-hidden="true" />
+              </button>
+            {/if}
+            {#if onremove}
+              <button
+                type="button"
+                class="row-action"
+                aria-label="Remove {track.title} from this playlist"
+                onclick={(event) => {
+                  releasePointerFocus(event);
+                  onremove(position, track);
+                }}
+              >
+                <XIcon size={18} aria-hidden="true" />
+              </button>
+            {/if}
+            <span class="text-ink-faint text-right text-[13px] tabular-nums">
+              {track.durationMs > 0 ? formatDuration(track.durationMs) : ''}
+            </span>
           </span>
         {:else}
           <span role="cell">

@@ -3,14 +3,18 @@ import type {
   AccountStatus,
   AppSnapshot,
   Bridge,
-  CollectionDetail,
   CollectionSummary,
-  Library,
+  HistoryChanged,
+  LibrarySummary,
+  LikesChanged,
   NavigationState,
   PlayerPosition,
   PlayerState,
+  PlaylistsChanged,
+  PlaylistSummary,
   QueueSlice,
   Route,
+  SearchKind,
   SearchView,
   ServiceStatus,
   Shelf,
@@ -21,7 +25,9 @@ import type {
 import { AccountStore } from './stores/account.svelte';
 import { AppStore } from './stores/app.svelte';
 import { CatalogStore } from './stores/catalog.svelte';
+import { LibraryStore } from './stores/library.svelte';
 import { PlayerStore } from './stores/player.svelte';
+import { PlaylistsStore } from './stores/playlists.svelte';
 import { QueueStore } from './stores/queue.svelte';
 import { YoutubeStore } from './stores/youtube.svelte';
 
@@ -30,7 +36,9 @@ export function appStores(bridge: Bridge) {
   return {
     store: new AppStore(bridge),
     catalog: new CatalogStore(bridge),
+    library: new LibraryStore(bridge),
     player: new PlayerStore(bridge),
+    playlists: new PlaylistsStore(bridge),
     queue: new QueueStore(bridge),
     account: new AccountStore(bridge),
     youtube: new YoutubeStore(bridge),
@@ -90,15 +98,11 @@ export function queueSlice(
 export function snapshot(): AppSnapshot {
   return {
     navigation: { route: { view: 'home' }, queueOpen: false, revision: 0 },
-    playlists: [
-      { id: 'night-shift', name: 'Night shift', source: 'youtube', badge: 'YT' },
-      { id: 'tunnel-mixes', name: 'Tunnel mixes', source: 'soundcloud', badge: 'SC' },
-      { id: 'liked-on-spotify', name: 'Liked on Spotify', source: 'spotify', badge: 'SP' },
-    ],
   };
 }
 
-export function library(): Library {
+/** Cards for the shelves and search results the fake shows. */
+function sampleCollections(): { playlists: CollectionSummary[]; albums: CollectionSummary[] } {
   return {
     playlists: [
       {
@@ -140,7 +144,7 @@ export function library(): Library {
 }
 
 function collection(id: string): CollectionSummary {
-  const { playlists, albums } = library();
+  const { playlists, albums } = sampleCollections();
   const found = [...playlists, ...albums].find((item) => item.id === id);
   // Rust rejects with a plain string.
   if (!found) throw `no playlist or album has the id “${id}”`;
@@ -166,6 +170,7 @@ export function tracks(): TrackRow[] {
       artists: ['Mira Sol', 'Juno Park'],
       album: 'Low Tide',
       durationMs: 201_000,
+      hasArt: true,
       sources: [{ source: 'youtube', badge: 'YT' }],
     },
     {
@@ -174,6 +179,7 @@ export function tracks(): TrackRow[] {
       artists: ['Juno Park'],
       album: null,
       durationMs: 189_000,
+      hasArt: false,
       sources: [
         { source: 'spotify', badge: 'SP' },
         { source: 'youtube', badge: 'YT' },
@@ -181,8 +187,6 @@ export function tracks(): TrackRow[] {
     },
   ];
 }
-
-const LENGTH_MS = 201_000;
 
 /** The rows Rust would send for this window of a list of `total` numbered Tracks. */
 export function trackSlice(offset: number, limit: number, total: number): TrackSlice {
@@ -208,8 +212,13 @@ export function searchView(
     revision: 0,
     query,
     filter,
+    kind: 'all',
     status: 'results',
+    top: null,
     tracks: tracks(),
+    albums: [],
+    artists: [],
+    playlists: [],
     // Only the sample catalog has any.
     collections: filter === 'soundcloud' ? [collection('low-tide')] : [],
     ...overrides,
@@ -227,7 +236,18 @@ export function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-type Answer = (query: string, filter: SourceFilter) => SearchView | Promise<SearchView>;
+type Answer = (
+  query: string,
+  filter: SourceFilter,
+  kind: SearchKind,
+) => SearchView | Promise<SearchView>;
+
+/** A local playlist the fake keeps. */
+interface List {
+  id: string;
+  name: string;
+  entries: TrackRow[];
+}
 
 /** Records what the UI asks for and, unless told not to, answers like Rust does. */
 export function fakeBridge({ announce = true } = {}) {
@@ -235,11 +255,36 @@ export function fakeBridge({ announce = true } = {}) {
   const playerHandlers = new Set<(state: PlayerState) => void>();
   const positionHandlers = new Set<(position: PlayerPosition) => void>();
   let revision = 0;
+  let current: Route = { view: 'home' };
   let searchRevision = 0;
   const searchHandlers = new Set<(view: SearchView) => void>();
   const accountHandlers = new Set<(status: AccountStatus) => void>();
   const signInFailureHandlers = new Set<(reason: string) => void>();
   const youtubeHandlers = new Set<(status: ServiceStatus) => void>();
+  const likesHandlers = new Set<(change: LikesChanged) => void>();
+  const historyHandlers = new Set<(change: HistoryChanged) => void>();
+  const playlistHandlers = new Set<(change: PlaylistsChanged) => void>();
+  let libraryRevision = 0;
+
+  function summaryOf(list: List): PlaylistSummary {
+    const durationMs = list.entries.reduce((sum, row) => sum + row.durationMs, 0);
+    const coverTrack = list.entries.find((row) => row.hasArt)?.id ?? null;
+    return { id: list.id, name: list.name, trackCount: list.entries.length, durationMs, coverTrack };
+  }
+
+  const summaries = (): PlaylistSummary[] => bridge.lists.map(summaryOf);
+
+  function listOf(id: string): List {
+    const found = bridge.lists.find((list) => list.id === id);
+    // Rust rejects with a plain string.
+    if (!found) throw `there is no playlist with the id “${id}”`;
+    return found;
+  }
+
+  /** Like Rust: every change is answered with an event carrying the whole list. */
+  function announcePlaylists(changed: string) {
+    bridge.emitPlaylists({ revision: ++libraryRevision, playlists: summaries(), changed });
+  }
 
   function catalogCall(name: string) {
     bridge.calls.push(name);
@@ -249,8 +294,8 @@ export function fakeBridge({ announce = true } = {}) {
   /** Answers a search the way Rust does: with an event. */
   async function announceSearch() {
     const revision = ++searchRevision;
-    const { query, filter } = bridge.remembered;
-    const view = await bridge.answer(query, filter);
+    const { query, filter, kind } = bridge.remembered;
+    const view = await bridge.answer(query, filter, kind);
     bridge.emitSearch({ ...view, revision });
   }
 
@@ -305,7 +350,6 @@ export function fakeBridge({ announce = true } = {}) {
       bridge.queueRequests.push({ offset, limit });
       return bridge.answerQueue(offset, limit);
     },
-    playCollection: (id: string, index: number) => command('playCollection', id, index),
     playSearchResult: (trackId: string) => command('playSearchResult', trackId),
     togglePlay: () => command('togglePlay'),
     nextTrack: () => command('nextTrack'),
@@ -316,6 +360,83 @@ export function fakeBridge({ announce = true } = {}) {
     changeVolume: (delta: number) => command('changeVolume', delta),
     moveQueueEntry: (key: number, before: number | null) => command('moveQueueEntry', key, before),
     toggleQueue: () => command('toggleQueue'),
+    /** The ids of the liked songs, newest like first. */
+    likedIds: [] as string[],
+    /** The rows `getLikedSlice` and `getRecentSlice` answer from. */
+    played: [] as TrackRow[],
+    rowsById: new Map<string, TrackRow>(),
+    problem: null as string | null,
+    likedAsked: [] as string[][],
+    get libraryListeners() {
+      return likesHandlers.size + historyHandlers.size;
+    },
+    emitLikes(change: LikesChanged) {
+      for (const handler of likesHandlers) handler(change);
+    },
+    emitHistory(change: HistoryChanged) {
+      for (const handler of historyHandlers) handler(change);
+    },
+    async getLibrarySummary(): Promise<LibrarySummary> {
+      bridge.calls.push('getLibrarySummary');
+      return {
+        revision: libraryRevision,
+        likedCount: bridge.likedIds.length,
+        playedCount: bridge.played.length,
+        problem: bridge.problem,
+      };
+    },
+    /** Like Rust: the change is answered with an event, once. */
+    async likeTrack(trackId: string) {
+      await command('likeTrack', trackId);
+      if (bridge.likedIds.includes(trackId)) return;
+      bridge.likedIds = [trackId, ...bridge.likedIds];
+      bridge.emitLikes({
+        revision: ++libraryRevision,
+        trackId,
+        liked: true,
+        likedCount: bridge.likedIds.length,
+      });
+    },
+    async unlikeTrack(trackId: string) {
+      await command('unlikeTrack', trackId);
+      if (!bridge.likedIds.includes(trackId)) return;
+      bridge.likedIds = bridge.likedIds.filter((id) => id !== trackId);
+      bridge.emitLikes({
+        revision: ++libraryRevision,
+        trackId,
+        liked: false,
+        likedCount: bridge.likedIds.length,
+      });
+    },
+    async getLikedIds(trackIds: string[]): Promise<string[]> {
+      bridge.likedAsked.push(trackIds);
+      return trackIds.filter((id) => bridge.likedIds.includes(id));
+    },
+    async getLikedSlice(offset: number, limit: number): Promise<TrackSlice> {
+      bridge.calls.push('getLikedSlice');
+      const rows = bridge.likedIds.map((id) => bridge.rowsById.get(id) ?? { ...tracks()[0], id });
+      return { total: rows.length, offset, tracks: rows.slice(offset, offset + limit) };
+    },
+    async getRecentSlice(offset: number, limit: number): Promise<TrackSlice> {
+      bridge.calls.push('getRecentSlice');
+      const rows = bridge.played;
+      return { total: rows.length, offset, tracks: rows.slice(offset, offset + limit) };
+    },
+    playLibraryTrack: (trackId: string) => command('playLibraryTrack', trackId),
+    async onLikesChanged(handler: (change: LikesChanged) => void) {
+      bridge.calls.push('onLikesChanged');
+      likesHandlers.add(handler);
+      return () => {
+        likesHandlers.delete(handler);
+      };
+    },
+    async onHistoryChanged(handler: (change: HistoryChanged) => void) {
+      bridge.calls.push('onHistoryChanged');
+      historyHandlers.add(handler);
+      return () => {
+        historyHandlers.delete(handler);
+      };
+    },
     /** What `getAccountStatus` answers. */
     accountStatus: 'disconnected' as AccountStatus,
     beforeAccountStatus: null as (() => Promise<unknown>) | null,
@@ -378,22 +499,20 @@ export function fakeBridge({ announce = true } = {}) {
     /** What was submitted with Enter or "Try again". */
     searches: [] as { query: string; filter: SourceFilter }[],
     filterChanges: [] as SourceFilter[],
-    remembered: { query: '', filter: 'all' as SourceFilter },
-    answer: searchView as Answer,
+    kindChanges: [] as SearchKind[],
+    remembered: { query: '', filter: 'all' as SourceFilter, kind: 'all' as SearchKind },
+    answer: ((query, filter, kind) => searchView(query, filter, { kind })) as Answer,
     failNavigate: null as string | null,
     failSnapshot: null as Error | null,
     failCatalog: null as string | null,
     beforeSnapshot: null as (() => void) | null,
-    beforeCollection: null as ((id: string) => Promise<void> | undefined) | null,
     beforeRemembered: null as (() => Promise<void>) | null,
     beforeSlice: null as (() => Promise<void>) | null,
     slices: [] as { id: string; offset: number; limit: number }[],
     failSlices: null as string | null,
-    /** How many Tracks a Collection holds, where it is not two. */
-    trackCounts: {} as Record<string, number>,
-    playlists: snapshot().playlists,
+    /** The local playlists, in the order they were made, with their entries. */
+    lists: [{ id: 'night-shift', name: 'Night shift', entries: trackSlice(0, 2, 2).tracks }] as List[],
     shelves: home(),
-    saved: library(),
     get listeners() {
       return handlers.size;
     },
@@ -404,53 +523,107 @@ export function fakeBridge({ announce = true } = {}) {
       bridge.calls.push('getAppState');
       if (bridge.failSnapshot) throw bridge.failSnapshot;
       bridge.beforeSnapshot?.();
-      return { ...snapshot(), playlists: bridge.playlists };
+      return snapshot();
     },
     async navigate(route: Route) {
       bridge.requested.push(route);
       // Rust rejects with a plain string.
       if (bridge.failNavigate) throw bridge.failNavigate;
+      if (route.view === 'playlist' && !bridge.lists.some((list) => list.id === route.id)) {
+        throw `there is no playlist with the id “${route.id}”`;
+      }
+      current = route;
       if (announce) bridge.emit({ route, queueOpen: false, revision: ++revision });
     },
     async getHome(): Promise<Shelf[]> {
       catalogCall('getHome');
       return bridge.shelves;
     },
-    async getLibrary(): Promise<Library> {
-      catalogCall('getLibrary');
-      return bridge.saved;
+    async getPlaylists(): Promise<PlaylistsChanged> {
+      bridge.calls.push('getPlaylists');
+      return { revision: libraryRevision, playlists: summaries(), changed: null };
     },
-    async getCollection(id: string): Promise<CollectionDetail> {
-      catalogCall('getCollection');
-      await bridge.beforeCollection?.(id);
-      const trackCount = bridge.trackCounts[id] ?? 2;
-      return { ...collection(id), trackCount, durationMs: trackCount * LENGTH_MS };
-    },
-    async getTrackSlice(id: string, offset: number, limit: number): Promise<TrackSlice> {
-      catalogCall('getTrackSlice');
+    async getPlaylistSlice(id: string, offset: number, limit: number): Promise<TrackSlice> {
+      bridge.calls.push('getPlaylistSlice');
       bridge.slices.push({ id, offset, limit });
       if (bridge.failSlices) throw bridge.failSlices;
       await bridge.beforeSlice?.();
-      collection(id);
-      return trackSlice(offset, limit, bridge.trackCounts[id] ?? 2);
+      const rows = listOf(id).entries;
+      return { total: rows.length, offset, tracks: rows.slice(offset, offset + limit) };
+    },
+    async createPlaylist(name: string): Promise<PlaylistSummary> {
+      await command('createPlaylist', name);
+      if (!name.trim()) throw 'a playlist needs a name';
+      const list = { id: `p${bridge.lists.length + 1}`, name: name.trim(), entries: [] };
+      bridge.lists = [...bridge.lists, list];
+      announcePlaylists(list.id);
+      return summaryOf(list);
+    },
+    async renamePlaylist(id: string, name: string) {
+      await command('renamePlaylist', id, name);
+      listOf(id).name = name.trim();
+      announcePlaylists(id);
+    },
+    async deletePlaylist(id: string) {
+      await command('deletePlaylist', id);
+      listOf(id);
+      bridge.lists = bridge.lists.filter((list) => list.id !== id);
+      announcePlaylists(id);
+      // Like Rust: a page whose playlist is gone gives way to the Library.
+      if (current.view === 'playlist' && current.id === id) {
+        current = { view: 'library' };
+        bridge.emit({ route: current, queueOpen: false, revision: ++revision });
+      }
+    },
+    async addToPlaylist(id: string, trackId: string) {
+      await command('addToPlaylist', id, trackId);
+      const row = bridge.rowsById.get(trackId) ?? { ...tracks()[0], id: trackId };
+      listOf(id).entries.push(row);
+      announcePlaylists(id);
+    },
+    async removeFromPlaylist(id: string, position: number, trackId: string) {
+      await command('removeFromPlaylist', id, position, trackId);
+      const list = listOf(id);
+      if (list.entries[position]?.id !== trackId) return;
+      list.entries.splice(position, 1);
+      announcePlaylists(id);
+    },
+    get playlistListeners() {
+      return playlistHandlers.size;
+    },
+    emitPlaylists(change: PlaylistsChanged) {
+      for (const handler of playlistHandlers) handler(change);
+    },
+    async onPlaylistsChanged(handler: (change: PlaylistsChanged) => void) {
+      bridge.calls.push('onPlaylistsChanged');
+      playlistHandlers.add(handler);
+      return () => {
+        playlistHandlers.delete(handler);
+      };
     },
     async getSearch(): Promise<SearchView> {
       catalogCall('getSearch');
-      const { query, filter } = bridge.remembered;
+      const { query, filter, kind } = bridge.remembered;
       const asOf = searchRevision;
       await bridge.beforeRemembered?.();
-      return { ...(await bridge.answer(query, filter)), revision: asOf };
+      return { ...(await bridge.answer(query, filter, kind)), revision: asOf };
     },
     async submitSearch(query: string, filter: SourceFilter) {
       catalogCall('submitSearch');
       bridge.searches.push({ query, filter });
-      bridge.remembered = { query, filter };
+      bridge.remembered = { ...bridge.remembered, query, filter };
       await announceSearch();
     },
     async setSearchFilter(filter: SourceFilter) {
       catalogCall('setSearchFilter');
       bridge.filterChanges.push(filter);
       bridge.remembered = { ...bridge.remembered, filter };
+      await announceSearch();
+    },
+    async setSearchKind(kind: SearchKind) {
+      catalogCall('setSearchKind');
+      bridge.kindChanges.push(kind);
+      bridge.remembered = { ...bridge.remembered, kind };
       await announceSearch();
     },
     get searchListeners() {

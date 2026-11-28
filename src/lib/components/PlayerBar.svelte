@@ -8,18 +8,21 @@
   import SkipForwardIcon from 'phosphor-svelte/lib/SkipForwardIcon';
   import { releasePointerFocus } from '../focus';
   import type { PlaybackStatus } from '../ipc';
+  import type { LibraryStore } from '../stores/library.svelte';
   import type { PlayerStore } from '../stores/player.svelte';
   import CoverArt from './CoverArt.svelte';
+  import LikeButton from './LikeButton.svelte';
   import SeekBar from './SeekBar.svelte';
   import VolumeSlider from './VolumeSlider.svelte';
 
   interface Props {
     player: PlayerStore;
+    library: LibraryStore;
     queueOpen: boolean;
     ontogglequeue: () => void;
   }
 
-  let { player, queueOpen, ontogglequeue }: Props = $props();
+  let { player, library, queueOpen, ontogglequeue }: Props = $props();
 
   /** The statuses the controls alone do not tell apart. */
   const WORDS: Partial<Record<PlaybackStatus, string>> = {
@@ -40,6 +43,12 @@
   const canNext = $derived(player.state?.canNext ?? false);
   const canPrevious = $derived(player.state?.canPrevious ?? false);
 
+  // Asks Rust about the song that plays, once per song.
+  $effect(() => {
+    const id = current?.track.id;
+    if (id) void library.watch([id]);
+  });
+
   /** Runs a button's action and gives the keyboard back after a mouse click. */
   function press(event: MouseEvent, action: () => unknown) {
     releasePointerFocus(event);
@@ -53,7 +62,7 @@
       {@const track = current.track}
       {@const artists = track.artists.join(', ')}
       <div class="now-art">
-        <CoverArt title={track.album ?? track.title} />
+        <CoverArt title={track.album ?? track.title} trackId={track.hasArt ? track.id : null} />
       </div>
       <div class="min-w-0">
         <p class="truncate text-[15px] font-semibold" title={track.title}>{track.title}</p>
@@ -73,6 +82,14 @@
           {/if}
         </div>
       </div>
+      <!-- A local file belongs to no service, so there is nothing to keep. -->
+      {#if track.sources.length > 0}
+        <LikeButton
+          liked={library.isLiked(track.id)}
+          title={track.title}
+          ontoggle={() => void library.toggle(track.id)}
+        />
+      {/if}
     {:else}
       <div class="art-slot" aria-hidden="true">
         <MusicNoteIcon size={22} />

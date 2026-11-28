@@ -1,6 +1,7 @@
 //! The one captured YouTube Music session.
 
 use serde::{Deserialize, Serialize};
+use sha1::{Digest, Sha1};
 
 use super::cookies::Cookie;
 
@@ -33,6 +34,22 @@ pub struct PageIdentity {
 }
 
 impl Session {
+    /// A name for this login that survives a restart: a digest of its cookies, so
+    /// nothing of them can be read back. Another login has another one.
+    pub fn login_id(&self) -> String {
+        let mut digest = Sha1::new();
+        for cookie in &self.cookies {
+            for part in [&cookie.domain, &cookie.name, &cookie.value] {
+                digest.update(part.as_bytes());
+                digest.update([0]);
+            }
+        }
+        digest
+            .finalize()
+            .iter()
+            .fold(String::new(), |hex, byte| hex + &format!("{byte:02x}"))
+    }
+
     /// The session of a login window, once sign-in is complete.
     pub fn capture(page: PageIdentity, cookies: Vec<Cookie>) -> Option<Self> {
         if page.origin != ORIGIN || !is_usable(&page.user_agent) || !is_usable(&page.language) {

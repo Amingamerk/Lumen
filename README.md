@@ -49,6 +49,12 @@ Early stage. The app shell runs on a static sample catalog, you can sign in to Y
 
 Performance target: at most 100 MB RAM idle and 150 MB while playing a large playlist (summed private working set of all processes). Milestone 0 measured the baseline and kept this budget (100 MB idle, 150 MB playing): see [docs/ram-baseline.md](docs/ram-baseline.md).
 
+## How Lumen is built
+
+Lumen is my own project. I write the spec ([docs/PROJECT.md](docs/PROJECT.md)), make the architecture decisions ([docs/adr/](docs/adr/)), split each milestone into small tickets and set the hard limits, such as the RAM budget and the account-safety rules.
+
+Coding agents write much of the implementation, test-first, one ticket per pull request. Nothing reaches `dev` without passing CI (fmt, clippy, both test suites, lint, typecheck) and a review against the ticket and the spec. I run every milestone in the real app and measure its memory use before it is promoted to `main`. The agent setup lives in `.claude/` and [docs/agents/](docs/agents/).
+
 ## Prerequisites
 
 Windows 10 or 11.

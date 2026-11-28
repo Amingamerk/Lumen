@@ -1,4 +1,17 @@
-// Placeholder covers, drawn locally until `lumen://art/` serves real thumbnails.
+// Covers. Rust serves real thumbnails at `lumen://art/<size>/<track id>`; the
+// placeholders drawn here are what shows until one arrives, or when there is none.
+
+/** The sizes Rust makes, in pixels on a side. */
+export type ArtSize = 64 | 300;
+
+/**
+ * Where a track's picture is. On Windows, WebView2 reaches a `lumen://` handler
+ * as `http://lumen.localhost/`. The address holds a track id and nothing else:
+ * where the picture lives stays in Rust.
+ */
+export function artUrl(trackId: string, size: ArtSize): string {
+  return `http://lumen.localhost/art/${size}/${encodeURIComponent(trackId)}`;
+}
 
 /** How many tones and light positions app.css styles. */
 const TONES = 6;

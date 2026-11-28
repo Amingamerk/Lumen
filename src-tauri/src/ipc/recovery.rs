@@ -8,12 +8,12 @@ use std::time::Duration;
 use tauri::{AppHandle, Runtime};
 use tokio::sync::Notify;
 
-use super::playback::AppResolver;
+use super::playback::{AppResolver, youtube_ref};
 use super::player::AppPlayer;
 use super::youtube::Service;
 use super::{EventSink, lock};
 use crate::audio::{Fetch, NoStream, PlayerState};
-use crate::resolver::{Resolver, YtDlp};
+use crate::resolver::Resolver;
 use crate::secrets::SecretStore;
 use crate::sources::youtube::{GateClock, Transport, YouTube};
 
@@ -38,13 +38,13 @@ pub async fn watch<R: Runtime>(
     // A cool-down or an expired session shows here.
     let mut statuses = youtube.watch();
     loop {
-        match step(&player, &youtube, &resolver, &app) {
+        match step(&player, &youtube, resolver.as_ref(), &app) {
             Next::Fetch(request) => {
                 let (app, player) = (app.clone(), Arc::clone(&player));
-                let (youtube, resolver) = (Arc::clone(&youtube), Arc::clone(&resolver));
+                let resolver = Arc::clone(&resolver);
                 // On its own, so it can be cancelled while it runs.
                 tauri::async_runtime::spawn(async move {
-                    fetch(&player, &youtube, &resolver, &app, request).await;
+                    fetch(&player, resolver.as_ref(), &app, request).await;
                 });
             }
             Next::Sleep(wait) => tokio::select! {
@@ -62,10 +62,10 @@ pub async fn watch<R: Runtime>(
 
 /// One look at the player: finds a stall, tells the gate of a recovery that gave
 /// up, cancels one that may no longer send, and says what to do next.
-fn step<S: SecretStore, T: Transport, G: GateClock, Y: YtDlp, C: GateClock>(
+fn step<S: SecretStore, T: Transport, G: GateClock>(
     player: &Mutex<AppPlayer>,
     youtube: &YouTube<S, T, G>,
-    resolver: &Resolver<Y, C>,
+    resolver: &impl Resolver,
     sink: &impl EventSink,
 ) -> Next {
     // The player's lock is never held while YouTube's state is asked or changed.
@@ -82,7 +82,7 @@ fn step<S: SecretStore, T: Transport, G: GateClock, Y: YtDlp, C: GateClock>(
     }
     let dropped = lock(player).take_dropped();
     if let Some(video) = dropped {
-        resolver.forget(&video);
+        resolver.forget(&youtube_ref(&video));
     }
     let mut player = lock(player);
     match player.due_fetch() {
@@ -93,17 +93,17 @@ fn step<S: SecretStore, T: Transport, G: GateClock, Y: YtDlp, C: GateClock>(
 
 /// Resolves the stream asked for and hands the player the outcome, unless
 /// nobody waits for it any more.
-async fn fetch<S: SecretStore, T: Transport, G: GateClock, Y: YtDlp, C: GateClock>(
+async fn fetch(
     player: &Mutex<AppPlayer>,
-    youtube: &YouTube<S, T, G>,
-    resolver: &Resolver<Y, C>,
+    resolver: &impl Resolver,
     sink: &impl EventSink,
     request: Fetch,
 ) {
     let wanted = || lock(player).awaits_fetch(request.ticket);
     let outcome = resolver
-        .resolve(youtube, &request.video, wanted)
+        .resolve(&youtube_ref(&request.video), wanted)
         .await
+        .map(|stream| stream.media())
         .map_err(|error| NoStream {
             reason: error.to_string(),
             retry: error.worth_retrying(),

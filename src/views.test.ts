@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { SearchStatus, SourceFilter } from './lib/ipc';
-import { appStores, fakeBridge, library, searchView, serviceStatus } from './lib/testing';
+import { appStores, fakeBridge, searchView, serviceStatus } from './lib/testing';
 
 const sidebar = () => within(screen.getByRole('navigation', { name: 'Main' }));
 const main = () => within(screen.getByRole('main'));
@@ -15,7 +15,7 @@ async function openApp(bridge = fakeBridge()) {
   const view = render(App, {
     props: appStores(bridge),
   });
-  await screen.findByRole('link', { name: 'Night shift, from YouTube Music' });
+  await screen.findByRole('link', { name: 'Night shift, playlist' });
   return { ...view, bridge };
 }
 
@@ -50,8 +50,10 @@ describe('Home', () => {
     expect(card.querySelector('img')).toBeNull();
   });
 
-  it('asks Rust to open a card and shows the album it reports', async () => {
-    const { bridge } = await openApp();
+  it('asks Rust to open a card and shows the playlist it reports', async () => {
+    const bridge = fakeBridge();
+    bridge.lists.push({ id: 'low-tide', name: 'Low Tide', entries: [] });
+    await openApp(bridge);
 
     await fireEvent.click(
       within(await shelf('Jump back in')).getByRole('link', { name: /low tide/i }),
@@ -59,8 +61,7 @@ describe('Home', () => {
 
     await waitFor(() => expect(pageTitle()).toBe('Low Tide'));
     expect(bridge.requested).toEqual([{ view: 'playlist', id: 'low-tide' }]);
-    expect(mainText()).toContain('Album by Mira Sol');
-    expect(mainText()).toContain('From YouTube');
+    expect(mainText()).toContain('0 tracks');
   });
 
   it('offers scroll buttons only when a row has more cards than fit', async () => {
@@ -130,7 +131,7 @@ describe('Search', () => {
   /** A bridge whose search stands at `status`, with nothing found. */
   function standing(status: SearchStatus, filter: SourceFilter = 'all') {
     const bridge = connected();
-    bridge.remembered = { query: 'zzz', filter };
+    bridge.remembered = { query: 'zzz', filter, kind: 'all' };
     bridge.answer = (query, chosen) =>
       searchView(query, chosen, { status, tracks: [], collections: [] });
     return bridge;
@@ -151,7 +152,7 @@ describe('Search', () => {
 
   it('starts with the search Rust remembers', async () => {
     const bridge = connected();
-    bridge.remembered = { query: 'lamp', filter: 'youtube' };
+    bridge.remembered = { query: 'lamp', filter: 'youtube', kind: 'all' };
 
     await openResults(bridge);
 
@@ -163,7 +164,7 @@ describe('Search', () => {
     await openResults();
 
     expect(
-      main()
+      within(main().getByRole('group', { name: 'Source' }))
         .getAllByRole<HTMLInputElement>('radio')
         .map((radio) => [radio.labels?.[0]?.textContent?.trim(), radio.checked]),
     ).toEqual([
@@ -205,7 +206,7 @@ describe('Search', () => {
 
     const [first, second] = section('Songs').getAllByRole('listitem');
 
-    for (const text of ['Harbor Lights', 'Mira Sol, Juno Park', 'Low Tide', '3:21', 'YT']) {
+    for (const text of ['Harbor Lights', 'Mira Sol, Juno Park · Low Tide · 3:21', 'YT']) {
       expect(within(first).getByText(text)).toBeTruthy();
     }
     expect(within(second).getByText('YT')).toBeTruthy();
@@ -222,33 +223,24 @@ describe('Search', () => {
     expect(bridge.commands).toEqual([['playSearchResult', expect.any(String)]]);
   });
 
-  it('shows sample collections on the SoundCloud chip and opens them through Rust', async () => {
+  it('says SoundCloud arrives later on its chip and sends nothing to a service', async () => {
     const bridge = connected();
-    bridge.remembered = { query: '', filter: 'soundcloud' };
-    await openResults(bridge);
+    bridge.remembered = { query: '', filter: 'soundcloud', kind: 'all' };
+    await openSearch(bridge);
 
-    await fireEvent.click(section('Albums and playlists').getByRole('link', { name: /low tide/i }));
-
-    await waitFor(() => expect(pageTitle()).toBe('Low Tide'));
-    expect(bridge.requested.at(-1)).toEqual({ view: 'playlist', id: 'low-tide' });
+    expect(await heading('SoundCloud arrives later')).toBeTruthy();
+    expect(main().queryByRole('region', { name: 'Songs' })).toBeNull();
+    expect(main().queryByRole('button', { name: 'Sign in' })).toBeNull();
+    expect(bridge.searches).toEqual([]);
   });
 
-  it('measures the card row again when a search brings other cards', async () => {
-    const bridge = connected();
-    bridge.remembered = { query: '', filter: 'soundcloud' };
-    await openResults(bridge);
-    const region = section('Albums and playlists');
-    const row = region.getByRole('list');
-    Object.defineProperty(row, 'clientWidth', { value: 400, configurable: true });
-    Object.defineProperty(row, 'scrollWidth', { value: 900, configurable: true });
+  it('says it again after the chip is chosen, and never lists sample results', async () => {
+    await openResults();
 
-    bridge.emitSearch(
-      searchView('n', 'soundcloud', { revision: 9, collections: library().playlists }),
-    );
+    await fireEvent.click(chip('SoundCloud'));
 
-    expect(
-      await region.findByRole('button', { name: 'Scroll Albums and playlists forward' }),
-    ).toBeTruthy();
+    expect(await heading('SoundCloud arrives later')).toBeTruthy();
+    expect(main().queryByRole('region', { name: 'Songs' })).toBeNull();
   });
 
   it('asks for Enter before anything was searched', async () => {
@@ -332,15 +324,6 @@ describe('Search', () => {
     expect(await heading('Press Enter to search')).toBeTruthy();
   });
 
-  it('keeps the sample catalog usable while YouTube is blocked', async () => {
-    const bridge = fakeBridge();
-    bridge.remembered = { query: '', filter: 'soundcloud' };
-
-    await openResults(bridge);
-
-    expect(main().queryByRole('button', { name: 'Sign in' })).toBeNull();
-  });
-
   it('comes back to the same search after another view', async () => {
     await openResults();
     await type('ferry');
@@ -356,35 +339,38 @@ describe('Search', () => {
 });
 
 describe('Library', () => {
-  async function openLibrary() {
-    const app = await openApp();
+  async function openLibrary(bridge = fakeBridge()) {
+    const app = await openApp(bridge);
     await go('Library');
-    await screen.findByRole('region', { name: 'Playlists' });
     return app;
   }
 
-  it('lists the playlists and saved albums from Rust', async () => {
-    await openLibrary();
+  it('lists the local playlists from Rust', async () => {
+    const bridge = fakeBridge();
+    bridge.lists.push({ id: 'p2', name: 'Tunnel mixes', entries: [] });
+    await openLibrary(bridge);
 
-    expect(section('Playlists').getAllByRole('link')).toHaveLength(3);
-    expect(section('Saved albums').getAllByRole('link')).toHaveLength(1);
+    const region = await screen.findByRole('region', { name: 'Playlists' });
+
+    expect(within(region).getAllByRole('link')).toHaveLength(2);
   });
 
   it('opens a playlist through Rust', async () => {
-    const { bridge } = await openLibrary();
+    const bridge = fakeBridge();
+    bridge.lists.push({ id: 'p2', name: 'Tunnel mixes', entries: [] });
+    await openLibrary(bridge);
 
-    await fireEvent.click(section('Playlists').getByRole('link', { name: /tunnel mixes/i }));
+    await fireEvent.click(await section('Playlists').findByRole('link', { name: /tunnel mixes/i }));
 
     await waitFor(() => expect(pageTitle()).toBe('Tunnel mixes'));
-    expect(bridge.requested.at(-1)).toEqual({ view: 'playlist', id: 'tunnel-mixes' });
-    expect(mainText()).toContain('Long, low and echoing');
-    expect(mainText()).toContain('From SoundCloud');
+    expect(bridge.requested.at(-1)).toEqual({ view: 'playlist', id: 'p2' });
   });
 
-  it('says so when nothing is saved', async () => {
+  it('says so when there are no playlists', async () => {
     const bridge = fakeBridge();
-    bridge.saved = { playlists: [], albums: [] };
-    await openApp(bridge);
+    bridge.lists = [];
+    render(App, { props: appStores(bridge) });
+    await sidebar().findByText('No playlists yet');
 
     await go('Library');
 

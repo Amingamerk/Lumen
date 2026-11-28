@@ -325,6 +325,7 @@ mod tests {
                     "artists": ["Mira Sol"],
                     "album": null,
                     "durationMs": 4000,
+                    "hasArt": false,
                     "sources": [{ "source": "youtube", "badge": "YT" }]
                 }]
             })

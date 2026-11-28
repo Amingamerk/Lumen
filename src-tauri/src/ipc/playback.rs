@@ -10,25 +10,33 @@ use super::account::AccountHandle;
 use super::break_url::BreakUrl;
 use super::player::{Pending, PlayerHandle};
 use super::{EventSink, IpcError};
-use crate::catalog::TrackRow;
-use crate::resolver::{Resolver, Sidecars, jar_dir};
-use crate::sources::youtube::SystemClock;
+use crate::catalog::{SourceKind, SourceRef, TrackRow};
+use crate::resolver::{Resolver, Sidecars, YtDlpResolver, jar_dir};
+use crate::secrets::WindowsStore;
+use crate::sources::youtube::{HttpTransport, SystemClock};
 
 /// yt-dlp's cache, in the app's local data folder.
 const CACHE_FOLDER: &str = "yt-dlp-cache";
 
 /// The resolver as the app runs it.
-pub type AppResolver = Resolver<Sidecars, SystemClock>;
+pub type AppResolver =
+    YtDlpResolver<Sidecars, SystemClock, WindowsStore, HttpTransport, SystemClock>;
 
 /// Sets the resolver up, which sweeps leftover cookie files. Runs nothing.
 pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
     let cache = app.path().app_local_data_dir()?.join(CACHE_FOLDER);
-    app.manage(Arc::new(AppResolver::new(
+    let youtube = Arc::clone(app.state::<AccountHandle>().youtube());
+    let mut resolver = AppResolver::new(
         Sidecars::bundled(),
         SystemClock::default(),
+        youtube,
         jar_dir(),
         cache,
-    )));
+    );
+    if let Some(library) = super::library::open_shared(app) {
+        resolver = resolver.keeping_in(library);
+    }
+    app.manage(Arc::new(resolver));
     #[cfg(debug_assertions)]
     app.manage(BreakUrl::from_args(std::env::args_os()));
     Ok(())
@@ -41,13 +49,20 @@ pub fn stop<R: Runtime>(app: &AppHandle<R>) {
     }
 }
 
-/// Drops the stream of `video`, or every stream.
-pub fn forget<R: Runtime>(app: &AppHandle<R>, video: Option<&str>) {
+/// Drops every stream, as the account has changed. The library is written on a
+/// blocking thread, never under the caller's lock.
+pub fn forget_all<R: Runtime>(app: &AppHandle<R>) {
     if let Some(resolver) = app.try_state::<Arc<AppResolver>>() {
-        match video {
-            Some(video) => resolver.forget(video),
-            None => resolver.forget_all(),
-        }
+        let resolver = Arc::clone(resolver.inner());
+        tauri::async_runtime::spawn_blocking(move || resolver.forget_all());
+    }
+}
+
+/// The song of a YouTube video id.
+pub fn youtube_ref(video: &str) -> SourceRef {
+    SourceRef {
+        kind: SourceKind::YouTube,
+        id: video.to_owned(),
     }
 }
 
@@ -68,10 +83,10 @@ pub fn resolve_in_background<R: Runtime>(app: &AppHandle<R>, pending: Pending, v
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         let resolver = Arc::clone(app.state::<Arc<AppResolver>>().inner());
-        let youtube = Arc::clone(app.state::<AccountHandle>().youtube());
         let outcome = resolver
-            .resolve(&youtube, &video, || pending.wanted())
+            .resolve(&youtube_ref(&video), || pending.wanted())
             .await
+            .map(|stream| stream.media())
             .map_err(|error| error.to_string());
         #[cfg(debug_assertions)]
         let outcome = outcome.map(|media| match pending.wanted() {

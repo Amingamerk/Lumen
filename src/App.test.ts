@@ -6,7 +6,7 @@ import { appStores, fakeBridge } from './lib/testing';
 async function openApp(bridge = fakeBridge()) {
   const view = render(App, { props: appStores(bridge) });
   // Home cards name playlists too, so wait for the sidebar's own link.
-  await screen.findByRole('link', { name: 'Night shift, from YouTube Music' });
+  await screen.findByRole('link', { name: 'Night shift, playlist' });
   return { ...view, bridge };
 }
 
@@ -27,23 +27,20 @@ describe('app shell', () => {
     expect(screen.getByRole('main')).toBeTruthy();
   });
 
-  it('lists the playlists from Rust with a badge and a spoken source name', async () => {
-    await openApp();
+  it('lists the playlists from Rust', async () => {
+    const bridge = fakeBridge();
+    bridge.lists.push({ id: 'p2', name: 'Tunnel mixes', entries: [] });
 
-    const expected = [
-      ['Night shift', 'YT', 'YouTube\u00a0Music'],
-      ['Tunnel mixes', 'SC', 'SoundCloud'],
-      ['Liked on Spotify', 'SP', 'Spotify'],
-    ];
-    for (const [name, badge, source] of expected) {
-      const link = sidebar().getByRole('link', { name: `${name}, from ${source}` });
-      expect(within(link).getByText(badge)).toBeTruthy();
+    render(App, { props: appStores(bridge) });
+
+    for (const name of ['Night shift', 'Tunnel mixes']) {
+      expect(await sidebar().findByRole('link', { name: `${name}, playlist` })).toBeTruthy();
     }
   });
 
   it('says so when there are no playlists yet', async () => {
     const bridge = fakeBridge();
-    bridge.playlists = [];
+    bridge.lists = [];
 
     render(App, { props: appStores(bridge) });
 
@@ -67,11 +64,11 @@ describe('app shell', () => {
   it('opens a playlist frame', async () => {
     const { bridge } = await openApp();
 
-    await fireEvent.click(sidebar().getByRole('link', { name: /tunnel mixes/i }));
+    await fireEvent.click(sidebar().getByRole('link', { name: /night shift/i }));
 
-    await waitFor(() => expect(pageTitle()).toBe('Tunnel mixes'));
-    expect(bridge.requested).toEqual([{ view: 'playlist', id: 'tunnel-mixes' }]);
-    expect(screen.getByRole('main').textContent).toContain('From SoundCloud');
+    await waitFor(() => expect(pageTitle()).toBe('Night shift'));
+    expect(bridge.requested).toEqual([{ view: 'playlist', id: 'night-shift' }]);
+    expect(screen.getByRole('main').textContent).toContain('2 tracks');
   });
 
   it('never uses an HTML audio element', async () => {
@@ -107,6 +104,6 @@ describe('app shell', () => {
 
     unmount();
 
-    await waitFor(() => expect(bridge.listeners).toBe(0));
+    await waitFor(() => expect(bridge.listeners + bridge.playlistListeners).toBe(0));
   });
 });

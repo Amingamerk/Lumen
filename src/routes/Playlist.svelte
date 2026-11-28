@@ -1,75 +1,138 @@
-<!-- The page behind a playlist route, which albums use too. -->
+<!-- The page behind a playlist route: a local playlist and its songs. -->
 <script lang="ts">
   import MusicNotesIcon from 'phosphor-svelte/lib/MusicNotesIcon';
-  import { onMount } from 'svelte';
+  import PencilSimpleIcon from 'phosphor-svelte/lib/PencilSimpleIcon';
+  import TrashIcon from 'phosphor-svelte/lib/TrashIcon';
+  import { tick } from 'svelte';
   import { placeholderArt } from '../lib/art';
   import CoverArt from '../lib/components/CoverArt.svelte';
   import EmptyState from '../lib/components/EmptyState.svelte';
-  import SourceBadge from '../lib/components/SourceBadge.svelte';
   import TrackTable from '../lib/components/TrackTable.svelte';
   import { countLabel, formatTotalDuration } from '../lib/format';
-  import type { SourceKind } from '../lib/ipc';
-  import { SOURCE_NAMES } from '../lib/sources';
-  import type { CatalogStore } from '../lib/stores/catalog.svelte';
+  import type { LibraryStore } from '../lib/stores/library.svelte';
+  import type { PlaylistsStore } from '../lib/stores/playlists.svelte';
 
   interface Props {
-    catalog: CatalogStore;
+    playlists: PlaylistsStore;
+    library: LibraryStore;
     id: string;
-    /** Plays the Collection from this position, counted from 0. */
-    onplay: (index: number) => void;
   }
 
-  let { catalog, id, onplay }: Props = $props();
+  let { playlists, library, id }: Props = $props();
 
-  /** The store may still hold the page visited before this one. */
-  const collection = $derived(catalog.collection?.id === id ? catalog.collection : null);
-  const tracks = $derived(catalog.tracksOf(id));
+  const playlist = $derived(playlists.find(id));
+  /** A new window whenever the playlist's name or entries change. */
+  const tracks = $derived.by(() => {
+    void playlists.version(id);
+    return playlists.windowOf(id);
+  });
 
-  const comingTracks: Record<SourceKind, string> = {
-    youtube: `Tracks will appear once Lumen can read your ${SOURCE_NAMES.youtube} library.`,
-    soundcloud: 'Tracks will appear once Lumen can read your SoundCloud library.',
-    spotify: `Lumen will list these tracks from Spotify and play their matches from ${SOURCE_NAMES.youtube}.`,
-  };
+  let renaming = $state(false);
+  let name = $state('');
+  let box = $state<HTMLInputElement>();
+  let confirming = $state(false);
 
-  onMount(() => void catalog.loadCollection(id));
+  async function startRenaming() {
+    name = playlist?.name ?? '';
+    renaming = true;
+    await tick();
+    box?.select();
+  }
+
+  function finishRenaming(event: SubmitEvent) {
+    event.preventDefault();
+    if (name.trim()) void playlists.rename(id, name);
+    renaming = false;
+  }
 </script>
 
-{#if collection}
+{#if playlist}
   <div class="page">
     <!-- The backdrop takes the dominant colour of the cover. -->
-    <header class="hero" data-tone={placeholderArt(collection.title).tone}>
+    <header class="hero" data-tone={placeholderArt(playlist.name).tone}>
       <div class="cover">
-        <CoverArt title={collection.title} />
+        <CoverArt title={playlist.name} trackId={playlist.coverTrack} size={300} />
       </div>
       <div class="min-w-0">
-        <h1 class="page-title playlist-title">{collection.title}</h1>
-        <p class="text-ink mt-3 text-[15px] break-words">
-          {collection.kind === 'album' ? `Album by ${collection.subtitle}` : collection.subtitle}
-        </p>
-        <p class="text-ink-soft mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 tabular-nums">
-          <span class="flex items-center gap-2 whitespace-nowrap">
-            <SourceBadge source={collection.source} badge={collection.badge} />
-            <span>From <span translate="no">{SOURCE_NAMES[collection.source]}</span></span>
-          </span>
+        {#if renaming}
+          <form class="flex flex-wrap gap-2" onsubmit={finishRenaming}>
+            <input
+              bind:this={box}
+              bind:value={name}
+              class="picker-name"
+              type="text"
+              name="playlist-name"
+              aria-label="Playlist name"
+              autocomplete="off"
+              spellcheck="false"
+              onkeydown={(event) => event.key === 'Escape' && (renaming = false)}
+            />
+            <button type="submit" class="chip" disabled={!name.trim()}>Save</button>
+            <button type="button" class="chip" onclick={() => (renaming = false)}>Cancel</button>
+          </form>
+        {:else}
+          <h1 class="page-title playlist-title">{playlist.name}</h1>
+        {/if}
+        <p class="text-ink-soft mt-3 flex flex-wrap items-center gap-x-5 gap-y-1 tabular-nums">
+          <span class="whitespace-nowrap">Playlist</span>
           <span class="whitespace-nowrap">
-            {countLabel(collection.trackCount, 'track', 'tracks')}
+            {countLabel(playlist.trackCount, 'track', 'tracks')}
           </span>
-          {#if collection.trackCount > 0}
-            <span class="whitespace-nowrap">{formatTotalDuration(collection.durationMs)}</span>
+          {#if playlist.trackCount > 0}
+            <span class="whitespace-nowrap">{formatTotalDuration(playlist.durationMs)}</span>
           {/if}
         </p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          {#if !renaming}
+            <button type="button" class="chip" onclick={startRenaming}>
+              <PencilSimpleIcon size={16} aria-hidden="true" />
+              <span class="ml-2">Rename</span>
+            </button>
+          {/if}
+          {#if confirming}
+            <button
+              type="button"
+              class="chip"
+              aria-label="Delete the playlist {playlist.name}"
+              onclick={() => void playlists.remove(id)}
+            >
+              Delete it
+            </button>
+            <button type="button" class="chip" onclick={() => (confirming = false)}>Keep it</button>
+          {:else}
+            <button type="button" class="chip" onclick={() => (confirming = true)}>
+              <TrashIcon size={16} aria-hidden="true" />
+              <span class="ml-2">Delete playlist</span>
+            </button>
+          {/if}
+        </div>
       </div>
     </header>
 
-    {#if collection.trackCount === 0}
-      <EmptyState Icon={MusicNotesIcon} title="No tracks here yet">
-        {comingTracks[collection.source]}
+    {#if playlist.trackCount === 0}
+      <EmptyState Icon={MusicNotesIcon} title="No songs here yet">
+        Press the plus on a song in the search results or your library to put it in this playlist.
       </EmptyState>
     {:else}
       <section aria-labelledby="playlist-tracks">
-        <h2 id="playlist-tracks" class="sr-only">Tracks</h2>
-        <TrackTable {tracks} labelledby="playlist-tracks" {onplay} />
+        <h2 id="playlist-tracks" class="sr-only">Songs</h2>
+        <TrackTable
+          {tracks}
+          labelledby="playlist-tracks"
+          onplay={(position) => {
+            const row = tracks.row(position);
+            if (row) void library.play(row.id);
+          }}
+          onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}
+          onremove={(position, row) => void playlists.removeEntry(id, position, row.id)}
+        />
       </section>
     {/if}
+  </div>
+{:else if playlists.playlists}
+  <div class="page">
+    <EmptyState Icon={MusicNotesIcon} title="This playlist is gone">
+      It was deleted. Pick another one from the sidebar.
+    </EmptyState>
   </div>
 {/if}

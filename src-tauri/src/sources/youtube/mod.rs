@@ -10,6 +10,7 @@ mod http;
 mod search;
 mod service;
 mod session;
+mod source;
 mod transport;
 
 pub use account::{Account, AccountStatus, Generation, LoginAttempt};

@@ -413,6 +413,7 @@
    * dominant colour a page backdrop is drawn from.
    */
   .art {
+    position: relative;
     --x: 20%;
     --y: 16%;
     display: flex;
@@ -438,6 +439,20 @@
     box-shadow: inset 0 0 0 1px var(--color-edge);
     container-type: inline-size;
     user-select: none;
+  }
+
+  /* The real picture fades in over the placeholder once it has loaded. */
+  .art-picture {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+  }
+
+  .art-picture[data-loaded] {
+    opacity: 1;
   }
 
   .art > span {
@@ -728,7 +743,7 @@
 
   .track {
     display: grid;
-    grid-template-columns: 40px minmax(0, 1.5fr) minmax(0, 1fr) 72px 48px;
+    grid-template-columns: 40px minmax(0, 1fr) 72px auto;
     align-items: center;
     column-gap: 16px;
     padding-block: 7px;
@@ -754,8 +769,64 @@
     outline-offset: -2px;
   }
 
-  .track + .track {
-    border-top: 1px solid var(--color-edge);
+  /* The heart sits over the row's play button, so it can be pressed on its own. */
+  .track-end {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .like {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    color: var(--color-ink-faint);
+    cursor: pointer;
+  }
+
+  .like:hover,
+  .like[aria-pressed='true'] {
+    color: var(--color-lume-hi);
+  }
+
+  /* Other buttons on a row sit beside the heart and look the same. */
+  .row-action {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 999px;
+    color: var(--color-ink-faint);
+    cursor: pointer;
+  }
+
+  .row-action:hover {
+    color: var(--color-lume-hi);
+  }
+
+  .vlist {
+    position: relative;
+    /* Rows are placed by hand, so the browser must not nudge the scroll to follow them. */
+    overflow-anchor: none;
+  }
+
+  .vrow {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+  }
+
+  /* Every row owns its divider, so the first rendered row keeps it while scrolling. */
+  .vrow {
+    border-bottom: 1px solid var(--color-edge);
   }
 
   /* Too small for a corner: the initials sit in the middle. */
@@ -766,12 +837,38 @@
     border-radius: var(--radius-chip);
   }
 
+  /* Quick-play songs on the Top Result card: cover, title and length only. */
+  .tracks-compact .track {
+    grid-template-columns: 40px minmax(0, 1fr) auto;
+  }
+
+  .tracks-compact .track-sources {
+    display: none;
+  }
+
+  /* Albums, artists and playlists in search: the picture first, then two lines. */
+  .hit {
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    align-items: center;
+    column-gap: 16px;
+    padding-block: 7px;
+  }
+
+  .hit + .hit {
+    border-top: 1px solid var(--color-edge);
+  }
+
+  .hit .art {
+    border-radius: var(--radius-chip);
+  }
+
+  .hit[data-kind='artist'] .art {
+    border-radius: 999px;
+  }
+
   /* A narrow list drops the album column first. */
   @container (max-width: 599px) {
-    .track {
-      grid-template-columns: 40px minmax(0, 1fr) 72px 48px;
-    }
-
     .track-album {
       display: none;
     }
@@ -784,7 +881,7 @@
 
   .track-line {
     display: grid;
-    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 56px;
+    grid-template-columns: 48px minmax(0, 1.5fr) minmax(0, 1fr) 72px 176px;
     align-items: center;
     column-gap: 16px;
     padding-right: 8px;
@@ -847,7 +944,7 @@
 
   @container (max-width: 599px) {
     .track-line {
-      grid-template-columns: 48px minmax(0, 1fr) 72px 56px;
+      grid-template-columns: 48px minmax(0, 1fr) 72px 176px;
     }
   }
 
@@ -879,6 +976,57 @@
   .alert > svg {
     flex: none;
     color: var(--color-ember);
+  }
+
+  /* The choice of a playlist, over everything. */
+  .picker-backdrop {
+    position: fixed;
+    z-index: 4;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 16px;
+    background: color-mix(in srgb, var(--color-night) 70%, transparent);
+  }
+
+  .picker {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    width: min(28rem, 100%);
+    max-height: min(32rem, 100%);
+    padding: 20px;
+    border-radius: var(--radius-row);
+    background: var(--color-deck);
+    box-shadow:
+      inset 0 0 0 1px var(--color-edge),
+      0 24px 48px color-mix(in srgb, var(--color-night) 70%, transparent);
+  }
+
+  .picker-list {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .picker-name {
+    flex: 1;
+    min-width: 0;
+    height: 34px;
+    padding-inline: 14px;
+    border-radius: 999px;
+    background: var(--color-raise);
+    box-shadow: inset 0 0 0 1px var(--color-edge);
+    color: var(--color-ink);
+  }
+
+  .picker-name:focus-visible {
+    outline: 2px solid var(--color-lume-hi);
+    outline-offset: 2px;
+  }
+
+  .chip:disabled {
+    cursor: default;
+    opacity: 0.5;
   }
 
   /* Over everything, just above the player. */
@@ -1116,6 +1264,10 @@
 
 /* One entrance when the window opens: the lamp comes on, then the room appears. */
 @media (prefers-reduced-motion: no-preference) {
+  .art-picture {
+    transition: opacity 160ms var(--ease-glide);
+  }
+
   .nav-link,
   .card,
   .chip,

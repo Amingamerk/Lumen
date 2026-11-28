@@ -1,7 +1,7 @@
 //! The resolver over a fake yt-dlp. Nothing here contacts YouTube.
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -11,17 +11,27 @@ use tokio::task::yield_now;
 
 use super::process::ProcessOutput;
 use super::*;
+use crate::audio::Media;
+use crate::library::testing::reopen;
 use crate::secrets::fake::MemoryStore;
 use crate::sources::youtube::testing::{
     FakeClock, FakeTransport, TempDir, music_page, signed_in_cookies,
 };
-use crate::sources::youtube::{Account, GateError, GateView};
+use crate::sources::youtube::{Account, Cookie, GateError, GateView};
 
 const NOW_S: u64 = 1_700_000_000;
 const VIDEO: &str = "dQw4w9WgXcQ";
 const STREAM: &str = "https://rr1---sn-fake.googlevideo.com/videoplayback?expire=1700021600&ip=MARKER-IP&sig=MARKER-SIG";
 
 type Service = YouTube<MemoryStore, FakeTransport, FakeClock>;
+type TestResolver = YtDlpResolver<Arc<Fake>, FakeClock, MemoryStore, FakeTransport, FakeClock>;
+
+fn song(video: &str) -> SourceRef {
+    SourceRef {
+        kind: SourceKind::YouTube,
+        id: video.to_owned(),
+    }
+}
 
 /// Answers every run the same way and records what it was given.
 #[derive(Default)]
@@ -94,10 +104,19 @@ struct Fixture {
     clock: FakeClock,
     ytdlp: Arc<Fake>,
     youtube: Arc<Service>,
-    resolver: Arc<Resolver<Arc<Fake>, FakeClock>>,
+    resolver: Arc<TestResolver>,
 }
 
 fn fixture(ytdlp: Fake) -> Fixture {
+    build(ytdlp, None, signed_in_cookies())
+}
+
+/// A run of the app over the library file at `path`, signed in as `cookies`.
+fn app_run(ytdlp: Fake, path: &Path, cookies: Vec<Cookie>) -> Fixture {
+    build(ytdlp, Some(Arc::new(reopen(path))), cookies)
+}
+
+fn build(ytdlp: Fake, library: Option<Arc<Library>>, cookies: Vec<Cookie>) -> Fixture {
     let gate = TempDir::new();
     let jars = tempfile::tempdir().unwrap();
     let clock = FakeClock::at(NOW_S * 1_000);
@@ -108,14 +127,19 @@ fn fixture(ytdlp: Fake) -> Fixture {
         gate.path().join("youtube-gate.json"),
         |_| {},
     ));
-    sign_in(&youtube);
+    sign_in_with(&youtube, cookies);
     let ytdlp = Arc::new(ytdlp);
-    let resolver = Arc::new(Resolver::new(
+    let mut resolver = YtDlpResolver::new(
         ytdlp.clone(),
         clock.clone(),
+        youtube.clone(),
         jars.path().to_owned(),
         "cache".into(),
-    ));
+    );
+    if let Some(library) = library {
+        resolver = resolver.keeping_in(library);
+    }
+    let resolver = Arc::new(resolver);
     Fixture {
         _gate: gate,
         jars,
@@ -127,14 +151,19 @@ fn fixture(ytdlp: Fake) -> Fixture {
 }
 
 fn sign_in(youtube: &Service) {
-    let session = Session::capture(music_page(), signed_in_cookies()).unwrap();
+    sign_in_with(youtube, signed_in_cookies());
+}
+
+fn sign_in_with(youtube: &Service, cookies: Vec<Cookie>) {
+    let session = Session::capture(music_page(), cookies).unwrap();
     let attempt = youtube.account().begin_login();
     youtube.complete_login(attempt, &session, |_| {}).unwrap();
 }
 
 impl Fixture {
     async fn resolve(&self) -> Result<Media, ResolveError> {
-        self.resolver.resolve(&self.youtube, VIDEO, || true).await
+        let stream = self.resolver.resolve(&song(VIDEO), || true).await;
+        stream.map(|stream| stream.media())
     }
 
     fn runs(&self) -> usize {
@@ -186,7 +215,7 @@ fn debug_output_never_shows_the_url_or_a_header() {
     };
     let info = stream::read(&output, NOW_S * 1_000).unwrap();
 
-    let shown = format!("{info:?}{:?}", info.media());
+    let shown = format!("{info:?}{:?}{:?}", info.media(), info.to_stored());
 
     assert!(!shown.contains("MARKER"), "{shown}");
     assert!(!shown.contains("googlevideo"), "{shown}");
@@ -252,7 +281,7 @@ async fn an_account_change_or_a_forget_drops_the_cache() {
 
     sign_in(&f.youtube);
     f.resolve().await.unwrap();
-    f.resolver.forget(VIDEO);
+    f.resolver.forget(&song(VIDEO));
     f.resolve().await.unwrap();
     f.resolver.forget_all();
     f.resolve().await.unwrap();
@@ -292,7 +321,7 @@ async fn a_missing_sidecar_runs_nothing_and_counts_nothing() {
 async fn a_bad_video_id_runs_nothing() {
     let f = fixture(Fake::default());
 
-    let outcome = f.resolver.resolve(&f.youtube, "--exec=calc", || true).await;
+    let outcome = f.resolver.resolve(&song("--exec=calc"), || true).await;
 
     assert!(outcome == Err(ResolveError::BadVideo));
     assert_eq!(f.runs(), 0);
@@ -310,10 +339,10 @@ async fn three_quick_choices_run_twice_at_most_and_only_the_last_is_wanted() {
         .enumerate()
     {
         *newest.lock().unwrap() = number;
-        let (resolver, youtube, newest) = (f.resolver.clone(), f.youtube.clone(), newest.clone());
+        let (resolver, newest) = (f.resolver.clone(), newest.clone());
         choices.push(tokio::spawn(async move {
             let wanted = move || *newest.lock().unwrap() == number;
-            resolver.resolve(&youtube, video, wanted).await
+            resolver.resolve(&song(video), wanted).await
         }));
         settle().await;
     }
@@ -460,9 +489,10 @@ fn a_new_resolver_and_a_shutdown_sweep_leftover_jars() {
     assert!(!leftover.exists());
 
     std::fs::write(&leftover, "x").unwrap();
-    Resolver::new(
+    YtDlpResolver::new(
         f.ytdlp.clone(),
         f.clock.clone(),
+        f.youtube.clone(),
         f.jars.path().to_owned(),
         "cache".into(),
     );
@@ -491,4 +521,191 @@ fn only_answers_that_could_change_are_worth_asking_again() {
     ] {
         assert!(!error.worth_retrying(), "{error}");
     }
+}
+
+/// Another person's login: no cookie value is the same.
+fn other_login() -> Vec<Cookie> {
+    let mut cookies = signed_in_cookies();
+    for cookie in &mut cookies {
+        cookie.value.push_str("-other");
+    }
+    cookies
+}
+
+/// A new run of the app finds the song at the same place.
+fn library_path() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("lumen.db");
+    (dir, path)
+}
+
+fn kept_headers(path: &Path) -> Vec<String> {
+    let conn = rusqlite::Connection::open(path).unwrap();
+    let mut rows = conn
+        .prepare("SELECT url || headers || login FROM streams")
+        .unwrap();
+    rows.query_map([], |row| row.get(0))
+        .unwrap()
+        .map(Result::unwrap)
+        .collect()
+}
+
+#[tokio::test]
+async fn a_stream_is_used_again_after_a_restart_without_a_run() {
+    let (_dir, path) = library_path();
+    let first = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    let before = first.resolve().await.unwrap();
+    assert_eq!(first.runs(), 1);
+    drop(first);
+
+    let second = app_run(Fake::default(), &path, signed_in_cookies());
+    let after = second.resolve().await.unwrap();
+
+    assert_eq!(second.runs(), 0);
+    assert!(after == before);
+}
+
+#[tokio::test]
+async fn a_kept_stream_is_used_only_with_ten_minutes_left() {
+    let (_dir, path) = library_path();
+    let first = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    first.resolve().await.unwrap();
+    drop(first);
+
+    let enough = app_run(Fake::default(), &path, signed_in_cookies());
+    enough.clock.advance(Duration::from_secs(21_000));
+    enough.resolve().await.unwrap();
+    assert_eq!(enough.runs(), 0);
+
+    let short = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    short.clock.advance(Duration::from_secs(21_001));
+    short.resolve().await.unwrap();
+    assert_eq!(short.runs(), 1);
+}
+
+#[tokio::test]
+async fn another_login_does_not_get_a_kept_stream() {
+    let (_dir, path) = library_path();
+    let first = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    first.resolve().await.unwrap();
+    drop(first);
+
+    let other = app_run(printing(answer(STREAM, None)), &path, other_login());
+    other.resolve().await.unwrap();
+
+    assert_eq!(other.runs(), 1);
+}
+
+#[tokio::test]
+async fn disconnecting_and_signing_in_again_does_not_get_a_kept_stream() {
+    let (_dir, path) = library_path();
+    let f = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    f.resolve().await.unwrap();
+
+    f.youtube.disconnect(|_| {}).unwrap();
+    sign_in(&f.youtube);
+    f.resolve().await.unwrap();
+
+    assert_eq!(f.runs(), 2);
+}
+
+#[tokio::test]
+async fn forgetting_everything_clears_what_is_kept() {
+    let (_dir, path) = library_path();
+    let first = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    first.resolve().await.unwrap();
+    first.resolver.forget_all();
+    drop(first);
+
+    let second = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    second.resolve().await.unwrap();
+
+    assert_eq!(second.runs(), 1);
+}
+
+#[tokio::test]
+async fn forgetting_a_song_clears_it_from_what_is_kept() {
+    let (_dir, path) = library_path();
+    let first = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    first.resolve().await.unwrap();
+    first.resolver.forget(&song(VIDEO));
+    drop(first);
+
+    let second = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    second.resolve().await.unwrap();
+
+    assert_eq!(second.runs(), 1);
+}
+
+#[tokio::test]
+async fn nothing_secret_is_kept_beside_the_stream() {
+    let (_dir, path) = library_path();
+    let f = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    f.resolve().await.unwrap();
+
+    let rows = kept_headers(&path);
+
+    assert_eq!(rows.len(), 1);
+    for secret in [
+        "MARKER-COOKIE",
+        "MARKER-AUTH",
+        "fake-SAPISID",
+        "fake-LOGIN_INFO",
+    ] {
+        assert!(!rows[0].contains(secret), "{secret} in {}", rows[0]);
+    }
+    assert!(rows[0].contains("FakeAgent/1.0"));
+}
+
+#[tokio::test]
+async fn a_failing_library_never_stops_playback() {
+    let (_dir, path) = library_path();
+    let f = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    let sabotage = rusqlite::Connection::open(&path).unwrap();
+    sabotage.execute_batch("DROP TABLE streams").unwrap();
+
+    assert!(f.resolve().await.is_ok());
+    assert!(f.resolve().await.is_ok());
+    f.resolver.forget(&song(VIDEO));
+    f.resolver.forget_all();
+}
+
+#[tokio::test]
+async fn a_spotify_song_is_never_resolved() {
+    let f = fixture(printing(answer(STREAM, None)));
+    let spotify = SourceRef {
+        kind: SourceKind::Spotify,
+        id: "4uLU6hMCjMI75M1A2tKUQC".to_owned(),
+    };
+
+    let outcome = f.resolver.resolve(&spotify, || true).await;
+
+    assert!(outcome == Err(ResolveError::Unsupported));
+    assert_eq!(f.runs(), 0);
+}
+
+#[tokio::test]
+async fn a_kept_url_on_another_host_is_not_loaded() {
+    let (_dir, path) = library_path();
+    let f = app_run(printing(answer(STREAM, None)), &path, signed_in_cookies());
+    let login = Session::capture(music_page(), signed_in_cookies())
+        .unwrap()
+        .login_id();
+    reopen(&path)
+        .keep_stream(
+            &login,
+            &song(VIDEO),
+            &crate::library::StoredStream {
+                url: "https://example.org/videoplayback".to_owned(),
+                headers: Vec::new(),
+                available_at: None,
+                expires_at: NOW_S + 21_600,
+            },
+        )
+        .unwrap();
+
+    let media = f.resolve().await.unwrap();
+
+    assert_eq!(f.runs(), 1);
+    assert!(matches!(media, Media::Stream { url, .. } if url == STREAM));
 }

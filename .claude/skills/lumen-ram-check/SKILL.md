@@ -1,6 +1,6 @@
 ---
 name: lumen-ram-check
-description: Measure Lumen release RAM usage with scripts/measure-ram.ps1 against the 100 MB idle / 150 MB playing budget at the end of a milestone or after app changes.
+description: Measure Lumen release RAM usage with scripts/ram-run.ps1 (drives the app) and scripts/measure-ram.ps1 against the 100 MB idle / 150 MB playing budget at the end of a milestone or after app changes.
 ---
 
 # Lumen RAM Check
@@ -26,20 +26,22 @@ timeout 30m pnpm tauri build --no-bundle 2>&1 | tail -n 20
 
 ## Step 2: Measure scenarios (3 runs each)
 
-Launch `src-tauri/target/release/lumen.exe` fresh for each run, reach the target state, and run (PowerShell):
+One command launches the release `lumen.exe` fresh three times, drives it over UI Automation and prints the table with 3-run medians (needs an interactive desktop; keep the window untouched):
+
+```powershell
+pwsh -File scripts/ram-run.ps1            # -Runs 1..3, -Login adds the login-window launches, -ExePath, -OutDir
+```
+
+Per launch: idle, 5,000-row playlist, one search + one resolve (sampled peak), playing, sampled steady peak, CPU while minimized, idle after the track ended. It writes `summary.md`, `summary.json` and per-launch logs under `src-tauri/target/ram-run/<timestamp>/`. Searches and resolves are paced (one of each per launch, no retries). Tests of its pure helpers: `pwsh -File scripts/ram-run.test.ps1`.
+
+For a single reading of an already running app, use `scripts/measure-ram.ps1` directly:
 
 ```powershell
 pwsh -File scripts/measure-ram.ps1 -ProcessName lumen
 # Add -AsJson for structured output, or -ProcessId <pid> -WaitSeconds 30
 ```
 
-Scenarios to cover (as applicable to the milestone):
-1. **Idle, home screen** (30 s after launch) -> budget `<= 100 MB`.
-2. **5,000-row virtualized list open** (and after scrolling end-to-end) -> budget `<= 150 MB`.
-3. **Playing + 5,000-row list open** (once libmpv playback exists) -> budget `<= 150 MB`.
-4. **After closing a login window** (when login flows changed) -> confirm total returns to `<= 100 MB`.
-
-Note transient `yt-dlp` + Deno resolve peaks separately (see `docs/ram-baseline.md`); never hide them.
+Note transient `yt-dlp` + Deno resolve peaks separately (see `docs/ram-baseline.md`); never hide them. The login-window peak is also transient and has no budget; the reading 60 s after close is judged against 100 MB.
 
 ## Step 3: Clean up and report
 

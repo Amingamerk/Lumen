@@ -7,10 +7,12 @@ use serde::Serialize;
 use uuid::Uuid;
 
 mod fixtures;
+mod found;
 mod search;
 mod slice;
 
 pub use fixtures::LONG_PLAYLIST_ID;
+pub use found::{Hit, HitKind, HitRow, QUICK_SONGS, Results, SearchKind, Top, TopView};
 pub use search::{SearchStatus, SearchView, SourceFilter};
 pub use slice::{CollectionDetail, MAX_SLICE, TrackSlice};
 
@@ -110,6 +112,9 @@ pub struct TrackRow {
     pub artists: Vec<String>,
     pub album: Option<String>,
     pub duration_ms: u32,
+    /// Whether the picture can be asked for at `lumen://art/<size>/<id>`. The
+    /// address it comes from stays in Rust.
+    pub has_art: bool,
     pub sources: Vec<SourceTag>,
 }
 
@@ -163,6 +168,7 @@ impl TrackRow {
             artists: Vec::new(),
             album: None,
             duration_ms: 0,
+            has_art: false,
             sources: Vec::new(),
         }
     }
@@ -185,6 +191,7 @@ impl From<&Track> for TrackRow {
             artists: track.artists.clone(),
             album: track.album.clone(),
             duration_ms: track.duration_ms,
+            has_art: track.artwork_url.is_some(),
             sources,
         }
     }
@@ -242,6 +249,11 @@ impl Catalog {
         }
     }
 
+    /// A catalog with nothing in it.
+    pub fn empty() -> Self {
+        Self::new(Vec::new(), Vec::new(), Vec::new(), &[])
+    }
+
     /// Adds a playlist with Tracks of its own that Search leaves out.
     fn with_unsearched(mut self, playlist: Playlist, tracks: Vec<Track>) -> Self {
         for track in tracks {
@@ -278,6 +290,7 @@ impl Catalog {
         })
     }
 
+    #[cfg(test)]
     pub fn playlists(&self) -> &[Playlist] {
         &self.playlists
     }
@@ -435,6 +448,20 @@ mod tests {
         assert!(view.tracks.iter().all(|t| !listed.contains(&t.id)));
         assert_eq!(view.tracks.len(), catalog.tracks.len() - listed.len());
         assert!(view.collections.iter().any(|c| c.id == LONG_PLAYLIST_ID));
+    }
+
+    #[test]
+    fn a_row_says_it_has_art_but_never_carries_the_address() {
+        let mut track = Catalog::default().tracks[0].clone();
+        track.artwork_url = Some("https://i.ytimg.com/vi/a/hq720.jpg".to_owned());
+
+        let with = serde_json::to_string(&TrackRow::from(&track)).unwrap();
+        track.artwork_url = None;
+        let without = serde_json::to_string(&TrackRow::from(&track)).unwrap();
+
+        assert!(with.contains(r#""hasArt":true"#), "{with}");
+        assert!(!with.contains("ytimg"), "{with}");
+        assert!(without.contains(r#""hasArt":false"#), "{without}");
     }
 
     #[test]
@@ -615,6 +642,7 @@ mod tests {
             artists: vec!["Mira Sol".to_owned()],
             album: None,
             duration_ms: 201_000,
+            has_art: true,
             sources: vec![SourceTag {
                 source: SourceKind::YouTube,
                 badge: "YT",
@@ -629,6 +657,7 @@ mod tests {
                 "artists": ["Mira Sol"],
                 "album": null,
                 "durationMs": 201_000,
+                "hasArt": true,
                 "sources": [{ "source": "youtube", "badge": "YT" }]
             })
         );

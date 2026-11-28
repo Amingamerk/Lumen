@@ -5,8 +5,17 @@ How agents set up, run and tear down ticket work in Lumen. CLAUDE.md links here;
 ## Approvals
 
 - Feature-branch commits, pushes and ticket PRs into `dev` need no approval. Report the diff in the PR and to the coordinator.
-- Every merge (ticket PR into `dev`, promotion PR into `main`) and every release needs the owner's explicit OK for that PR. The `pr-merger` agent runs only after that OK has been relayed to it, naming the PR and its head SHA.
+- Ticket PRs into `dev` and `dev` -> `main` promotion PRs merge without asking the owner, once CI is green on the head SHA and a review verdict names that SHA with no open findings.
+- Every release (tag, GitHub release, published build) needs the owner's explicit OK.
 - Nothing is ever pushed to `main` directly.
+
+## Reviews
+
+One review per PR, sized by risk:
+
+- Docs, measurement and config-only PRs: the coordinator reviews the diff itself.
+- PRs that change Rust or Svelte code: one independent review (`.claude/agents/pr-reviewer.md`) that checks out the PR head, runs the suites with time limits and names the head SHA. Add the `account-safety-auditor` checklist when sources, login or the resolver change.
+- A fix after review gets a re-check of the changed lines only, not a full new review.
 
 ## Worktree setup
 
@@ -67,6 +76,13 @@ git worktree remove --force <worktree>
 git branch -D <type>/<issue#>-short-name
 git worktree prune
 git fetch origin dev:dev
+```
+
+After a `dev` -> `main` promotion, check that `dev` still exists on GitHub. The repo's "automatically delete head branches" setting deletes it on merge; push it back at the commit that was promoted:
+
+```bash
+git ls-remote --heads origin dev || true
+git push origin <promoted dev SHA>:refs/heads/dev   # only if it is gone
 ```
 
 `rmdir` first, because `git worktree remove` is slow on (or fails on) deep `node_modules` and `target` trees on Windows, and some hooks hold plain `rm -rf`.

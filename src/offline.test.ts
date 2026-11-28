@@ -9,8 +9,11 @@ const sources = import.meta.glob<string>(['./**/*.{ts,svelte,css}', '!./**/*.tes
   eager: true,
 });
 
-/** `www.w3.org` is the SVG XML namespace, which is a name and never fetched. */
-const EXTERNAL_URL = /(https?:|wss?:|["'(]\/\/)(?!\/?\/?www\.w3\.org\/)/i;
+/**
+ * `www.w3.org` is the SVG XML namespace, which is a name and never fetched.
+ * `lumen.localhost` is how WebView2 reaches Rust's own `lumen://` protocol.
+ */
+const EXTERNAL_URL = /(https?:|wss?:|["'(]\/\/)(?!\/?\/?(www\.w3\.org|lumen\.localhost)\/)/i;
 
 describe('offline frontend', () => {
   it('reads the app sources', () => {
@@ -36,8 +39,8 @@ describe('offline frontend', () => {
     expect(csp[directive]).toBe("'self'");
   });
 
-  it('allows images from the bundle and inline data only', () => {
-    expect(csp['img-src']).toBe("'self' data:");
+  it('allows images from the bundle, inline data and Rust-served artwork only', () => {
+    expect(csp['img-src']).toBe("'self' data: http://lumen.localhost");
   });
 
   it('allows connections to the Tauri IPC bridge only', () => {

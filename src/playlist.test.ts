@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import App from './App.svelte';
-import { appStores, fakeBridge } from './lib/testing';
+import { appStores, fakeBridge, trackSlice } from './lib/testing';
 
 /** Matches ROW_HEIGHT; the viewport fits ten rows. */
 const ROW = 56;
@@ -19,12 +19,12 @@ function inMain(selector: string): HTMLElement {
 }
 
 async function openPlaylist(count: number, bridge = fakeBridge()) {
-  bridge.trackCounts['night-shift'] = count;
+  bridge.lists[0].entries = trackSlice(0, count, count).tracks;
   const view = render(App, {
     props: appStores(bridge),
   });
   await fireEvent.click(
-    await screen.findByRole('link', { name: /^night shift, from/i }),
+    await screen.findByRole('link', { name: /^night shift, playlist$/i }),
   );
   await main().findByRole('heading', { level: 1, name: 'Night shift' });
   return { ...view, bridge };
@@ -53,12 +53,11 @@ async function scrollTo(scrolled: number) {
 }
 
 describe('playlist page', () => {
-  it('heads the page with a cover, the source, the track count and the length', async () => {
+  it('heads the page with a cover, the track count and the length', async () => {
     await openPlaylist(5000);
 
     const text = inMain('header').textContent?.replace(/\s+/g, ' ');
-    expect(text).toContain('Slow songs for after midnight');
-    expect(text).toContain('From YouTube Music');
+    expect(text).toContain('Playlist');
     expect(text).toContain('5,000 tracks');
     expect(text).toContain('279 hr 10 min');
   });
@@ -83,7 +82,7 @@ describe('playlist page', () => {
     for (const text of ['2', 'Track 2', 'Mira Sol, Juno Park', 'Low Tide', '3:21', 'YT']) {
       expect(inRow(2).getByText(text)).toBeTruthy();
     }
-    expect(main().getByRole('table', { name: 'Tracks' }).getAttribute('aria-rowcount')).toBe('3');
+    expect(main().getByRole('table', { name: 'Songs' }).getAttribute('aria-rowcount')).toBe('3');
   });
 
   it('asks Rust for the first page only and draws only the rows near the view', async () => {
@@ -139,7 +138,7 @@ describe('playlist page', () => {
   it('says so when a playlist is empty and asks for no rows', async () => {
     const { bridge } = await openPlaylist(0);
 
-    expect(main().getByRole('heading', { name: 'No tracks here yet' })).toBeTruthy();
+    expect(main().getByRole('heading', { name: 'No songs here yet' })).toBeTruthy();
     expect(main().queryByRole('table')).toBeNull();
     expect(bridge.slices).toEqual([]);
   });
@@ -157,9 +156,21 @@ describe('playlist page', () => {
     const { bridge } = await openPlaylist(5000);
     await waitFor(() => expect(row(1)).toBeTruthy());
 
-    await fireEvent.click(screen.getByRole('link', { name: 'Tunnel mixes, from SoundCloud' }));
+    bridge.lists.push({ id: 'p2', name: 'Tunnel mixes', entries: trackSlice(0, 2, 2).tracks });
+    bridge.emitPlaylists({
+      revision: 50,
+      playlists: bridge.lists.map((list) => ({
+        id: list.id,
+        name: list.name,
+        trackCount: list.entries.length,
+        durationMs: 0,
+        coverTrack: null,
+      })),
+      changed: 'p2',
+    });
+    await fireEvent.click(await screen.findByRole('link', { name: 'Tunnel mixes, playlist' }));
 
-    await waitFor(() => expect(bridge.slices.at(-1)?.id).toBe('tunnel-mixes'));
+    await waitFor(() => expect(bridge.slices.at(-1)?.id).toBe('p2'));
     expect(bridge.slices.at(-1)?.offset).toBe(0);
     await waitFor(() => expect(rows()).toHaveLength(2));
   });

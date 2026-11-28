@@ -10,32 +10,48 @@ One song as Lumen knows it: own `id`, title, artists, optional album, duration, 
 and a list of `SourceRef`. The same song on several services is one Track with several refs. A Track is
 metadata; it holds no Stream URL. Queue, playlists, likes and history refer to Tracks.
 
+### Artwork
+The picture of a Track (or of a playlist, drawn from its first song that has one). The webview never learns where
+it lives: it asks for `lumen://art/<size>/<track id>`, with a size of 64 (rows, the player bar) or 300 (cards, page
+heads), and Rust fetches it once from an allowlisted image host, resizes it and keeps it on disk. A picture that
+cannot be had leaves the placeholder cover showing.
+
 ### SourceRef and SourceKind
 `SourceRef` is a pointer to one item on one service: `kind` + the service's own `id`.
 `SourceKind` is `YouTube` (YouTube Music), `SoundCloud` or `Spotify`.
 
 ### Playlist, Album and Collection
-A playlist is an ordered list of Tracks that someone put together; an album is a release by its artists. Each
-comes from one `SourceKind`. **Collection** is the word for either one: both are shown as cards and opened on
-the playlist route.
+A playlist is an ordered list of Tracks that someone put together; an album is a release by its artists.
+**Collection** is the word for either one: both are shown as cards. Albums and the sample playlists exist
+only as test fixtures. What the user sees are **local playlists**: made, renamed and deleted by the user,
+stored in the library, listed in the sidebar and in the Library view, and opened on the playlist route.
+
+A playlist holds **entries**, each a place in the list that points to a Track. The same Track added twice is two
+entries, and removing one moves the later ones up. Deleting a playlist removes its entries and nothing else: the
+Tracks, likes and history stay. Playlists keep the order they were made in; reordering and importing the
+YouTube Music library come later. A playlist has no source of its own; its songs do.
 
 ### Track slice
-Some consecutive rows of one Collection (`offset`, `limit`, at most 200) with the Collection's total. The
-whole list stays in Rust; the playlist route asks for the slices it is about to show.
+Some consecutive rows of one list (`offset`, `limit`, at most 200) with the list's total. The whole list
+stays in Rust; the playlist route asks for the slices it is about to show.
 
 ### Shelf
 One horizontal row of Collection cards on Home.
 
 ### Search
-A query plus a source chip: `All`, `YouTube` or `SoundCloud`. Rust does the searching and remembers the last
-query and chip.
+A query plus a source chip (`All`, `YouTube` or `SoundCloud`) and a type chip (`All`, `Songs`, `Albums`, `Artists`
+or `Playlists`). Rust does the searching and remembers the last query and chips.
 
-- With `All` or `YouTube`, YouTube Music is searched live for songs. Only Enter sends a search, and only for a
-  query that is not blank; changing the chip sends nothing. One search makes at most one request through the
-  Account-safety gate, and what it found is kept in memory for an hour (50 queries at most), for that one
-  Session.
-- With `SoundCloud`, the static catalog is searched until Milestone 7: every word must appear in a Track's
-  title, artists or album, a playlist's name, or an album's title or artists. A blank query matches everything.
+- With `All` or `YouTube`, YouTube Music is searched live. Only Enter and a type chip send a search, and only
+  for a query that is not blank; changing the source chip sends nothing. One search makes at most one request
+  through the Account-safety gate, and what it found is kept in memory for an hour (50 queries and chips at
+  most), for that one Session. A type chip that was already answered shows its answer without a request.
+- The `All` type chip finds a **top result** (the best match, with up to 3 quick-play songs), songs, albums,
+  artists and playlists. The other type chips ask for one type only. Albums, artists and playlists are listed with
+  their pictures; opening their pages comes later. Unknown shelves in a reply are skipped.
+- With `SoundCloud`, nothing is searched: the page says SoundCloud arrives later (Milestone 7). The sample
+  catalog is searched only by tests: every word must appear in a Track's title, artists or album, a
+  playlist's name, or an album's title or artists. A blank query matches everything.
 
 ### Queue
 The ordered list of what plays. Starting a Collection or a catalog search result replaces it with all of their
@@ -62,21 +78,36 @@ happens before the Engine sees Media.
 song) is played by itself: the Queue is emptied, Previous and Next are off, and nothing advances when it ends. Queued playback of real audio, with
 autoplay on by default, comes in Milestone 4.
 
+### Library, like and history
+The library is the SQLite file `library.db` in the app's local data folder. It keeps each Track it has met once,
+found again by any of its `SourceRef`s, with the **liked songs** and the **history**. A like is one row per Track;
+unliking removes it and keeps the Track. The history has one row per **play**: written when audio starts (not when
+a song is chosen or resolved), with its start time, the time it actually sounded and why it ended (`finished`,
+`skipped`, `replaced`, `failed`, `exit`, or `interrupted` after a crash). A pause, a seek, a stream recovery or
+a failed load adds no row and no listened time. The Library view's **Recently played** lists each song once, the
+latest play first. A file made by a newer Lumen, or a damaged one, is reported and left as it is; likes and
+history stay off until it is dealt with. It also holds the **kept streams** of the Resolver and the **match** cache. Songs of the library, and the rows of a local playlist, play one at a
+time, as a search result does, until Milestone 4. A run with `--list` opens a **throwaway library** in the system's
+temp folder, holding one sample playlist of 5,000 songs, and never reads or writes the user's `library.db`.
+
 ### Notice
 The small error message over the app, for a refused command or a failed load or playback. It never holds a
 Stream URL, headers or the Engine's own words.
 
 ### Source
 The metadata role of a service, behind the `Source` trait: `search` and `related` (radio seeds), returning
-Tracks. Library import also belongs to the source module. A Source never produces audio.
+Tracks. YouTube Music is the first one. `related` answers "unsupported" without sending anything until
+Milestone 6. Library import also belongs to the source module. A Source never produces audio.
 
 ### Resolver
 The audio role: `SourceRef` -> `StreamInfo`. `yt-dlp` with Deno is the first backend
 ([ADR 0001](adr/0001-ytdlp-primary-resolver.md)). Only `YouTube` and `SoundCloud` refs can be resolved.
-Today it takes a YouTube video id; the `Resolver` trait that makes backends swappable comes in Milestone 3.
+The `Resolver` trait (`resolve`, `forget`, `forget_all`) makes backends swappable; `YtDlpResolver` is the first.
+A Spotify ref is never resolved: it is "unsupported" and nothing runs.
 
-A resolve is one `yt-dlp` run through the Account-safety gate. Its `StreamInfo` is cached in memory for that one
-Session and used again while the URL has at least 10 minutes left. A selection that has been replaced before
+A resolve is one `yt-dlp` run through the Account-safety gate. Its `StreamInfo` is cached in memory and kept in
+the library for the login that resolved it, and used again, even after a restart, while the URL has at least
+10 minutes left. A new login, a disconnect and a failed load drop it. A selection that has been replaced before
 its turn runs nothing.
 
 ### Stream URL and StreamInfo
@@ -85,7 +116,7 @@ is needed to play it:
 
 | Part | Meaning |
 |---|---|
-| `url` | The Stream URL. Sensitive (can include the client IP): never logged or sent to the UI |
+| `url` | The Stream URL. Sensitive (can include the client IP): never logged or sent to the UI. Kept unencrypted in the library, without any cookie or login header |
 | expiry | When the URL stops working (about 6 h in the Milestone 0 YouTube resolves) |
 | `available_at` | Optional earliest time to use the URL; wait for it before loading |
 | headers | HTTP headers mpv must send, including the pinned `User-Agent` |
@@ -95,7 +126,7 @@ in Milestone 4). HTTP 403, an expired URL or a stall means resolve again; mpv do
 
 ### Match
 A cached mapping from a Spotify Track to a playable `YouTube` (else `SoundCloud`) `SourceRef`, with its
-scores. ISRC search first, then title/artist/duration scoring. With no match anywhere, the Track is greyed
+scores (artist, title, duration and overall), kept in the library. ISRC search first, then title/artist/duration scoring. With no match anywhere, the Track is greyed
 out, skipped, and a toast is shown.
 
 ### Review list
@@ -144,12 +175,13 @@ The YouTube gate (the only one so far) is ready, cooling down or paused:
 | UI (Svelte) | Rendering, user input | Call external services, hold player state or secrets |
 | `ipc` | Commands in, events out | Business logic |
 | `sources` | Service APIs, import, metadata -> Track | Play audio |
-| `catalog` | Domain shapes, the static fixtures, Home/Library views, catalog search, Track slices | Call services, store data |
+| `catalog` | Domain shapes, the static fixtures (tests and `--list` only), Home shelves, catalog search, Track slices | Call services, store data |
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
 | `recs` | Autoplay picks (static until Milestone 6) | Play audio |
 | `audio` | Engine (libmpv), playback state, transport rules | Resolve URLs |
-| `library` | SQLite: Tracks, playlists, history, caches, Matches | Store secrets |
+| `library` | SQLite: Tracks, likes, history, local playlists (caches and Matches later) | Store secrets |
+| `art` | Artwork: fetch from allowlisted hosts, resize, cap and keep on disk, answer `lumen://art` | Send a remote address to the webview, send cookies, use the account gate |
 
 ## Invariants
 
