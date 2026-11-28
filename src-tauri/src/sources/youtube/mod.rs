@@ -15,9 +15,9 @@ mod transport;
 
 pub use account::{Account, AccountStatus, Generation, LoginAttempt};
 pub use cookies::Cookie;
-pub use gate::{GateClock, GateError, Kind, SystemClock, Verdict};
 #[cfg(test)]
-pub use gate::{GateView, PauseReason};
+pub use gate::PauseReason;
+pub use gate::{GateClock, GateError, GateView, Kind, SystemClock, Verdict};
 pub use http::HttpTransport;
 pub use search::{Parsed, key as search_key};
 #[cfg(test)]

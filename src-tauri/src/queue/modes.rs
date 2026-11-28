@@ -1,7 +1,8 @@
 //! Shuffle and repeat. Shuffle changes only the order entries play in: the
 //! list order is kept beside it, and turning shuffle off goes back to it.
 
-use std::collections::HashMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
 
 use uuid::Uuid;
 
@@ -32,7 +33,7 @@ impl Repeat {
 
 /// A small seeded source of random places (SplitMix64). Unseeded, it starts
 /// from the system's random numbers.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) struct Dice(u64);
 
 impl Default for Dice {
@@ -112,6 +113,51 @@ impl Queue {
         let changed = repeat != self.repeat;
         self.repeat = repeat;
         changed
+    }
+
+    /// The entries, `count` at most, that play after the current one, which is
+    /// never among them. A repeating Queue goes on into its next pass. None
+    /// while one song repeats: it comes round to itself.
+    pub fn coming(&self, count: usize) -> Vec<Entry> {
+        if self.repeat == Repeat::One {
+            return Vec::new();
+        }
+        let mut coming: Vec<Entry> = self.upcoming().iter().take(count).copied().collect();
+        let missing = count - coming.len();
+        if missing > 0 && self.repeat == Repeat::All && !self.entries.is_empty() {
+            let named: HashSet<u32> = coming.iter().chain(self.current()).map(|e| e.key).collect();
+            let first = self.next_pass(missing).into_iter();
+            coming.extend(first.filter(|entry| !named.contains(&entry.key)));
+        }
+        coming
+    }
+
+    /// The first `count` entries of the pass [`Self::wrap`] would start.
+    fn next_pass(&self, count: usize) -> Vec<Entry> {
+        if !self.shuffled {
+            return self.list.iter().take(count).copied().collect();
+        }
+        if let Some(after) = &self.pass_after {
+            // As `arrange` orders them: those it names first, the rest behind.
+            let find = |key: &u32| self.entries.iter().find(|e| e.key == *key);
+            let mut first: Vec<Entry> =
+                after.iter().filter_map(find).take(count).copied().collect();
+            // Short of `count`, these are all it names.
+            let named: Vec<u32> = first.iter().map(|e| e.key).collect();
+            let rest = self.entries.iter().filter(|e| !named.contains(&e.key));
+            let missing = count - first.len();
+            first.extend(rest.take(missing));
+            return first;
+        }
+        let ordered = self.ordered.min(self.entries.len().saturating_sub(1));
+        let (before, since) = self.entries.split_at(ordered);
+        let mut before = Cow::Borrowed(before);
+        // Where a shuffle starts is only known by running it, so this one case,
+        // the first wrap after shuffle was turned on late, copies those entries.
+        if before.len() > 1 {
+            self.dice.clone().shuffle(before.to_mut());
+        }
+        before.iter().chain(since).take(count).copied().collect()
     }
 
     /// Puts a Queue that was just replaced into a shuffled order, if shuffle is

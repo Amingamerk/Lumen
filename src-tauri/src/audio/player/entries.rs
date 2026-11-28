@@ -5,7 +5,7 @@ use super::*;
 use crate::catalog::{SourceKind, Track};
 
 /// Where the Queue's Tracks are found by id: the library, in the app.
-pub trait TrackLookup: Send {
+pub trait TrackLookup: Send + Sync {
     fn track(&self, id: Uuid) -> Option<Track>;
 }
 
@@ -34,7 +34,7 @@ const MAX_SKIPS: usize = 5;
 
 impl<E: Engine> Player<E> {
     pub fn set_tracks(&mut self, tracks: Box<dyn TrackLookup>) {
-        self.tracks = tracks;
+        self.tracks = tracks.into();
     }
 
     /// Queues the Tracks by id and plays the one at `start`. Nothing is looked
@@ -186,7 +186,7 @@ impl<E: Engine> Player<E> {
 }
 
 /// The YouTube video a Track plays from.
-fn youtube_video(track: &Track) -> Option<String> {
+pub(super) fn youtube_video(track: &Track) -> Option<String> {
     track
         .sources
         .iter()

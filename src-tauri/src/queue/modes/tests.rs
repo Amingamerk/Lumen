@@ -457,3 +457,96 @@ fn key_of(queue: &Queue, n: u32) -> u32 {
         .chain(queue.upcoming());
     entries.find(|e| e.track == id(n)).unwrap().key
 }
+
+/// The tracks `coming` names must be the ones `advance` then reaches.
+fn assert_comes_true(queue: &mut Queue, count: usize) {
+    let coming = numbers(&queue.coming(count));
+    assert_eq!(coming.len(), count);
+    for expected in coming {
+        assert!(queue.advance());
+        assert_eq!(current(queue), expected);
+    }
+}
+
+#[test]
+fn what_comes_next_wraps_round_a_repeating_queue() {
+    let mut list = queue(4, 2);
+    assert_eq!(numbers(&list.coming(2)), [4]);
+
+    list.set_repeat(Repeat::All);
+
+    assert_eq!(numbers(&list.coming(2)), [4, 1]);
+    list.advance();
+    assert_eq!(numbers(&list.coming(2)), [1, 2]);
+}
+
+#[test]
+fn what_comes_next_never_names_the_current_entry_or_one_twice() {
+    let mut two = queue(2, 0);
+    two.set_repeat(Repeat::All);
+    assert_eq!(numbers(&two.coming(2)), [2]);
+    two.advance();
+    assert_eq!(numbers(&two.coming(2)), [1]);
+
+    let mut one = queue(1, 0);
+    one.set_repeat(Repeat::All);
+    assert_eq!(numbers(&one.coming(2)), Vec::<u128>::new());
+}
+
+#[test]
+fn nothing_comes_next_while_one_song_repeats() {
+    let mut list = queue(4, 0);
+    list.set_repeat(Repeat::One);
+
+    assert_eq!(numbers(&list.coming(2)), Vec::<u128>::new());
+}
+
+#[test]
+fn what_comes_next_follows_a_shuffle_over_its_end() {
+    for seed in 0..40 {
+        // Shuffle turned on late: the next pass shuffles what had played.
+        let mut late = queue_seeded(seed, 6, 3);
+        late.set_shuffle(true);
+        late.set_repeat(Repeat::All);
+        late.advance();
+
+        assert_comes_true(&mut late, 2);
+        assert_comes_true(&mut late, 2);
+        assert_comes_true(&mut late, 2);
+    }
+}
+
+#[test]
+fn what_comes_next_after_going_back_over_the_wrap_is_the_pass_that_was_left() {
+    for seed in 0..40 {
+        // Shuffle turned on late, so the two passes differ.
+        let mut list = queue_seeded(seed, 6, 3);
+        list.set_shuffle(true);
+        list.set_repeat(Repeat::All);
+        walk_to_the_end(&mut list);
+        list.advance();
+        list.retreat();
+
+        assert_comes_true(&mut list, 2);
+    }
+}
+
+#[test]
+fn what_comes_next_keeps_the_picks_behind_the_users_songs() {
+    for seed in 0..40 {
+        let mut list = queue_seeded(seed, 4, 3);
+        list.append_autoplay(id(90));
+        list.set_shuffle(true);
+        list.set_repeat(Repeat::All);
+        list.advance();
+
+        assert_comes_true(&mut list, 2);
+        assert_comes_true(&mut list, 2);
+    }
+}
+
+fn walk_to_the_end(queue: &mut Queue) {
+    while !queue.upcoming().is_empty() {
+        queue.advance();
+    }
+}
