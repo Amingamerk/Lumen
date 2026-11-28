@@ -43,7 +43,7 @@
     <div class="min-w-0">
       <p class="track-title truncate text-[15px] font-semibold" title={track.title}>{track.title}</p>
       <p class="track-meta text-ink-faint truncate text-[13px]">
-        {[artists, track.album, formatDuration(track.durationMs)].filter(Boolean).join(' · ')}
+        {[artists, track.album, track.durationMs > 0 ? formatDuration(track.durationMs) : ''].filter(Boolean).join(' · ')}
       </p>
     </div>
     <div class="track-sources flex justify-end gap-1">
