@@ -11,6 +11,7 @@ use tokio::task::yield_now;
 
 use super::process::ProcessOutput;
 use super::*;
+use crate::audio::Media;
 use crate::secrets::fake::MemoryStore;
 use crate::sources::youtube::testing::{
     FakeClock, FakeTransport, TempDir, music_page, signed_in_cookies,
@@ -22,6 +23,14 @@ const VIDEO: &str = "dQw4w9WgXcQ";
 const STREAM: &str = "https://rr1---sn-fake.googlevideo.com/videoplayback?expire=1700021600&ip=MARKER-IP&sig=MARKER-SIG";
 
 type Service = YouTube<MemoryStore, FakeTransport, FakeClock>;
+type TestResolver = YtDlpResolver<Arc<Fake>, FakeClock, MemoryStore, FakeTransport, FakeClock>;
+
+fn song(video: &str) -> SourceRef {
+    SourceRef {
+        kind: SourceKind::YouTube,
+        id: video.to_owned(),
+    }
+}
 
 /// Answers every run the same way and records what it was given.
 #[derive(Default)]
@@ -94,7 +103,7 @@ struct Fixture {
     clock: FakeClock,
     ytdlp: Arc<Fake>,
     youtube: Arc<Service>,
-    resolver: Arc<Resolver<Arc<Fake>, FakeClock>>,
+    resolver: Arc<TestResolver>,
 }
 
 fn fixture(ytdlp: Fake) -> Fixture {
@@ -110,9 +119,10 @@ fn fixture(ytdlp: Fake) -> Fixture {
     ));
     sign_in(&youtube);
     let ytdlp = Arc::new(ytdlp);
-    let resolver = Arc::new(Resolver::new(
+    let resolver = Arc::new(YtDlpResolver::new(
         ytdlp.clone(),
         clock.clone(),
+        youtube.clone(),
         jars.path().to_owned(),
         "cache".into(),
     ));
@@ -134,7 +144,8 @@ fn sign_in(youtube: &Service) {
 
 impl Fixture {
     async fn resolve(&self) -> Result<Media, ResolveError> {
-        self.resolver.resolve(&self.youtube, VIDEO, || true).await
+        let stream = self.resolver.resolve(&song(VIDEO), || true).await;
+        stream.map(|stream| stream.media())
     }
 
     fn runs(&self) -> usize {
@@ -252,7 +263,7 @@ async fn an_account_change_or_a_forget_drops_the_cache() {
 
     sign_in(&f.youtube);
     f.resolve().await.unwrap();
-    f.resolver.forget(VIDEO);
+    f.resolver.forget(&song(VIDEO));
     f.resolve().await.unwrap();
     f.resolver.forget_all();
     f.resolve().await.unwrap();
@@ -292,7 +303,7 @@ async fn a_missing_sidecar_runs_nothing_and_counts_nothing() {
 async fn a_bad_video_id_runs_nothing() {
     let f = fixture(Fake::default());
 
-    let outcome = f.resolver.resolve(&f.youtube, "--exec=calc", || true).await;
+    let outcome = f.resolver.resolve(&song("--exec=calc"), || true).await;
 
     assert!(outcome == Err(ResolveError::BadVideo));
     assert_eq!(f.runs(), 0);
@@ -310,10 +321,10 @@ async fn three_quick_choices_run_twice_at_most_and_only_the_last_is_wanted() {
         .enumerate()
     {
         *newest.lock().unwrap() = number;
-        let (resolver, youtube, newest) = (f.resolver.clone(), f.youtube.clone(), newest.clone());
+        let (resolver, newest) = (f.resolver.clone(), newest.clone());
         choices.push(tokio::spawn(async move {
             let wanted = move || *newest.lock().unwrap() == number;
-            resolver.resolve(&youtube, video, wanted).await
+            resolver.resolve(&song(video), wanted).await
         }));
         settle().await;
     }
@@ -460,9 +471,10 @@ fn a_new_resolver_and_a_shutdown_sweep_leftover_jars() {
     assert!(!leftover.exists());
 
     std::fs::write(&leftover, "x").unwrap();
-    Resolver::new(
+    YtDlpResolver::new(
         f.ytdlp.clone(),
         f.clock.clone(),
+        f.youtube.clone(),
         f.jars.path().to_owned(),
         "cache".into(),
     );

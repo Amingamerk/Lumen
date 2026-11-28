@@ -15,7 +15,7 @@ pub(super) fn kind_name(kind: SourceKind) -> &'static str {
     }
 }
 
-fn kind_of(name: &str) -> Option<SourceKind> {
+pub(super) fn kind_of(name: &str) -> Option<SourceKind> {
     match name {
         "youtube" => Some(SourceKind::YouTube),
         "soundcloud" => Some(SourceKind::SoundCloud),

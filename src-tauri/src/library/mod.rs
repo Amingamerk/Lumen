@@ -12,6 +12,7 @@ use crate::sources::youtube::GateClock;
 
 mod history;
 mod likes;
+mod matches;
 mod playlists;
 mod schema;
 mod tracks;

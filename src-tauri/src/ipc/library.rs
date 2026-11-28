@@ -191,6 +191,13 @@ pub fn play_log<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<HistoryWriter>> {
     app.try_state::<LibraryHandle>()?.writer.clone()
 }
 
+/// The open library, for what is kept besides likes and history. `None` when it
+/// could not be opened.
+pub fn open_shared<R: Runtime>(app: &AppHandle<R>) -> Option<Arc<Library>> {
+    let handle = app.try_state::<LibraryHandle>()?;
+    handle.library().ok().cloned()
+}
+
 fn announce_history(
     handle: &LibraryHandle,
     change: HistoryChange,

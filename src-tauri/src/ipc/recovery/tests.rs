@@ -16,7 +16,7 @@ use super::*;
 use crate::audio::{EngineEvent, FakeEngine, PlaybackStatus, Player};
 use crate::catalog::TrackRow;
 use crate::recs::StaticRecommender;
-use crate::resolver::{ProcessOutput, ResolveError};
+use crate::resolver::{ProcessOutput, ResolveError, YtDlp, YtDlpResolver};
 use crate::secrets::fake::MemoryStore;
 use crate::sources::youtube::testing::{
     FakeClock, FakeTransport, TempDir, music_page, signed_in_cookies,
@@ -66,8 +66,8 @@ struct Rig {
     _jars: tempfile::TempDir,
     clock: FakeClock,
     ytdlp: Arc<Ytdlp>,
-    youtube: Service,
-    resolver: Resolver<Arc<Ytdlp>, FakeClock>,
+    youtube: Arc<Service>,
+    resolver: YtDlpResolver<Arc<Ytdlp>, FakeClock, MemoryStore, FakeTransport, FakeClock>,
     engine: FakeEngine,
     player: Mutex<AppPlayer>,
     sink: RecordingSink,
@@ -78,20 +78,21 @@ async fn playing() -> Rig {
     let gate = TempDir::new();
     let jars = tempfile::tempdir().unwrap();
     let clock = FakeClock::at(NOW_MS);
-    let youtube = Service::new(
+    let youtube = Arc::new(Service::new(
         Account::new(MemoryStore::default()),
         FakeTransport::default(),
         clock.clone(),
         gate.path().join("youtube-gate.json"),
         |_| {},
-    );
+    ));
     let session = Session::capture(music_page(), signed_in_cookies()).unwrap();
     let attempt = youtube.account().begin_login();
     youtube.complete_login(attempt, &session, |_| {}).unwrap();
     let ytdlp = Arc::new(Ytdlp::default());
-    let resolver = Resolver::new(
+    let resolver = YtDlpResolver::new(
         ytdlp.clone(),
         clock.clone(),
+        youtube.clone(),
         jars.path().to_owned(),
         "cache".into(),
     );
@@ -113,7 +114,11 @@ async fn playing() -> Rig {
     };
     let row = TrackRow::untagged("Paper".to_owned());
     let (key, _) = lock(&rig.player).begin_stream(VIDEO.to_owned(), row);
-    let media = rig.resolver.resolve(&rig.youtube, VIDEO, || true).await;
+    let media = rig
+        .resolver
+        .resolve(&youtube_ref(VIDEO), || true)
+        .await
+        .map(|stream| stream.media());
     lock(&rig.player)
         .finish_stream(key, Ok(media.unwrap()))
         .unwrap();
@@ -141,14 +146,7 @@ impl Rig {
     }
 
     async fn fetch(&self, request: Fetch) {
-        fetch(
-            &self.player,
-            &self.youtube,
-            &self.resolver,
-            &self.sink,
-            request,
-        )
-        .await;
+        fetch(&self.player, &self.resolver, &self.sink, request).await;
     }
 
     /// Waits as the watcher is told to and takes the fetch that is then due.

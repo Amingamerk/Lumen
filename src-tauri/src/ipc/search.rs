@@ -6,11 +6,16 @@ use tauri::{AppHandle, Manager, Runtime, State};
 
 use super::account::AccountHandle;
 use super::{EventSink, IpcError, SharedState, lock};
-use crate::catalog::SourceFilter;
+use crate::catalog::{SearchView, SourceFilter, Track};
+use crate::sources::youtube::{Parsed, ServiceError};
+use crate::sources::{Source, SourceError};
 use crate::state::Ticket;
 
 /// Sent when the search view changes. Mirrored in `src/lib/ipc.ts`.
 pub const SEARCH_CHANGED: &str = "search-changed";
+
+/// How many songs one search shows.
+const SEARCH_LIMIT: usize = 50;
 
 /// Takes up an Enter on the Search view and announces it.
 fn begin(
@@ -41,12 +46,32 @@ pub async fn submit_search<R: Runtime>(
         return Ok(());
     };
     let youtube = Arc::clone(account.youtube());
-    let wanted = || lock(&state).is_newest_search(ticket.number);
-    let outcome = youtube.search_songs(&ticket.query, wanted).await;
-    let view = lock(&state).finish_search(ticket.number, outcome);
-    match view {
+    match search_with(&*youtube, &state, &ticket).await {
         Some(view) => app.search_changed(&view),
         None => Ok(()),
+    }
+}
+
+/// Asks `source` for the ticket's query and takes up the answer. Nothing is
+/// shown for a search that a newer one has replaced.
+async fn search_with(
+    source: &impl Source,
+    state: &SharedState,
+    ticket: &Ticket,
+) -> Option<SearchView> {
+    let wanted = || lock(state).is_newest_search(ticket.number);
+    let outcome = source.search(&ticket.query, SEARCH_LIMIT, wanted).await;
+    lock(state).finish_search(ticket.number, found(outcome))
+}
+
+/// What the search state takes: no songs is an answer, a source that cannot
+/// search is an unexpected one.
+fn found(outcome: Result<Vec<Track>, SourceError>) -> Result<Parsed, ServiceError> {
+    match outcome {
+        Ok(tracks) if tracks.is_empty() => Ok(Parsed::NoResults),
+        Ok(tracks) => Ok(Parsed::Songs(tracks)),
+        Err(SourceError::Service(error)) => Err(error),
+        Err(SourceError::Unsupported) => Err(ServiceError::Unexpected),
     }
 }
 
@@ -79,6 +104,8 @@ mod tests {
     use super::super::tests::RecordingSink;
     use super::*;
     use crate::catalog::SearchStatus;
+    use crate::library::testing::song;
+    use crate::sources::testing::FakeSource;
 
     #[test]
     fn a_submit_announces_that_it_is_loading() {
@@ -103,5 +130,50 @@ mod tests {
 
         assert_eq!(again, None);
         assert_eq!(sink.searches.borrow().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_source_that_found_songs_shows_them() {
+        let state = SharedState::default();
+        let ticket = lock(&state)
+            .submit_search("paper", SourceFilter::All)
+            .ticket;
+        let source = FakeSource::answering(Ok(vec![song(1), song(2)]));
+
+        let view = search_with(&source, &state, &ticket.unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(view.status, SearchStatus::Results);
+        assert_eq!(view.tracks.len(), 2);
+        assert_eq!(source.searched(), ["paper"]);
+    }
+
+    #[tokio::test]
+    async fn a_source_with_no_songs_says_so() {
+        let state = SharedState::default();
+        let ticket = lock(&state).submit_search("zzz", SourceFilter::All).ticket;
+        let source = FakeSource::answering(Ok(Vec::new()));
+
+        let view = search_with(&source, &state, &ticket.unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(view.status, SearchStatus::NoResults);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_blocks_the_search() {
+        let state = SharedState::default();
+        let ticket = lock(&state)
+            .submit_search("paper", SourceFilter::All)
+            .ticket;
+        let source = FakeSource::answering(Err(ServiceError::RateLimited.into()));
+
+        let view = search_with(&source, &state, &ticket.unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(view.status, SearchStatus::Blocked);
     }
 }

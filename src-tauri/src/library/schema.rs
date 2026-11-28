@@ -55,6 +55,32 @@ const STEPS: &[&str] = &[
     ) STRICT;
     CREATE INDEX playlist_entries_by_position ON playlist_entries(playlist_id, position);
     ",
+    // 3: Stream URLs resolved for one login, so a replay after a restart needs no
+    // new yt-dlp run, and the matches that Spotify import will find. A stream
+    // URL is unencrypted here: it holds no cookie, and it ends within hours.
+    "
+    CREATE TABLE streams (
+        kind TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        login TEXT NOT NULL,
+        url TEXT NOT NULL,
+        headers TEXT NOT NULL,
+        available_at INTEGER,
+        expires_at INTEGER NOT NULL,
+        PRIMARY KEY (kind, source_id)
+    ) STRICT;
+    CREATE TABLE matches (
+        from_kind TEXT NOT NULL,
+        from_id TEXT NOT NULL,
+        to_kind TEXT NOT NULL,
+        to_id TEXT NOT NULL,
+        artist_score REAL NOT NULL,
+        title_score REAL NOT NULL,
+        duration_score REAL NOT NULL,
+        overall_score REAL NOT NULL,
+        PRIMARY KEY (from_kind, from_id)
+    ) STRICT;
+    ",
 ];
 
 /// The version a fresh database ends at.
