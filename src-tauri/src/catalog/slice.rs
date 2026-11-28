@@ -116,7 +116,6 @@ mod tests {
                 source: SourceKind::YouTube,
                 tracks: vec![Uuid::from_u128(2), Uuid::from_u128(4)],
             }],
-            &[],
         )
     }
 

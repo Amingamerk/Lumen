@@ -3,6 +3,9 @@ import { describeError } from '../errors';
 import type { Bridge, LibrarySummary, PlayList, TrackRow, TrackSlice } from '../ipc';
 import { TrackWindow } from './trackWindow.svelte';
 
+/** The tabs of the Library page. */
+export type LibraryPart = 'collections' | 'liked' | 'recent';
+
 /**
  * A mirror of the liked songs and the history Rust keeps. Which songs are liked
  * is learned for the ones on show only; the lists stay in Rust and come as
@@ -10,6 +13,8 @@ import { TrackWindow } from './trackWindow.svelte';
  */
 export class LibraryStore {
   summary = $state.raw<LibrarySummary | null>(null);
+  /** The Library tab on show, so Home can open the one it links to. */
+  part = $state<LibraryPart>('collections');
   /** Rises when a like or a play changes what the lists hold. */
   revision = $state.raw(0);
   /** Why the last request to Rust failed, if it did. */

@@ -1,37 +1,49 @@
 import { describeError } from '../errors';
-import type { Bridge, SearchKind, SearchView, Shelf, SourceFilter } from '../ipc';
+import type { Bridge, HomeView, SearchKind, SearchView, SourceFilter } from '../ipc';
 
 /**
- * A mirror of the Home shelves and the search Rust builds. Each view asks when it
+ * A mirror of the Home shelves (kept fresh by the library events) and the search Rust builds. Each view asks when it
  * opens, and the search also follows its events. No searching or filtering happens here.
  */
 export class CatalogStore {
-  home = $state.raw<Shelf[] | null>(null);
+  home = $state.raw<HomeView | null>(null);
   search = $state.raw<SearchView | null>(null);
   /** Why the last request to Rust failed, if it did. */
   error = $state.raw<string | null>(null);
 
   readonly #bridge: Bridge;
+  #homeAsks = 0;
 
   constructor(bridge: Bridge) {
     this.#bridge = bridge;
   }
 
-  /** Starts mirroring the search. Resolves with a function that stops it. */
+  /** Starts mirroring the search and what changes Home. Resolves with a function that stops it. */
   async connect(): Promise<() => void> {
-    let stop = () => {};
+    const stops: (() => void)[] = [];
     try {
-      stop = await this.#bridge.onSearchChanged((view) => this.#applySearch(view));
+      stops.push(await this.#bridge.onSearchChanged((view) => this.#applySearch(view)));
+      // Once Home has been shown, a like, a play or a playlist change asks again.
+      const refresh = () => {
+        if (this.home) void this.loadHome();
+      };
+      stops.push(await this.#bridge.onLikesChanged(refresh));
+      stops.push(await this.#bridge.onHistoryChanged(refresh));
+      stops.push(await this.#bridge.onPlaylistsChanged(refresh));
     } catch (error) {
       this.error = describeError(error);
     }
-    return () => stop();
+    return () => stops.forEach((stop) => stop());
   }
 
   loadHome(): Promise<void> {
+    const ask = ++this.#homeAsks;
     return this.#ask(
       () => this.#bridge.getHome(),
-      (home) => (this.home = home),
+      // An answer to an older question does not replace a newer one.
+      (home) => {
+        if (ask === this.#homeAsks) this.home = home;
+      },
     );
   }
 

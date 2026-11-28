@@ -2,16 +2,17 @@
 <script lang="ts">
   import CaretLeftIcon from 'phosphor-svelte/lib/CaretLeftIcon';
   import CaretRightIcon from 'phosphor-svelte/lib/CaretRightIcon';
-  import type { CollectionSummary } from '../ipc';
-  import CollectionCard from './CollectionCard.svelte';
+  import type { Snippet } from 'svelte';
 
   interface Props {
     title: string;
-    items: CollectionSummary[];
-    onopen: (id: string) => void;
+    /** The cards, each in an `<li>`. */
+    children: Snippet;
+    /** Where "Show all" goes. Without it there is no link. */
+    onall?: () => void;
   }
 
-  let { title, items, onopen }: Props = $props();
+  let { title, children, onall }: Props = $props();
 
   const uid = $props.id();
   let row: HTMLElement | undefined;
@@ -58,7 +59,13 @@
 <section class="shelf" aria-labelledby="{uid}-title">
   <div class="shelf-head">
     <h2 id="{uid}-title" class="shelf-title">{title}</h2>
-    {#if room.overflowing}
+    <div class="flex items-center gap-3">
+      {#if onall}
+        <button type="button" class="show-all" onclick={onall}>
+          Show all<span class="sr-only"> {title}</span>
+        </button>
+      {/if}
+      {#if room.overflowing}
       <div class="flex gap-2">
         <button
           type="button"
@@ -79,14 +86,11 @@
           <CaretRightIcon size={16} weight="bold" aria-hidden="true" />
         </button>
       </div>
-    {/if}
+      {/if}
+    </div>
   </div>
 
   <ul class="shelf-row" {@attach watch}>
-    {#each items as collection (collection.id)}
-      <li class="min-w-0">
-        <CollectionCard {collection} {onopen} />
-      </li>
-    {/each}
+    {@render children()}
   </ul>
 </section>

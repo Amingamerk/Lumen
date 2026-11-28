@@ -158,7 +158,15 @@
     {/if}
 
     {#if route?.view === 'home'}
-      <Home {catalog} onopen={openPlaylist} />
+      <Home
+        {catalog}
+        {library}
+        onopen={openPlaylist}
+        onshowall={(part) => {
+          library.part = part;
+          void store.navigate({ view: 'library' });
+        }}
+      />
     {:else if route?.view === 'search'}
       <Search
         {catalog}

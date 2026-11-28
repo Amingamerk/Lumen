@@ -11,6 +11,7 @@ use crate::catalog::Track;
 use crate::sources::youtube::GateClock;
 
 mod history;
+mod home;
 mod likes;
 mod matches;
 mod playlists;
@@ -20,6 +21,7 @@ mod tracks;
 mod writer;
 
 pub use history::{EndReason, HistoryChange, NoLog, PlayId, PlayLog};
+pub use home::HomeView;
 pub use likes::LikeChange;
 pub use playlists::PlaylistSummary;
 pub use streams::StoredStream;

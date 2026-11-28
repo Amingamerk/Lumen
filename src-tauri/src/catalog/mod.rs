@@ -118,14 +118,6 @@ pub struct TrackRow {
     pub sources: Vec<SourceTag>,
 }
 
-/// One horizontal row of cards on Home.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Shelf {
-    pub id: &'static str,
-    pub title: &'static str,
-    pub items: Vec<CollectionSummary>,
-}
-
 /// Everything saved: playlists and albums.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Library {
@@ -197,14 +189,6 @@ impl From<&Track> for TrackRow {
     }
 }
 
-/// Which Collections a Home shelf holds, by id.
-#[derive(Debug, Clone, Copy)]
-struct ShelfPlan {
-    id: &'static str,
-    title: &'static str,
-    collections: &'static [&'static str],
-}
-
 /// Every Track, playlist and album Lumen knows about.
 #[derive(Debug)]
 pub struct Catalog {
@@ -217,7 +201,6 @@ pub struct Catalog {
     positions: HashMap<Uuid, usize>,
     playlists: Vec<Playlist>,
     albums: Vec<Album>,
-    shelves: &'static [ShelfPlan],
 }
 
 /// The static fixtures.
@@ -228,12 +211,7 @@ impl Default for Catalog {
 }
 
 impl Catalog {
-    fn new(
-        tracks: Vec<Track>,
-        playlists: Vec<Playlist>,
-        albums: Vec<Album>,
-        shelves: &'static [ShelfPlan],
-    ) -> Self {
+    fn new(tracks: Vec<Track>, playlists: Vec<Playlist>, albums: Vec<Album>) -> Self {
         let positions = tracks
             .iter()
             .enumerate()
@@ -245,13 +223,12 @@ impl Catalog {
             positions,
             playlists,
             albums,
-            shelves,
         }
     }
 
     /// A catalog with nothing in it.
     pub fn empty() -> Self {
-        Self::new(Vec::new(), Vec::new(), Vec::new(), &[])
+        Self::new(Vec::new(), Vec::new(), Vec::new())
     }
 
     /// Adds a playlist with Tracks of its own that Search leaves out.
@@ -267,7 +244,7 @@ impl Catalog {
     /// A catalog holding only these Tracks.
     #[cfg(test)]
     pub fn of(tracks: Vec<Track>) -> Self {
-        Self::new(tracks, Vec::new(), Vec::new(), &[])
+        Self::new(tracks, Vec::new(), Vec::new())
     }
 
     /// The Tracks a Recommender may pick from: the ones Search looks through.
@@ -304,21 +281,6 @@ impl Catalog {
                 .find(|a| a.id == id)
                 .map(CollectionSummary::from)
         })
-    }
-
-    pub fn home(&self) -> Vec<Shelf> {
-        self.shelves
-            .iter()
-            .map(|plan| Shelf {
-                id: plan.id,
-                title: plan.title,
-                items: plan
-                    .collections
-                    .iter()
-                    .filter_map(|id| self.collection(id))
-                    .collect(),
-            })
-            .collect()
     }
 
     pub fn library(&self) -> Library {
@@ -542,21 +504,6 @@ mod tests {
     #[test]
     fn knows_nothing_about_an_unknown_id() {
         assert_eq!(Catalog::default().collection("nope"), None);
-    }
-
-    #[test]
-    fn home_has_titled_shelves_with_every_planned_card() {
-        let catalog = Catalog::default();
-
-        let shelves = catalog.home();
-
-        assert!(shelves.len() >= 2);
-        assert_eq!(shelves.len(), catalog.shelves.len());
-        for (shelf, plan) in shelves.iter().zip(catalog.shelves) {
-            assert!(!shelf.title.is_empty());
-            let ids: Vec<&str> = shelf.items.iter().map(|c| c.id.as_str()).collect();
-            assert_eq!(ids, plan.collections, "{}", shelf.title);
-        }
     }
 
     #[test]

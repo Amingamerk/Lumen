@@ -195,7 +195,6 @@ mod tests {
                 source: YouTube,
                 tracks: vec![Uuid::from_u128(1)],
             }],
-            &[],
         )
     }
 

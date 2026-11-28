@@ -3,7 +3,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/sve
 import { describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
 import type { SearchStatus, SourceFilter } from './lib/ipc';
-import { appStores, fakeBridge, searchView, serviceStatus } from './lib/testing';
+import { appStores, fakeBridge, searchView, serviceStatus, tracks } from './lib/testing';
 
 const sidebar = () => within(screen.getByRole('navigation', { name: 'Main' }));
 const main = () => within(screen.getByRole('main'));
@@ -27,48 +27,74 @@ async function go(name: 'Home' | 'Search' | 'Library') {
 describe('Home', () => {
   const shelf = (name: string) => screen.findByRole('region', { name });
 
-  it('shows a row of cards for every shelf Rust sends', async () => {
-    await openApp();
-
-    const first = within(await shelf('Jump back in'));
-
-    expect(first.getAllByRole('link').map((link) => link.getAttribute('aria-label'))).toEqual([
-      'Night shift, playlist from YouTube Music',
-      'Low Tide, album from YouTube Music',
-    ]);
-    expect(section('From SoundCloud').getAllByRole('link')).toHaveLength(1);
-  });
-
-  it('puts the title, subtitle, badge and a local cover on a card', async () => {
-    await openApp();
-
-    const card = within(await shelf('Jump back in')).getByRole('link', { name: /low tide/i });
-
-    for (const text of ['Low Tide', 'Mira Sol', 'YT', 'LT']) {
-      expect(within(card).getByText(text)).toBeTruthy();
-    }
-    expect(card.querySelector('img')).toBeNull();
-  });
-
-  it('asks Rust to open a card and shows the playlist it reports', async () => {
+  /** A listener who has played two songs, liked one and made a playlist. */
+  function listener() {
     const bridge = fakeBridge();
-    bridge.lists.push({ id: 'low-tide', name: 'Low Tide', entries: [] });
+    const [first, second] = tracks();
+    bridge.played = [second, first];
+    bridge.likedIds = [first.id];
+    bridge.rowsById.set(first.id, first);
+    return bridge;
+  }
+
+  it('shows the recent songs, likes and playlists of the library', async () => {
+    await openApp(listener());
+
+    const recent = within(await shelf('Recently played'));
+    expect(recent.getAllByRole('button', { name: /^Play/ }).map((b) => b.getAttribute('aria-label'))).toEqual([
+      'Play Lamplighter, Juno Park',
+      'Play Harbor Lights, Mira Sol, Juno Park',
+    ]);
+    expect(section('Liked songs').getAllByRole('button', { name: /^Play/ })).toHaveLength(1);
+    expect(section('Your playlists').getAllByRole('link')).toHaveLength(1);
+  });
+
+  it('puts a lazy local cover on a card', async () => {
+    await openApp(listener());
+
+    const card = within(await shelf('Recently played')).getByRole('button', { name: /harbor/i });
+
+    expect(card.querySelector('img')?.getAttribute('loading')).toBe('lazy');
+    expect(card.querySelector('img')?.getAttribute('src')).toContain('art/300/t1');
+  });
+
+  it('plays a song card through the queue in the shelf order', async () => {
+    const bridge = listener();
     await openApp(bridge);
 
     await fireEvent.click(
-      within(await shelf('Jump back in')).getByRole('link', { name: /low tide/i }),
+      within(await shelf('Recently played')).getByRole('button', { name: /harbor/i }),
     );
 
-    await waitFor(() => expect(pageTitle()).toBe('Low Tide'));
-    expect(bridge.requested).toEqual([{ view: 'playlist', id: 'low-tide' }]);
-    expect(mainText()).toContain('0 tracks');
+    expect(bridge.commands).toContainEqual(['playList', { kind: 'recent' }, 1, 't1']);
+  });
+
+  it('asks Rust to open a playlist card and shows the playlist it reports', async () => {
+    const bridge = listener();
+    await openApp(bridge);
+
+    await fireEvent.click(
+      within(await shelf('Your playlists')).getByRole('link', { name: /night shift/i }),
+    );
+
+    await waitFor(() => expect(pageTitle()).toBe('Night shift'));
+    expect(bridge.requested).toEqual([{ view: 'playlist', id: 'night-shift' }]);
+  });
+
+  it('links Show all to the matching Library tab', async () => {
+    await openApp(listener());
+
+    await fireEvent.click(within(await shelf('Liked songs')).getByRole('button', { name: /show all/i }));
+
+    await waitFor(() => expect(pageTitle()).toBe('Library'));
+    expect(main().getByRole<HTMLInputElement>('radio', { name: 'Liked songs' }).checked).toBe(true);
   });
 
   it('offers scroll buttons only when a row has more cards than fit', async () => {
     await openApp();
-    const region = within(await shelf('Jump back in'));
+    const region = within(await shelf('Your playlists'));
     const row = region.getByRole('list');
-    expect(region.queryByRole('button')).toBeNull();
+    expect(region.queryByRole('button', { name: /^Scroll/ })).toBeNull();
 
     // jsdom has no layout, so give the row a size.
     Object.defineProperty(row, 'clientWidth', { value: 400, configurable: true });
@@ -77,8 +103,8 @@ describe('Home', () => {
     row.scrollBy = scrollBy;
     await fireEvent.scroll(row);
 
-    const back = region.getByRole('button', { name: 'Scroll Jump back in back' });
-    const forward = region.getByRole('button', { name: 'Scroll Jump back in forward' });
+    const back = region.getByRole('button', { name: 'Scroll Your playlists back' });
+    const forward = region.getByRole('button', { name: 'Scroll Your playlists forward' });
     expect(back.getAttribute('aria-disabled')).toBe('true');
     expect(forward.getAttribute('aria-disabled')).toBe('false');
 
@@ -97,9 +123,9 @@ describe('Home', () => {
 
   it('says so when there is nothing to show', async () => {
     const bridge = fakeBridge();
-    bridge.shelves = [];
+    bridge.lists = [];
 
-    await openApp(bridge);
+    render(App, { props: appStores(bridge) });
 
     expect(await screen.findByText('Nothing to play yet')).toBeTruthy();
   });
@@ -383,7 +409,7 @@ describe('catalog views', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const { bridge } = await openApp();
-      await screen.findByRole('region', { name: 'Jump back in' });
+      await screen.findByRole('region', { name: 'Your playlists' });
 
       await vi.advanceTimersByTimeAsync(60_000);
 
