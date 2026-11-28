@@ -163,6 +163,18 @@ impl Library {
         Ok(all)
     }
 
+    /// The first `limit` playlists, in the order they were made.
+    pub fn first_playlists(&self, limit: usize) -> Result<Vec<PlaylistSummary>, LibraryError> {
+        let conn = self.conn();
+        let mut ask = conn.prepare_cached(&format!(
+            "{SUMMARY} GROUP BY p.id ORDER BY p.rowid LIMIT ?1"
+        ))?;
+        let found = ask
+            .query_map([super::sql_int(limit)], summary_of)?
+            .collect::<Result<_, _>>()?;
+        Ok(found)
+    }
+
     pub fn playlist(&self, id: &str) -> Result<PlaylistSummary, LibraryError> {
         summary(&self.conn(), id)
     }

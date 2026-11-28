@@ -18,7 +18,7 @@ import type {
   SearchKind,
   SearchView,
   ServiceStatus,
-  Shelf,
+  HomeView,
   SourceFilter,
   TrackRow,
   TrackSlice,
@@ -153,17 +153,6 @@ function collection(id: string): CollectionSummary {
   // Rust rejects with a plain string.
   if (!found) throw `no playlist or album has the id “${id}”`;
   return found;
-}
-
-export function home(): Shelf[] {
-  return [
-    {
-      id: 'jump-back-in',
-      title: 'Jump back in',
-      items: [collection('night-shift'), collection('low-tide')],
-    },
-    { id: 'soundcloud', title: 'From SoundCloud', items: [collection('tunnel-mixes')] },
-  ];
 }
 
 export function tracks(): TrackRow[] {
@@ -530,7 +519,6 @@ export function fakeBridge({ announce = true } = {}) {
     failSlices: null as string | null,
     /** The local playlists, in the order they were made, with their entries. */
     lists: [{ id: 'night-shift', name: 'Night shift', entries: trackSlice(0, 2, 2).tracks }] as List[],
-    shelves: home(),
     get listeners() {
       return handlers.size;
     },
@@ -553,9 +541,15 @@ export function fakeBridge({ announce = true } = {}) {
       current = route;
       if (announce) bridge.emit({ route, queueOpen: false, revision: ++revision });
     },
-    async getHome(): Promise<Shelf[]> {
+    /** Like Rust: a few of each, from the same lists the library views read. */
+    async getHome(): Promise<HomeView> {
       catalogCall('getHome');
-      return bridge.shelves;
+      const liked = bridge.likedIds.map((id) => bridge.rowsById.get(id) ?? { ...tracks()[0], id });
+      return {
+        recent: bridge.played.slice(0, 8),
+        liked: liked.slice(0, 8),
+        playlists: summaries().slice(0, 8),
+      };
     },
     async getPlaylists(): Promise<PlaylistsChanged> {
       bridge.calls.push('getPlaylists');

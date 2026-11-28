@@ -7,7 +7,7 @@
   import EmptyState from '../lib/components/EmptyState.svelte';
   import TrackTable from '../lib/components/TrackTable.svelte';
   import { countLabel } from '../lib/format';
-  import type { LibraryStore } from '../lib/stores/library.svelte';
+  import type { LibraryPart, LibraryStore } from '../lib/stores/library.svelte';
   import type { QueuePlacement } from '../lib/ipc';
   import type { PlaylistsStore } from '../lib/stores/playlists.svelte';
 
@@ -20,15 +20,11 @@
 
   let { playlists, library, onopen, onqueue }: Props = $props();
 
-  type Part = 'collections' | 'liked' | 'recent';
-
-  const parts: { value: Part; label: string }[] = [
+  const parts: { value: LibraryPart; label: string }[] = [
     { value: 'collections', label: 'Playlists' },
     { value: 'liked', label: 'Liked songs' },
     { value: 'recent', label: 'Recently played' },
   ];
-
-  let part = $state<Part>('collections');
 
   const summary = $derived(library.summary);
 
@@ -65,15 +61,15 @@
           type="radio"
           name="library-part"
           {value}
-          checked={part === value}
-          onchange={() => (part = value)}
+          checked={library.part === value}
+          onchange={() => (library.part = value)}
         />
         <span>{label}</span>
       </label>
     {/each}
   </fieldset>
 
-  {#if part === 'liked'}
+  {#if library.part === 'liked'}
     {#if summary?.likedCount}
       <section class="mt-6" aria-labelledby="library-liked">
         <h2 id="library-liked" class="shelf-title mb-2">
@@ -99,7 +95,7 @@
         Press the heart on a song, in the results or the player bar, to keep it here.
       </EmptyState>
     {/if}
-  {:else if part === 'recent'}
+  {:else if library.part === 'recent'}
     {#if summary?.playedCount}
       <section class="mt-6" aria-labelledby="library-recent">
         <h2 id="library-recent" class="shelf-title mb-2">

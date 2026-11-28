@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { deferred, fakeBridge, home, searchView } from '../testing';
+import { describe, expect, it, vi } from 'vitest';
+import { deferred, fakeBridge, searchView, tracks } from '../testing';
 import { CatalogStore } from './catalog.svelte';
 
 function setUp() {
@@ -17,11 +17,68 @@ describe('CatalogStore', () => {
 
   it('mirrors the Home shelves, asking once', async () => {
     const { bridge, catalog } = setUp();
+    bridge.played = tracks();
 
     await catalog.loadHome();
 
-    expect(catalog.home).toEqual(home());
+    expect(catalog.home?.recent.map((row) => row.id)).toEqual(tracks().map((row) => row.id));
+    expect(catalog.home?.liked).toEqual([]);
+    expect(catalog.home?.playlists.map((list) => list.name)).toEqual(['Night shift']);
     expect(bridge.calls).toEqual(['getHome']);
+  });
+
+  it('has no cards on Home for an empty library', async () => {
+    const { bridge, catalog } = setUp();
+    bridge.lists = [];
+
+    await catalog.loadHome();
+
+    expect(catalog.home).toEqual({ recent: [], liked: [], playlists: [] });
+  });
+
+  describe('Home after a library event', () => {
+    it('shows a new like after one event', async () => {
+      const { bridge, catalog } = setUp();
+      await catalog.connect();
+      await catalog.loadHome();
+
+      await bridge.likeTrack('t1');
+
+      await vi.waitFor(() => expect(catalog.home?.liked.map((row) => row.id)).toEqual(['t1']));
+      expect(bridge.calls.filter((call) => call === 'getHome')).toHaveLength(2);
+    });
+
+    it('shows a new play after one event', async () => {
+      const { bridge, catalog } = setUp();
+      await catalog.connect();
+      await catalog.loadHome();
+
+      bridge.played = [tracks()[1]];
+      bridge.emitHistory({ revision: 1, playedCount: 1 });
+
+      await vi.waitFor(() => expect(catalog.home?.recent.map((row) => row.id)).toEqual(['t2']));
+    });
+
+    it('shows a new playlist after one event', async () => {
+      const { bridge, catalog } = setUp();
+      await catalog.connect();
+      await catalog.loadHome();
+
+      await bridge.createPlaylist('Mix');
+
+      await vi.waitFor(() =>
+        expect(catalog.home?.playlists.map((list) => list.name)).toEqual(['Night shift', 'Mix']),
+      );
+    });
+
+    it('does not ask for Home before Home was opened', async () => {
+      const { bridge, catalog } = setUp();
+      await catalog.connect();
+
+      await bridge.likeTrack('t1');
+
+      expect(bridge.calls).not.toContain('getHome');
+    });
   });
 
   it('opens the search Rust remembers', async () => {
@@ -105,7 +162,7 @@ describe('CatalogStore', () => {
     await catalog.loadHome();
 
     expect(catalog.error).toBe('catalog unavailable');
-    expect(catalog.home).toEqual(home());
+    expect(catalog.home).not.toBeNull();
 
     bridge.failCatalog = null;
     await catalog.loadHome();

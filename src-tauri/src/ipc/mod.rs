@@ -18,7 +18,8 @@ use serde::{Serialize, Serializer};
 use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::audio::{PlayerError, PlayerPosition, PlayerState};
-use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, TrackSlice};
+use crate::catalog::{CollectionDetail, Library, SearchView, TrackSlice};
+use crate::library::HomeView;
 use crate::library::LibraryError;
 use crate::secrets::SecretError;
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
@@ -163,8 +164,9 @@ pub async fn navigate<R: Runtime>(
 }
 
 #[tauri::command]
-pub fn get_home(state: State<'_, SharedState>) -> Vec<Shelf> {
-    lock(&state).home()
+pub async fn get_home(library: State<'_, library::LibraryHandle>) -> Result<HomeView, IpcError> {
+    let handle = library.inner().clone();
+    library::blocking(move || Ok(handle.library()?.home()?)).await
 }
 
 #[tauri::command]

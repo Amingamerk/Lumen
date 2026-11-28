@@ -641,6 +641,17 @@
     color: var(--color-ink);
   }
 
+  .show-all {
+    color: var(--color-ink-faint);
+    font-size: 13px;
+    font-weight: 650;
+  }
+
+  .show-all:hover {
+    color: var(--color-ink);
+    text-decoration: underline;
+  }
+
   .step:hover {
     background: var(--color-lit);
   }

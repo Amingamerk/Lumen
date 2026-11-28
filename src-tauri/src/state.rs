@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::catalog::{
     Catalog, CollectionDetail, HitRow, Library, Results, SearchKind, SearchStatus, SearchView,
-    Shelf, SourceFilter, SourceKind, TopView, Track, TrackRow, TrackSlice,
+    SourceFilter, SourceKind, TopView, Track, TrackRow, TrackSlice,
 };
 use crate::sources::youtube::{GateError, Parsed, ServiceError, search_key};
 
@@ -222,10 +222,6 @@ impl AppState {
 
     pub fn catalog(&self) -> Arc<Catalog> {
         Arc::clone(&self.catalog)
-    }
-
-    pub fn home(&self) -> Vec<Shelf> {
-        self.catalog.home()
     }
 
     pub fn library(&self) -> Library {
@@ -581,7 +577,6 @@ mod tests {
     fn the_app_starts_without_sample_collections() {
         let state = AppState::without_samples(["lumen.exe"]);
 
-        assert!(state.home().iter().all(|shelf| shelf.items.is_empty()));
         assert!(state.library().playlists.is_empty());
         assert!(state.library().albums.is_empty());
         assert_eq!(state.snapshot().navigation.route, Route::Home);
@@ -611,15 +606,13 @@ mod tests {
     }
 
     #[test]
-    fn navigates_to_every_collection_in_the_library_and_on_home() {
+    fn navigates_to_every_collection_in_the_library() {
         let mut state = AppState::default();
         let library = state.library();
-        let home = state.home();
         let ids: Vec<String> = library
             .playlists
             .iter()
             .chain(&library.albums)
-            .chain(home.iter().flat_map(|shelf| &shelf.items))
             .map(|c| c.id.clone())
             .collect();
         assert!(!ids.is_empty());

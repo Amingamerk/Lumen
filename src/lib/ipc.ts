@@ -48,11 +48,13 @@ export interface TrackSlice {
   tracks: TrackRow[];
 }
 
-/** One horizontal row of cards on Home. */
-export interface Shelf {
-  id: string;
-  title: string;
-  items: CollectionSummary[];
+/** The shelves on Home, one row of cards for each shelf. A shelf with nothing is empty. */
+export interface HomeView {
+  /** Songs played, the latest first, each once. */
+  recent: TrackRow[];
+  /** Liked songs, the newest like first. */
+  liked: TrackRow[];
+  playlists: PlaylistSummary[];
 }
 
 export type SourceFilter = 'all' | 'youtube' | 'soundcloud';
@@ -270,7 +272,7 @@ export interface PlaylistsChanged {
 export interface Bridge {
   getAppState(): Promise<AppSnapshot>;
   navigate(route: Route): Promise<void>;
-  getHome(): Promise<Shelf[]>;
+  getHome(): Promise<HomeView>;
   /** The search Rust remembers, with its results. */
   getSearch(): Promise<SearchView>;
   /** The only thing that sends a search. The outcome arrives as events. */
@@ -376,7 +378,7 @@ const YOUTUBE_STATUS_CHANGED = 'youtube-status-changed';
 export const tauriBridge: Bridge = {
   getAppState: () => invoke<AppSnapshot>('get_app_state'),
   navigate: (route) => invoke('navigate', { route }),
-  getHome: () => invoke<Shelf[]>('get_home'),
+  getHome: () => invoke<HomeView>('get_home'),
   getSearch: () => invoke<SearchView>('get_search'),
   submitSearch: (query, filter) => invoke('submit_search', { query, filter }),
   setSearchFilter: (filter) => invoke('set_search_filter', { filter }),

@@ -2,7 +2,7 @@
 
 use uuid::Uuid;
 
-use super::{Album, Catalog, Playlist, ShelfPlan, SourceKind, SourceRef, Track};
+use super::{Album, Catalog, Playlist, SourceKind, SourceRef, Track};
 
 use SourceKind::{SoundCloud, Spotify, YouTube};
 
@@ -108,57 +108,6 @@ const PLAYLISTS: &[PlaylistSeed] = &[
     ("long-drive-home", "Songs for the long drive home after a late shift", "Windows down", Spotify, &[16, 11, 9, 15]),
 ];
 
-const HOME_SHELVES: &[ShelfPlan] = &[
-    ShelfPlan {
-        id: "jump-back-in",
-        title: "Jump back in",
-        collections: &[
-            "night-shift",
-            "low-tide",
-            "tunnel-mixes",
-            "greenhouse-hours",
-            "sunday-cooking",
-            "static-bloom",
-            "north-platform",
-            "liked-on-spotify",
-        ],
-    },
-    ShelfPlan {
-        id: "albums",
-        title: "Albums for tonight",
-        collections: &[
-            "small-hours",
-            "crossings",
-            "paper-weather",
-            "kitchen-radio",
-            "low-tide",
-            "static-bloom",
-            "greenhouse-hours",
-            "north-platform",
-        ],
-    },
-    ShelfPlan {
-        id: "soundcloud",
-        title: "From SoundCloud",
-        collections: &[
-            "tunnel-mixes",
-            "field-recordings",
-            "crossings",
-            "static-bloom",
-        ],
-    },
-    ShelfPlan {
-        id: "spotify",
-        title: "Brought over from Spotify",
-        collections: &[
-            "liked-on-spotify",
-            "long-drive-home",
-            "greenhouse-hours",
-            "north-platform",
-        ],
-    },
-];
-
 pub(super) fn catalog() -> Catalog {
     let tracks: Vec<Track> = (1..).zip(TRACKS).map(track).collect();
     let albums = ALBUMS
@@ -187,8 +136,7 @@ pub(super) fn catalog() -> Catalog {
         .collect();
 
     let (long_playlist, long_tracks) = long_playlist();
-    Catalog::new(tracks, playlists, albums, HOME_SHELVES)
-        .with_unsearched(long_playlist, long_tracks)
+    Catalog::new(tracks, playlists, albums).with_unsearched(long_playlist, long_tracks)
 }
 
 const LONG_PLAYLIST_LENGTH: u128 = 5_000;
