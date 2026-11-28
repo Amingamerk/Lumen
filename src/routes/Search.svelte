@@ -3,23 +3,23 @@
   import { onMount } from 'svelte';
   import EmptyState from '../lib/components/EmptyState.svelte';
   import GateNotice from '../lib/components/GateNotice.svelte';
-  import Shelf from '../lib/components/Shelf.svelte';
   import TrackList from '../lib/components/TrackList.svelte';
   import { countLabel } from '../lib/format';
   import type { AccountStatus, ServiceStatus, SourceFilter } from '../lib/ipc';
   import type { CatalogStore } from '../lib/stores/catalog.svelte';
   import type { LibraryStore } from '../lib/stores/library.svelte';
+  import type { PlaylistsStore } from '../lib/stores/playlists.svelte';
 
   interface Props {
     catalog: CatalogStore;
     library: LibraryStore;
+    playlists: PlaylistsStore;
     /** `null` until Rust has said. */
     account: AccountStatus | null;
     /** `null` until Rust has said. */
     youtube: ServiceStatus | null;
     onsignin: () => void;
     onresume: () => void;
-    onopen: (id: string) => void;
     /** Plays the chosen result. */
     onplay: (trackId: string) => void;
     /** Ctrl+F asked for the search box. */
@@ -30,11 +30,11 @@
   let {
     catalog,
     library,
+    playlists,
     account,
     youtube,
     onsignin,
     onresume,
-    onopen,
     onplay,
     focusWanted,
     onfocused,
@@ -63,16 +63,9 @@
     return youtube && youtube.gate.state !== 'ready' ? 'gate' : null;
   });
 
-  const found = $derived(!blocked && results?.status === 'results' ? results : null);
+  const found = $derived(live && !blocked && results?.status === 'results' ? results : null);
 
-  const summary = $derived.by(() => {
-    if (!found) return '';
-    if (live) return countLabel(found.tracks.length, 'song', 'songs');
-    return [
-      countLabel(found.tracks.length, 'track', 'tracks'),
-      countLabel(found.collections.length, 'album or playlist', 'albums and playlists'),
-    ].join(', ');
-  });
+  const summary = $derived(found ? countLabel(found.tracks.length, 'song', 'songs') : '');
 
   onMount(() => void catalog.openSearch());
 
@@ -145,7 +138,11 @@
 
   <!-- Always there, so what appears in it is announced. -->
   <div aria-live="polite">
-    {#if blocked === 'disconnected'}
+    {#if results && !live}
+      <EmptyState Icon={MagnifyingGlassIcon} title="SoundCloud arrives later">
+        Search covers YouTube Music for now. SoundCloud comes in a later version.
+      </EmptyState>
+    {:else if blocked === 'disconnected'}
       <EmptyState Icon={MagnifyingGlassIcon} title="Sign in to search YouTube Music">
         Lumen searches with your own account.
         <br />
@@ -192,18 +189,16 @@
     <div class="mt-8 flex flex-col gap-9">
       {#if found.tracks.length}
         <section aria-labelledby="search-tracks">
-          <h2 id="search-tracks" class="shelf-title mb-3">{live ? 'Songs' : 'Tracks'}</h2>
+          <h2 id="search-tracks" class="shelf-title mb-3">Songs</h2>
           <TrackList
             tracks={found.tracks}
             labelledby="search-tracks"
             {onplay}
             liked={(id) => library.isLiked(id)}
             onlike={(id) => void library.toggle(id)}
+            onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}
           />
         </section>
-      {/if}
-      {#if found.collections.length}
-        <Shelf title="Albums and playlists" items={found.collections} {onopen} />
       {/if}
     </div>
   {/if}

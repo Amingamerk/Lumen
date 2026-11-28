@@ -7,7 +7,7 @@ import { appStores, fakeBridge, playerState } from './lib/testing';
 
 async function openApp(bridge = fakeBridge()) {
   render(App, { props: appStores(bridge) });
-  await screen.findByRole('link', { name: /^night shift, from/i });
+  await screen.findByRole('link', { name: /^night shift, playlist$/i });
   await waitFor(() => expect(bridge.calls).toContain('getPlayerState'));
   return bridge;
 }
@@ -143,7 +143,8 @@ describe('the notice', () => {
 
   it('says a sample track cannot be played and leaves playback alone', async () => {
     const bridge = await openApp();
-    bridge.remembered = { query: '', filter: 'soundcloud' };
+    bridge.emitAccount('connected');
+    bridge.remembered = { query: '', filter: 'all' };
     bridge.emitPlayer(fileState());
     await bar().findByText('tone');
     bridge.failCommands = 'sample track, cannot be played';

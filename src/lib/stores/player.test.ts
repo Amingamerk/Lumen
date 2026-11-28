@@ -34,7 +34,6 @@ describe('player store', () => {
   it('sends every command with its arguments', async () => {
     const { bridge, player } = await connected();
 
-    await player.playCollection('night-shift', 2);
     await player.playSearchResult('t1');
     await player.togglePlay();
     await player.next();
@@ -46,7 +45,6 @@ describe('player store', () => {
     await player.moveQueueEntry(13, null);
 
     expect(bridge.commands).toEqual([
-      ['playCollection', 'night-shift', 2],
       ['playSearchResult', 't1'],
       ['togglePlay'],
       ['nextTrack'],

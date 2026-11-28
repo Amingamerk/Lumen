@@ -44,10 +44,6 @@ export class PlayerStore {
     return () => stops.forEach((stop) => stop());
   }
 
-  playCollection(id: string, index: number) {
-    return this.#send(() => this.#bridge.playCollection(id, index));
-  }
-
   playSearchResult(trackId: string) {
     return this.#send(() => this.#bridge.playSearchResult(trackId));
   }

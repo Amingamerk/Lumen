@@ -32,9 +32,9 @@ function Get-Hwnd([int]$ProcessId, [string]$Class = 'Tauri Window', [string]$Tit
         if ($c -eq $Class -and $v -eq 'True' -and (-not $Title -or $t -eq $Title)) { return [IntPtr][long]$h }
     }
 }
-function Start-App([Parameter(Mandatory)][string]$Exe) {
+function Start-App([Parameter(Mandatory)][string]$Exe, [string[]]$Arguments = @()) {
     if (Get-Process lumen -ErrorAction SilentlyContinue) { throw 'lumen already running' }
-    $p = Start-Process $Exe -PassThru
+    $p = if ($Arguments) { Start-Process $Exe -ArgumentList $Arguments -PassThru } else { Start-Process $Exe -PassThru }
     $deadline = (Get-Date).AddSeconds(15)
     while (-not ($h = Get-Hwnd $p.Id)) { if ((Get-Date) -gt $deadline) { throw 'no window' }; Start-Sleep -Milliseconds 200 }
     [pscustomobject]@{ Id = $p.Id; Hwnd = $h; Process = $p }

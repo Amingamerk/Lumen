@@ -311,9 +311,12 @@ The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout"
 `src-tauri/src/` split into `ipc/`, `catalog/`, `audio/`, `queue/`, `sources/`, `resolver/`, `library/`,
 `recs/`, `art/` and `media/`, plus `state.rs` for navigation, search and catalog state and `secrets.rs` for
 sessions in Credential Manager (split into chunks); the Svelte app lives in `src/`; spikes in `spikes/`; developer scripts in `scripts/`; docs in `docs/`. `catalog/` holds the domain
-shapes, the views built from them, search and Track slices (the playlist page gets only the rows it shows);
-its data is a static fixture, including a generated 5,000-Track playlist that Search leaves out, until the
-SQLite library replaces it in Milestone 3.
+shapes, the views built from them, search and Track slices; its static fixtures (sample playlists and albums,
+and a generated 5,000-Track playlist) are used by tests and, through `--list`, to fill a throwaway library. The
+app itself starts with an empty catalog. `library/` keeps Tracks, likes, history and the user's local playlists
+(`playlists.rs`); a playlist page gets only the rows it shows, as slices from SQLite. `ipc/library.rs` and
+`ipc/playlists.rs` run every database command on a blocking thread, and `--list` opens its library in the temp
+folder, never the user's own.
 
 `sources/youtube/` holds the YouTube Music session (`account.rs`, `cookies.rs`, `session.rs`), the
 account-safety gate (`gate/`: rules, saved state, clock) and the web client (`auth.rs`, `client.rs`,

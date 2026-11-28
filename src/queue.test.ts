@@ -24,7 +24,7 @@ async function open(total = 5, bridge = fakeBridge()) {
   bridge.answerQueue = (offset, limit) => queueSlice(offset, limit, total);
   render(App, { props: appStores(bridge) });
   await waitFor(() => expect(bridge.calls).toContain('getPlayerState'));
-  await screen.findByRole('link', { name: /^night shift, from/i });
+  await screen.findByRole('link', { name: /^night shift, playlist$/i });
   bridge.emitPlayer(playerState({ upcoming: total }));
   openQueue(bridge);
   await screen.findByRole('complementary', { name: 'Queue' });
@@ -42,7 +42,7 @@ describe('queue panel', () => {
   it('opens only when Rust says so, and closes through Rust', async () => {
     const bridge = fakeBridge();
     render(App, { props: appStores(bridge) });
-    await screen.findByRole('link', { name: /^night shift, from/i });
+    await screen.findByRole('link', { name: /^night shift, playlist$/i });
     const button = screen.getByRole('button', { name: 'Queue' });
 
     await fireEvent.click(button);
@@ -119,7 +119,7 @@ describe('queue panel', () => {
       return slice;
     };
     render(App, { props: appStores(bridge) });
-    await screen.findByRole('link', { name: /^night shift, from/i });
+    await screen.findByRole('link', { name: /^night shift, playlist$/i });
     bridge.emitPlayer(playerState({ upcoming: 5 }));
     openQueue(bridge);
     await screen.findByRole('complementary', { name: 'Queue' });
@@ -146,7 +146,7 @@ describe('queue panel', () => {
       return slice;
     };
     render(App, { props: appStores(bridge) });
-    await screen.findByRole('link', { name: /^night shift, from/i });
+    await screen.findByRole('link', { name: /^night shift, playlist$/i });
     bridge.emitPlayer(playerState({ upcoming: 100 }));
     openQueue(bridge);
     await screen.findByRole('complementary', { name: 'Queue' });

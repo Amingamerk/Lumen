@@ -9,9 +9,13 @@ export interface SourceTag {
   badge: 'YT' | 'SC' | 'SP';
 }
 
-export interface PlaylistSummary extends SourceTag {
+/** A local playlist as the sidebar and its page show it. */
+export interface PlaylistSummary {
   id: string;
   name: string;
+  trackCount: number;
+  /** The length of all its entries together. */
+  durationMs: number;
 }
 
 /** A playlist or album as a card or a page header shows it. */
@@ -21,13 +25,6 @@ export interface CollectionSummary extends SourceTag {
   title: string;
   /** A playlist's description, or an album's artists. */
   subtitle: string;
-}
-
-/** A Collection as its page header shows it. */
-export interface CollectionDetail extends CollectionSummary {
-  trackCount: number;
-  /** The length of all its Tracks together. */
-  durationMs: number;
 }
 
 export interface TrackRow {
@@ -52,11 +49,6 @@ export interface Shelf {
   id: string;
   title: string;
   items: CollectionSummary[];
-}
-
-export interface Library {
-  playlists: CollectionSummary[];
-  albums: CollectionSummary[];
 }
 
 export type SourceFilter = 'all' | 'youtube' | 'soundcloud';
@@ -96,7 +88,6 @@ export interface NavigationState {
 
 export interface AppSnapshot {
   navigation: NavigationState;
-  playlists: PlaylistSummary[];
 }
 
 // Playback. Mirrors src-tauri/src/audio/state.rs.
@@ -215,14 +206,21 @@ export interface LibrarySummary {
   problem: string | null;
 }
 
+// Local playlists. Mirrors src-tauri/src/ipc/playlists.rs.
+
+/** Every playlist as it stands, after a change or as a starting point. */
+export interface PlaylistsChanged {
+  /** Rises with every library event, so an older one can be dropped. */
+  revision: number;
+  playlists: PlaylistSummary[];
+  /** The playlist whose name or entries changed, if one did. */
+  changed: string | null;
+}
+
 export interface Bridge {
   getAppState(): Promise<AppSnapshot>;
   navigate(route: Route): Promise<void>;
   getHome(): Promise<Shelf[]>;
-  getLibrary(): Promise<Library>;
-  getCollection(id: string): Promise<CollectionDetail>;
-  /** Up to `limit` rows of a playlist or album, starting at `offset`. */
-  getTrackSlice(playlistId: string, offset: number, limit: number): Promise<TrackSlice>;
   /** The search Rust remembers, with its results. */
   getSearch(): Promise<SearchView>;
   /** The only thing that sends a search. The outcome arrives as events. */
@@ -237,7 +235,6 @@ export interface Bridge {
   /** Up to `limit` upcoming entries, starting at `offset`. */
   getQueue(offset: number, limit: number): Promise<QueueSlice>;
   // The answer to each of these arrives as an event.
-  playCollection(id: string, index: number): Promise<void>;
   playSearchResult(trackId: string): Promise<void>;
   togglePlay(): Promise<void>;
   nextTrack(): Promise<void>;
@@ -266,6 +263,18 @@ export interface Bridge {
   onLikesChanged(handler: (change: LikesChanged) => void): Promise<() => void>;
   onHistoryChanged(handler: (change: HistoryChanged) => void): Promise<() => void>;
 
+  getPlaylists(): Promise<PlaylistsChanged>;
+  /** Up to `limit` entries of a playlist from `offset`, in its order. */
+  getPlaylistSlice(id: string, offset: number, limit: number): Promise<TrackSlice>;
+  // The answer to each of these arrives as an event.
+  createPlaylist(name: string): Promise<PlaylistSummary>;
+  renamePlaylist(id: string, name: string): Promise<void>;
+  deletePlaylist(id: string): Promise<void>;
+  addToPlaylist(id: string, trackId: string): Promise<void>;
+  /** Takes out the entry at `position`, if it still holds the song. */
+  removeFromPlaylist(id: string, position: number, trackId: string): Promise<void>;
+  onPlaylistsChanged(handler: (change: PlaylistsChanged) => void): Promise<() => void>;
+
   getAccountStatus(): Promise<AccountStatus>;
   /** Opens the sign-in window, or focuses it. The outcome arrives as an event. */
   signIn(): Promise<void>;
@@ -288,6 +297,8 @@ const PLAYER_POSITION = 'player-position';
 /** Must match the names in src-tauri/src/ipc/library.rs. */
 const LIKES_CHANGED = 'likes-changed';
 const HISTORY_CHANGED = 'history-changed';
+/** Must match the name in src-tauri/src/ipc/playlists.rs. */
+const PLAYLISTS_CHANGED = 'playlists-changed';
 /** Must match the names in src-tauri/src/ipc/account.rs. */
 const ACCOUNT_CHANGED = 'account-changed';
 const SIGN_IN_FAILED = 'sign-in-failed';
@@ -300,10 +311,6 @@ export const tauriBridge: Bridge = {
   getAppState: () => invoke<AppSnapshot>('get_app_state'),
   navigate: (route) => invoke('navigate', { route }),
   getHome: () => invoke<Shelf[]>('get_home'),
-  getLibrary: () => invoke<Library>('get_library'),
-  getCollection: (id) => invoke<CollectionDetail>('get_collection', { id }),
-  getTrackSlice: (playlistId, offset, limit) =>
-    invoke<TrackSlice>('get_track_slice', { playlistId, offset, limit }),
   getSearch: () => invoke<SearchView>('get_search'),
   submitSearch: (query, filter) => invoke('submit_search', { query, filter }),
   setSearchFilter: (filter) => invoke('set_search_filter', { filter }),
@@ -313,7 +320,6 @@ export const tauriBridge: Bridge = {
     listen<NavigationState>(NAVIGATION_CHANGED, (event) => handler(event.payload)),
   getPlayerState: () => invoke<PlayerState>('get_player_state'),
   getQueue: (offset, limit) => invoke<QueueSlice>('get_queue', { offset, limit }),
-  playCollection: (id, index) => invoke('play_collection', { id, index }),
   playSearchResult: (trackId) => invoke('play_search_result', { trackId }),
   togglePlay: () => invoke('toggle_play'),
   nextTrack: () => invoke('next_track'),
@@ -339,6 +345,17 @@ export const tauriBridge: Bridge = {
     listen<LikesChanged>(LIKES_CHANGED, (event) => handler(event.payload)),
   onHistoryChanged: (handler) =>
     listen<HistoryChanged>(HISTORY_CHANGED, (event) => handler(event.payload)),
+  getPlaylists: () => invoke<PlaylistsChanged>('get_playlists'),
+  getPlaylistSlice: (id, offset, limit) =>
+    invoke<TrackSlice>('get_playlist_slice', { id, offset, limit }),
+  createPlaylist: (name) => invoke<PlaylistSummary>('create_playlist', { name }),
+  renamePlaylist: (id, name) => invoke('rename_playlist', { id, name }),
+  deletePlaylist: (id) => invoke('delete_playlist', { id }),
+  addToPlaylist: (id, trackId) => invoke('add_to_playlist', { id, trackId }),
+  removeFromPlaylist: (id, position, trackId) =>
+    invoke('remove_from_playlist', { id, position, trackId }),
+  onPlaylistsChanged: (handler) =>
+    listen<PlaylistsChanged>(PLAYLISTS_CHANGED, (event) => handler(event.payload)),
   getAccountStatus: () => invoke<AccountStatus>('get_account_status'),
   signIn: () => invoke('sign_in'),
   disconnect: () => invoke('disconnect'),

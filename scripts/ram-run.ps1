@@ -127,9 +127,11 @@ function Invoke-Launch([int]$Run, [string]$Dir) {
     function Position { (Get-Range (Get-Slider $app '^Seek$')).Current.Value }
     function Read-Sample($file) { Get-Content $file -Raw | ConvertFrom-Json }
     $m = [ordered]@{}
-    $app = Start-App $opts.ExePath
+    # --list opens a throwaway library with the 5,000-song playlist, so the user's own library is never touched.
+    $app = Start-App $opts.ExePath @('--list')
     try {
         Log "launched run $Run"
+        Nav '^Home$'
         $m['Idle, home screen'] = (Measure-Once $app 30).TotalMB
         Nav '^The long haul'
         $m['5,000-row playlist open'] = (Measure-Once $app 30).TotalMB
