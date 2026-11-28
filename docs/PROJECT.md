@@ -28,8 +28,8 @@ but uses a fraction of the memory of a browser tab or an Electron app.
 
 | Metric | Target |
 |---|---|
-| RAM, idle with home screen open | <= 100 MB total |
-| RAM, playing + 5,000-track playlist open | <= 150 MB |
+| RAM, idle with home screen open | <= 200 MB total (aim for about 100 MB) |
+| RAM, playing + 5,000-track playlist open | <= 200 MB (aim for about 150 MB) |
 | Cold start to usable UI | <= 1.5 s |
 | CPU while playing, window minimized | <= 1-2 % |
 | Installer size | <= 20 MB, excluding the mpv DLL (the LGPL `libmpv-2.dll` is about 103 MB on disk, spike #2), yt-dlp and Deno |
@@ -44,7 +44,7 @@ home screen and 74.2 MB with a 5,000-row virtualized list open (3-run medians, 7
 13.1 MB that spike #2 measured for libmpv playback gives an estimate of about 87 MB while playing. The login
 spikes (#4 to #6) idled between 72.9 and 76.6 MB (3-run medians for YouTube Music and Spotify, a single
 73.5 MB reading for SoundCloud, whose earlier launch read 80.5 MB).
-**Decision: the budget stays at 100 MB idle and 150 MB playing.** Full numbers and method:
+**Decision (Milestone 0): the budget stays at 100 MB idle and 150 MB playing.** **Raised on 2026-11-28 by the owner to a hard cap of 200 MB for both;** 100 / 150 MB remain soft targets, and memory above them must buy something the user notices. Full numbers and method:
 [ram-baseline.md](ram-baseline.md).
 
 **Transient over-budget peaks seen in Milestone 0** (the budget is not relaxed for them):
@@ -421,7 +421,7 @@ Each milestone ends with: it builds, it works in the real app, and RAM is within
 |---|---|
 | YouTube changes break stream extraction, or needs PO tokens / SABR | yt-dlp as primary with pinned version and auto-update, bundled Deno + yt-dlp-ejs, swappable resolver backends |
 | Stream URLs expire mid-play | Store expiry, pre-resolve next 1-2 tracks, re-resolve on 403 or stall |
-| RAM budget exceeded (WebView2, sidecars) | Milestone 0 kept the 100 / 150 MB budget ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (about 400 MB in Milestone 2, serialized, exception until #78), idle after playback above 100 MB, and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
+| RAM budget exceeded (WebView2, sidecars) | Hard cap 200 MB idle and playing since 2026-11-28, with 100 / 150 MB soft targets ([ram-baseline.md](ram-baseline.md)). Open risks: transient yt-dlp / Deno resolve peaks (about 400 MB in Milestone 2, serialized, exception until #78), idle after playback above 100 MB, and login windows (destroy on capture, re-measure). Virtual lists, thumbnails only, lean mpv settings |
 | SoundCloud `client_id` rotates, new official API credentials need a paid plan | Scrape and re-scrape automatically on 401/403 (once, then retry once), add retry on the stream-URL step; SoundCloud is last in the order |
 | SoundCloud Google sign-in popup does not open in WebView2 | Email/password sign-in works; Milestone 7 handles OAuth popups or guides to email/password |
 | Spotify web token flow changes again (TOTP, `client-token`, Pathfinder query hash) | Worked on 2026-11-26 (TOTP v61). Metadata only so playback never depends on it; isolate in one module; manual re-login |
@@ -450,7 +450,7 @@ the spotDL matching code (`spotdl/providers/audio/base.py`, `utils/matching.py`)
 
 | Question | Verdict | Record |
 |---|---|---|
-| RAM budget | Keep 100 MB idle / 150 MB playing; transient resolve and login-window peaks are open (section 2) | [ram-baseline.md](ram-baseline.md) |
+| RAM budget | Hard cap 200 MB idle and playing (soft targets 100 / 150 MB); transient resolve and login-window peaks are open (section 2) | [ram-baseline.md](ram-baseline.md) |
 | Playback and resolver | yt-dlp + Deno resolves and libmpv plays; yt-dlp behind the `Resolver` trait | [ADR 0001](adr/0001-ytdlp-primary-resolver.md) |
 | yt-dlp client set, signed in | Defaults (Opus 251); `web_music,web` needs a PO token for audio on a free account | [ADR 0003](adr/0003-ytdlp-client-set.md) |
 | YouTube Music login | Works in WebView2; authenticated library call and resolve passed | [ADR 0002](adr/0002-in-app-login-no-api-keys.md) |

@@ -274,9 +274,9 @@ function Invoke-LoginLaunch([int]$Run, [string]$Dir) {
 }
 
 $budgets = @{
-    'Idle, home screen' = 100; '5,000-row playlist open' = 150; 'Search + resolve, sampled peak' = 0
-    'Playing, 5,000-row playlist open' = 150; 'Playing, sampled peak over 30 s' = 150
-    'Idle after playback' = 100; 'Login window open, peak' = 0; 'Login window, 60 s after close' = 100
+    'Idle, home screen' = 200; '5,000-row playlist open' = 200; 'Search + resolve, sampled peak' = 0
+    'Playing, 5,000-row playlist open' = 200; 'Playing, sampled peak over 30 s' = 200
+    'Idle after playback' = 200; 'Login window open, peak' = 0; 'Login window, 60 s after close' = 200
 }
 $collected = [ordered]@{}
 function Add-Metrics($metrics) { foreach ($k in $metrics.Keys) { if (-not $collected.Contains($k)) { $collected[$k] = @() }; $collected[$k] += [double]$metrics[$k] } }

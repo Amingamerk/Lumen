@@ -47,7 +47,7 @@ Early stage. The app shell runs on a static sample catalog, you can sign in to Y
 7. SoundCloud
 8. Polish
 
-Performance target: at most 100 MB RAM idle and 150 MB while playing a large playlist (summed private working set of all processes). Milestone 0 measured the baseline and kept this budget (100 MB idle, 150 MB playing): see [docs/ram-baseline.md](docs/ram-baseline.md).
+Performance target: at most 200 MB RAM, idle and while playing a large playlist (summed private working set of all processes), while aiming for about 100 MB idle and 150 MB playing. Measurements per milestone: see [docs/ram-baseline.md](docs/ram-baseline.md).
 
 ## How Lumen is built
 
