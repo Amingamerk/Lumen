@@ -180,6 +180,9 @@ export interface PlayerPosition {
 /** A list of the library that plays through the Queue. */
 export type PlayList = { kind: 'playlist'; id: string } | { kind: 'liked' } | { kind: 'recent' };
 
+/** Where a queued song goes: right after the playing one, or after what is queued. */
+export type QueuePlacement = 'next' | 'last';
+
 export interface QueueItem {
   key: number;
   track: TrackRow;
@@ -298,6 +301,12 @@ export interface Bridge {
   setVolume(volume: number): Promise<void>;
   changeVolume(delta: number): Promise<void>;
   moveQueueEntry(key: number, before: number | null): Promise<void>;
+  /** Adds a song to the Queue; nothing is asked of any service. */
+  queueTrack(trackId: string, placement: QueuePlacement): Promise<void>;
+  /** Takes one upcoming entry out. The playing one is refused. */
+  removeQueueEntry(key: number): Promise<void>;
+  /** Drops every upcoming entry. The playing song carries on. */
+  clearQueue(): Promise<void>;
   toggleQueue(): Promise<void>;
   onPlayerChanged(handler: (state: PlayerState) => void): Promise<() => void>;
   onPlayerPosition(handler: (position: PlayerPosition) => void): Promise<() => void>;
@@ -389,6 +398,9 @@ export const tauriBridge: Bridge = {
   setVolume: (volume) => invoke('set_volume', { volume }),
   changeVolume: (delta) => invoke('change_volume', { delta }),
   moveQueueEntry: (key, before) => invoke('move_queue_entry', { key, before }),
+  queueTrack: (trackId, placement) => invoke('queue_track', { trackId, placement }),
+  removeQueueEntry: (key) => invoke('remove_queue_entry', { key }),
+  clearQueue: () => invoke('clear_queue'),
   toggleQueue: () => invoke('toggle_queue'),
   onPlayerChanged: (handler) =>
     listen<PlayerState>(PLAYER_CHANGED, (event) => handler(event.payload)),

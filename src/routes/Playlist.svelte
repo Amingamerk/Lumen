@@ -10,15 +10,17 @@
   import TrackTable from '../lib/components/TrackTable.svelte';
   import { countLabel, formatTotalDuration } from '../lib/format';
   import type { LibraryStore } from '../lib/stores/library.svelte';
+  import type { QueuePlacement } from '../lib/ipc';
   import type { PlaylistsStore } from '../lib/stores/playlists.svelte';
 
   interface Props {
     playlists: PlaylistsStore;
     library: LibraryStore;
     id: string;
+    onqueue: (trackId: string, placement: QueuePlacement) => void;
   }
 
-  let { playlists, library, id }: Props = $props();
+  let { playlists, library, id, onqueue }: Props = $props();
 
   const playlist = $derived(playlists.find(id));
   /** A new window whenever the playlist's name or entries change. */
@@ -123,6 +125,7 @@
             const row = tracks.row(position);
             if (row) void library.play({ kind: 'playlist', id }, position, row.id);
           }}
+          {onqueue}
           onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}
           onremove={(position, row) => void playlists.removeEntry(id, position, row.id)}
         />

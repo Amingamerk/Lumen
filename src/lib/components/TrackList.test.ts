@@ -1,5 +1,5 @@
-import { render } from '@testing-library/svelte';
-import { describe, expect, it } from 'vitest';
+import { fireEvent, render, screen } from '@testing-library/svelte';
+import { describe, expect, it, vi } from 'vitest';
 import { tracks } from '../testing';
 import TrackList from './TrackList.svelte';
 
@@ -32,5 +32,30 @@ describe('TrackList', () => {
     expect(lines[0].endsWith(' · 3:21')).toBe(true);
     expect(lines[1]).not.toMatch(/\d:\d\d$/);
     expect(lines[1]).not.toMatch(/ · $/);
+  });
+
+  it('queues a song next or last from its own buttons, and keeps the play label', async () => {
+    const [row] = tracks();
+    const onqueue = vi.fn();
+    const onplay = vi.fn();
+    render(TrackList, { tracks: [row], labelledby: 'heading', onplay, onqueue });
+
+    await fireEvent.click(screen.getByRole('button', { name: `Play ${row.title} next` }));
+    await fireEvent.click(screen.getByRole('button', { name: `Add ${row.title} to the queue` }));
+
+    expect(onqueue.mock.calls).toEqual([
+      [row.id, 'next'],
+      [row.id, 'last'],
+    ]);
+    expect(onplay).not.toHaveBeenCalled();
+    expect(
+      screen.getByRole('button', { name: `Play ${row.title} by ${row.artists.join(', ')}` }),
+    ).toBeTruthy();
+  });
+
+  it('has no queue buttons without a handler', () => {
+    render(TrackList, { tracks: tracks().slice(0, 1), labelledby: 'heading', onplay: () => {} });
+
+    expect(screen.queryByRole('button', { name: /to the queue$/ })).toBeNull();
   });
 });

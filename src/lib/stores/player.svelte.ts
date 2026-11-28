@@ -1,5 +1,5 @@
 import { describeError } from '../errors';
-import type { Bridge, PlayerPosition, PlayerState } from '../ipc';
+import type { Bridge, PlayerPosition, PlayerState, QueuePlacement } from '../ipc';
 
 /** Something to tell the user. A new object each time it should be said. */
 export interface Notice {
@@ -87,6 +87,19 @@ export class PlayerStore {
   /** Whether Rust accepted the move. */
   moveQueueEntry(key: number, before: number | null) {
     return this.#send(() => this.#bridge.moveQueueEntry(key, before));
+  }
+
+  /** Adds a song to the Queue. Rust answers with an event. */
+  queueTrack(trackId: string, placement: QueuePlacement) {
+    return this.#send(() => this.#bridge.queueTrack(trackId, placement));
+  }
+
+  removeQueueEntry(key: number) {
+    return this.#send(() => this.#bridge.removeQueueEntry(key));
+  }
+
+  clearQueue() {
+    return this.#send(() => this.#bridge.clearQueue());
   }
 
   dismissNotice() {

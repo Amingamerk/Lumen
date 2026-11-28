@@ -7,7 +7,7 @@
   import QueuePanel from './lib/components/QueuePanel.svelte';
   import Sidebar from './lib/components/Sidebar.svelte';
   import Toast from './lib/components/Toast.svelte';
-  import { tauriBridge } from './lib/ipc';
+  import { tauriBridge, type QueuePlacement } from './lib/ipc';
   import { shortcutFor } from './lib/shortcuts';
   import { AccountStore } from './lib/stores/account.svelte';
   import { AppStore } from './lib/stores/app.svelte';
@@ -59,6 +59,8 @@
   );
 
   /** Rust decides whether the playlist exists. */
+  const queueTrack = (trackId: string, placement: QueuePlacement) =>
+    void player.queueTrack(trackId, placement);
   const openPlaylist = (id: string) => void store.navigate({ view: 'playlist', id });
 
   /** Makes a playlist, then opens it. */
@@ -169,14 +171,15 @@
         onsignin={() => void account.signIn()}
         onresume={() => void youtube.resume()}
         onplay={(trackId) => void player.playSearchResult(trackId)}
+        onqueue={queueTrack}
         focusWanted={searchFocusWanted}
         onfocused={() => (searchFocusWanted = false)}
       />
     {:else if route?.view === 'library'}
-      <Library {playlists} {library} onopen={openPlaylist} />
+      <Library {playlists} {library} onopen={openPlaylist} onqueue={queueTrack} />
     {:else if route?.view === 'playlist'}
       {@const id = route.id}
-      <Playlist {playlists} {library} {id} />
+      <Playlist {playlists} {library} {id} onqueue={queueTrack} />
     {/if}
   </MainFrame>
 

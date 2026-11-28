@@ -8,15 +8,17 @@
   import TrackTable from '../lib/components/TrackTable.svelte';
   import { countLabel } from '../lib/format';
   import type { LibraryStore } from '../lib/stores/library.svelte';
+  import type { QueuePlacement } from '../lib/ipc';
   import type { PlaylistsStore } from '../lib/stores/playlists.svelte';
 
   interface Props {
     playlists: PlaylistsStore;
     library: LibraryStore;
     onopen: (id: string) => void;
+    onqueue: (trackId: string, placement: QueuePlacement) => void;
   }
 
-  let { playlists, library, onopen }: Props = $props();
+  let { playlists, library, onopen, onqueue }: Props = $props();
 
   type Part = 'collections' | 'liked' | 'recent';
 
@@ -88,6 +90,7 @@
           }}
           liked={(id) => library.isLiked(id)}
           onlike={(id) => void library.toggle(id)}
+          {onqueue}
           onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}
         />
       </section>
@@ -113,6 +116,7 @@
           }}
           liked={(id) => library.isLiked(id)}
           onlike={(id) => void library.toggle(id)}
+          {onqueue}
           onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}
         />
       </section>
