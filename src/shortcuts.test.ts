@@ -5,10 +5,10 @@ import App from './App.svelte';
 import { appStores, fakeBridge, playerState } from './lib/testing';
 
 async function openApp(bridge = fakeBridge()) {
-  // Only the sample catalog can be played from Search so far.
-  bridge.remembered = { query: '', filter: 'soundcloud' };
+  bridge.accountStatus = 'connected';
+  bridge.remembered = { query: '', filter: 'all' };
   render(App, { props: appStores(bridge) });
-  await screen.findByRole('link', { name: /^night shift, from/i });
+  await screen.findByRole('link', { name: /^night shift, playlist$/i });
   await waitFor(() => expect(bridge.calls).toContain('getPlayerState'));
   return bridge;
 }

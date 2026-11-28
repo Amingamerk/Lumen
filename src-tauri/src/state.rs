@@ -7,30 +7,10 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::catalog::{
-    Catalog, CollectionDetail, Library, Playlist, SearchStatus, SearchView, Shelf, SourceFilter,
-    SourceKind, Track, TrackRow, TrackSlice,
+    Catalog, CollectionDetail, Library, SearchStatus, SearchView, Shelf, SourceFilter, SourceKind,
+    Track, TrackRow, TrackSlice,
 };
 use crate::sources::youtube::{GateError, Parsed, ServiceError, search_key};
-
-/// A playlist as the sidebar shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct PlaylistSummary {
-    pub id: String,
-    pub name: String,
-    pub source: SourceKind,
-    pub badge: &'static str,
-}
-
-impl From<&Playlist> for PlaylistSummary {
-    fn from(playlist: &Playlist) -> Self {
-        Self {
-            id: playlist.id.clone(),
-            name: playlist.name.clone(),
-            source: playlist.source,
-            badge: playlist.source.badge(),
-        }
-    }
-}
 
 /// The view shown in the main frame.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +22,15 @@ pub enum Route {
     Playlist { id: String },
 }
 
+/// Whether the command line asks for the 5,000-track sample playlist.
+pub fn wants_list<I>(args: I) -> bool
+where
+    I: IntoIterator,
+    I::Item: AsRef<str>,
+{
+    args.into_iter().any(|arg| arg.as_ref() == "--list")
+}
+
 impl Route {
     /// Picks the opening route from command-line arguments. `--list` opens
     /// the 5,000-track playlist directly so RAM checks need no clicking.
@@ -50,7 +39,7 @@ impl Route {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
-        if args.into_iter().any(|arg| arg.as_ref() == "--list") {
+        if wants_list(args) {
             Self::Playlist {
                 id: crate::catalog::LONG_PLAYLIST_ID.to_owned(),
             }
@@ -75,7 +64,6 @@ pub struct NavigationState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppSnapshot {
     pub navigation: NavigationState,
-    pub playlists: Vec<PlaylistSummary>,
 }
 
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
@@ -152,13 +140,31 @@ impl AppState {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
+        Self::with_catalog(args, Arc::default())
+    }
+
+    /// The state the app runs with: no sample collections. Playlists are the
+    /// user's, kept in the library.
+    pub fn without_samples<I>(args: I) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
+        Self::with_catalog(args, Arc::new(Catalog::empty()))
+    }
+
+    fn with_catalog<I>(args: I, catalog: Arc<Catalog>) -> Self
+    where
+        I: IntoIterator,
+        I::Item: AsRef<str>,
+    {
         Self {
             navigation: NavigationState {
                 route: Route::from_args(args),
                 queue_open: false,
                 revision: 0,
             },
-            catalog: Arc::default(),
+            catalog,
             search: SearchState::default(),
         }
     }
@@ -166,12 +172,6 @@ impl AppState {
     pub fn snapshot(&self) -> AppSnapshot {
         AppSnapshot {
             navigation: self.navigation.clone(),
-            playlists: self
-                .catalog
-                .playlists()
-                .iter()
-                .map(PlaylistSummary::from)
-                .collect(),
         }
     }
 
@@ -184,15 +184,30 @@ impl AppState {
         {
             return Err(unknown_collection(id));
         }
+        Ok(self.navigate_known(route))
+    }
+
+    /// Switches to a route that is already known to exist, such as a local
+    /// playlist the library holds. `None` when it is already showing.
+    pub fn navigate_known(&mut self, route: Route) -> Option<NavigationState> {
         if route == self.navigation.route {
-            return Ok(None);
+            return None;
         }
         self.navigation = NavigationState {
             route,
             queue_open: self.navigation.queue_open,
             revision: self.navigation.revision + 1,
         };
-        Ok(Some(self.navigation.clone()))
+        Some(self.navigation.clone())
+    }
+
+    /// Moves to the Library if the playlist `id` is showing, as it has just
+    /// been removed.
+    pub fn leave_playlist(&mut self, id: &str) -> Option<NavigationState> {
+        match &self.navigation.route {
+            Route::Playlist { id: showing } if showing == id => self.navigate_known(Route::Library),
+            _ => None,
+        }
     }
 
     /// Shows or hides the queue panel.
@@ -455,41 +470,6 @@ mod tests {
     }
 
     #[test]
-    fn starts_with_sidebar_playlists_from_all_three_sources() {
-        let playlists = AppState::default().snapshot().playlists;
-
-        for source in [
-            SourceKind::YouTube,
-            SourceKind::SoundCloud,
-            SourceKind::Spotify,
-        ] {
-            assert!(
-                playlists.iter().any(|p| p.source == source),
-                "no playlist from {source:?}"
-            );
-        }
-        assert!(playlists.iter().all(|p| !p.name.trim().is_empty()));
-    }
-
-    #[test]
-    fn playlist_ids_are_unique() {
-        let playlists = AppState::default().snapshot().playlists;
-
-        let mut ids: Vec<&str> = playlists.iter().map(|p| p.id.as_str()).collect();
-        ids.sort_unstable();
-        ids.dedup();
-
-        assert_eq!(ids.len(), playlists.len());
-    }
-
-    #[test]
-    fn playlist_badges_match_their_source() {
-        for playlist in AppState::default().snapshot().playlists {
-            assert_eq!(playlist.badge, playlist.source.badge(), "{}", playlist.name);
-        }
-    }
-
-    #[test]
     fn navigating_switches_the_route_and_bumps_the_revision() {
         let mut state = AppState::default();
 
@@ -524,34 +504,36 @@ mod tests {
     }
 
     #[test]
-    fn navigates_to_a_sidebar_playlist() {
-        let mut state = AppState::default();
-        let id = state.snapshot().playlists[1].id.clone();
+    fn the_app_starts_without_sample_collections() {
+        let state = AppState::without_samples(["lumen.exe"]);
 
-        let changed = state.navigate(playlist_route(&id)).unwrap();
-
-        assert_eq!(changed.map(|n| n.route), Some(playlist_route(&id)));
+        assert!(state.home().iter().all(|shelf| shelf.items.is_empty()));
+        assert!(state.library().playlists.is_empty());
+        assert!(state.library().albums.is_empty());
+        assert_eq!(state.snapshot().navigation.route, Route::Home);
     }
 
     #[test]
-    fn sidebar_playlists_are_the_catalog_playlists() {
-        let state = AppState::default();
+    fn a_playlist_the_library_vouches_for_can_be_opened() {
+        let mut state = AppState::without_samples(["lumen.exe"]);
+        let route = playlist_route("7d444840-9dc0-4c2b-86da-0e2c0c0a6a11");
 
-        let sidebar: Vec<(String, String)> = state
-            .snapshot()
-            .playlists
-            .into_iter()
-            .map(|p| (p.id, p.name))
-            .collect();
-        let library: Vec<(String, String)> = state
-            .library()
-            .playlists
-            .into_iter()
-            .map(|c| (c.id, c.title))
-            .collect();
+        assert!(state.navigate(route.clone()).is_err());
+        let changed = state.navigate_known(route.clone());
 
-        assert!(!library.is_empty());
-        assert_eq!(sidebar, library);
+        assert_eq!(changed.map(|n| n.route), Some(route));
+    }
+
+    #[test]
+    fn leaving_a_playlist_that_is_gone_goes_to_the_library() {
+        let mut state = AppState::without_samples(["lumen.exe"]);
+        state.navigate_known(playlist_route("mine"));
+
+        assert_eq!(state.leave_playlist("other"), None);
+        let left = state.leave_playlist("mine").unwrap();
+
+        assert_eq!(left.route, Route::Library);
+        assert_eq!(state.snapshot().navigation, left);
     }
 
     #[test]
@@ -1019,41 +1001,12 @@ mod tests {
     }
 
     #[test]
-    fn playlist_summary_serializes_source_and_badge() {
-        let cases = [
-            (SourceKind::YouTube, "youtube", "YT"),
-            (SourceKind::SoundCloud, "soundcloud", "SC"),
-            (SourceKind::Spotify, "spotify", "SP"),
-        ];
-
-        for (source, wire_source, badge) in cases {
-            let playlist = PlaylistSummary {
-                id: "p1".to_owned(),
-                name: "Night shift".to_owned(),
-                source,
-                badge: source.badge(),
-            };
-
-            assert_eq!(
-                serde_json::to_value(&playlist).unwrap(),
-                json!({ "id": "p1", "name": "Night shift", "source": wire_source, "badge": badge })
-            );
-        }
-    }
-
-    #[test]
-    fn snapshot_serializes_navigation_and_playlists() {
-        let snapshot = AppState::default().snapshot();
-
-        let wire = serde_json::to_value(&snapshot).unwrap();
+    fn snapshot_serializes_navigation() {
+        let wire = serde_json::to_value(AppState::default().snapshot()).unwrap();
 
         assert_eq!(
-            wire["navigation"],
-            json!({ "route": { "view": "home" }, "queueOpen": false, "revision": 0 })
-        );
-        assert_eq!(
-            wire["playlists"].as_array().map(Vec::len),
-            Some(snapshot.playlists.len())
+            wire,
+            json!({ "navigation": { "route": { "view": "home" }, "queueOpen": false, "revision": 0 } })
         );
     }
 }

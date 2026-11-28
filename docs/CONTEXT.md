@@ -15,13 +15,19 @@ metadata; it holds no Stream URL. Queue, playlists, likes and history refer to T
 `SourceKind` is `YouTube` (YouTube Music), `SoundCloud` or `Spotify`.
 
 ### Playlist, Album and Collection
-A playlist is an ordered list of Tracks that someone put together; an album is a release by its artists. Each
-comes from one `SourceKind`. **Collection** is the word for either one: both are shown as cards and opened on
-the playlist route.
+A playlist is an ordered list of Tracks that someone put together; an album is a release by its artists.
+**Collection** is the word for either one: both are shown as cards. Albums and the sample playlists exist
+only as test fixtures. What the user sees are **local playlists**: made, renamed and deleted by the user,
+stored in the library, listed in the sidebar and in the Library view, and opened on the playlist route.
+
+A playlist holds **entries**, each a place in the list that points to a Track. The same Track added twice is two
+entries, and removing one moves the later ones up. Deleting a playlist removes its entries and nothing else: the
+Tracks, likes and history stay. Playlists keep the order they were made in; reordering and importing the
+YouTube Music library come later. A playlist has no source of its own; its songs do.
 
 ### Track slice
-Some consecutive rows of one Collection (`offset`, `limit`, at most 200) with the Collection's total. The
-whole list stays in Rust; the playlist route asks for the slices it is about to show.
+Some consecutive rows of one list (`offset`, `limit`, at most 200) with the list's total. The whole list
+stays in Rust; the playlist route asks for the slices it is about to show.
 
 ### Shelf
 One horizontal row of Collection cards on Home.
@@ -34,8 +40,9 @@ query and chip.
   query that is not blank; changing the chip sends nothing. One search makes at most one request through the
   Account-safety gate, and what it found is kept in memory for an hour (50 queries at most), for that one
   Session.
-- With `SoundCloud`, the static catalog is searched until Milestone 7: every word must appear in a Track's
-  title, artists or album, a playlist's name, or an album's title or artists. A blank query matches everything.
+- With `SoundCloud`, nothing is searched: the page says SoundCloud arrives later (Milestone 7). The sample
+  catalog is searched only by tests: every word must appear in a Track's title, artists or album, a
+  playlist's name, or an album's title or artists. A blank query matches everything.
 
 ### Queue
 The ordered list of what plays. Starting a Collection or a catalog search result replaces it with all of their
@@ -70,8 +77,9 @@ a song is chosen or resolved), with its start time, the time it actually sounded
 `skipped`, `replaced`, `failed`, `exit`, or `interrupted` after a crash). A pause, a seek, a stream recovery or
 a failed load adds no row and no listened time. The Library view's **Recently played** lists each song once, the
 latest play first. A file made by a newer Lumen, or a damaged one, is reported and left as it is; likes and
-history stay off until it is dealt with. Songs of the library play one at a time, as a search result does, until
-Milestone 4.
+history stay off until it is dealt with. Songs of the library, and the rows of a local playlist, play one at a
+time, as a search result does, until Milestone 4. A run with `--list` opens a **throwaway library** in the system's
+temp folder, holding one sample playlist of 5,000 songs, and never reads or writes the user's `library.db`.
 
 ### Notice
 The small error message over the app, for a refused command or a failed load or playback. It never holds a
@@ -155,12 +163,12 @@ The YouTube gate (the only one so far) is ready, cooling down or paused:
 | UI (Svelte) | Rendering, user input | Call external services, hold player state or secrets |
 | `ipc` | Commands in, events out | Business logic |
 | `sources` | Service APIs, import, metadata -> Track | Play audio |
-| `catalog` | Domain shapes, the static fixtures, Home/Library views, catalog search, Track slices | Call services, store data |
+| `catalog` | Domain shapes, the static fixtures (tests and `--list` only), Home shelves, catalog search, Track slices | Call services, store data |
 | `resolver` | `SourceRef` -> `StreamInfo` | Decide queue order |
 | `queue` | Order, shuffle, repeat, pre-resolve timing | Talk to services directly |
 | `recs` | Autoplay picks (static until Milestone 6) | Play audio |
 | `audio` | Engine (libmpv), playback state, transport rules | Resolve URLs |
-| `library` | SQLite: Tracks, likes, history (playlists, caches and Matches later) | Store secrets |
+| `library` | SQLite: Tracks, likes, history, local playlists (caches and Matches later) | Store secrets |
 
 ## Invariants
 

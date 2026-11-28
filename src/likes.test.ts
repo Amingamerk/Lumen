@@ -16,7 +16,7 @@ function connected() {
 
 async function openApp(bridge = connected()) {
   render(App, { props: appStores(bridge) });
-  await screen.findByRole('link', { name: /^night shift, from/i });
+  await screen.findByRole('link', { name: /^night shift, playlist$/i });
   await waitFor(() => expect(bridge.calls).toContain('getLibrarySummary'));
   return bridge;
 }

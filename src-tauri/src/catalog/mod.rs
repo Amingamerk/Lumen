@@ -242,6 +242,11 @@ impl Catalog {
         }
     }
 
+    /// A catalog with nothing in it.
+    pub fn empty() -> Self {
+        Self::new(Vec::new(), Vec::new(), Vec::new(), &[])
+    }
+
     /// Adds a playlist with Tracks of its own that Search leaves out.
     fn with_unsearched(mut self, playlist: Playlist, tracks: Vec<Track>) -> Self {
         for track in tracks {
@@ -278,6 +283,7 @@ impl Catalog {
         })
     }
 
+    #[cfg(test)]
     pub fn playlists(&self) -> &[Playlist] {
         &self.playlists
     }

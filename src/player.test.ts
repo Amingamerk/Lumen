@@ -2,11 +2,11 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
 import App from './App.svelte';
-import { appStores, deferred, fakeBridge, playerState } from './lib/testing';
+import { appStores, deferred, fakeBridge, playerState, trackSlice } from './lib/testing';
 
 async function openApp(bridge = fakeBridge()) {
   const view = render(App, { props: appStores(bridge) });
-  await screen.findByRole('link', { name: /^night shift, from/i });
+  await screen.findByRole('link', { name: /^night shift, playlist$/i });
   await waitFor(() => expect(bridge.calls).toContain('getPlayerState'));
   return { ...view, bridge };
 }
@@ -147,7 +147,8 @@ describe('playing from a list', () => {
   it('sends a search result to Rust and the bar follows the event', async () => {
     const { bridge } = await openApp();
     // Only the sample catalog can be played from Search so far.
-    bridge.remembered = { query: '', filter: 'soundcloud' };
+    bridge.emitAccount('connected');
+    bridge.remembered = { query: '', filter: 'all' };
     await fireEvent.click(screen.getByRole('link', { name: 'Search' }));
 
     await fireEvent.click(
@@ -160,11 +161,11 @@ describe('playing from a list', () => {
     expect(await bar().findByText('Harbor Lights')).toBeTruthy();
   });
 
-  it('sends the absolute index of a playlist row', async () => {
+  it('plays the song of a playlist row far down the list, by its id', async () => {
     const bridge = fakeBridge();
-    bridge.trackCounts['night-shift'] = 5000;
+    bridge.lists[0].entries = trackSlice(0, 5000, 5000).tracks;
     await openApp(bridge);
-    await fireEvent.click(screen.getByRole('link', { name: /^night shift, from/i }));
+    await fireEvent.click(screen.getByRole('link', { name: /^night shift, playlist$/i }));
     await main().findByRole('button', { name: /^Play Track 1 by/ });
 
     const scroller = screen.getByRole('main').querySelector<HTMLElement>('[data-scroller]') as HTMLElement;
@@ -173,6 +174,6 @@ describe('playing from a list', () => {
     await fireEvent.scroll(scroller);
     await fireEvent.click(await main().findByRole('button', { name: /^Play Track 4000 by/ }));
 
-    expect(bridge.commands).toEqual([['playCollection', 'night-shift', 3999]]);
+    expect(bridge.commands).toEqual([['playLibraryTrack', 'n4000']]);
   });
 });

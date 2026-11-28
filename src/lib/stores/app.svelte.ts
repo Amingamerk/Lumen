@@ -1,10 +1,9 @@
 import { describeError } from '../errors';
-import type { Bridge, NavigationState, PlaylistSummary, Route } from '../ipc';
+import type { Bridge, NavigationState, Route } from '../ipc';
 
 /** A read-only mirror of the state Rust owns. It changes only on what Rust sends. */
 export class AppStore {
   navigation = $state.raw<NavigationState | null>(null);
-  playlists = $state.raw<PlaylistSummary[]>([]);
   /** Why the last request to Rust failed, if it did. */
   error = $state.raw<string | null>(null);
 
@@ -21,7 +20,6 @@ export class AppStore {
       // Listen first, so a change made while the snapshot is in flight still arrives.
       disconnect = await this.#bridge.onNavigationChanged((navigation) => this.#apply(navigation));
       const snapshot = await this.#bridge.getAppState();
-      this.playlists = snapshot.playlists;
       this.#apply(snapshot.navigation);
     } catch (error) {
       this.error = describeError(error);

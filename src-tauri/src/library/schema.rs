@@ -40,6 +40,21 @@ const STEPS: &[&str] = &[
     ) STRICT;
     CREATE INDEX history_by_track ON history(track_id, started_at DESC);
     ",
+    // 2: Local playlists. An entry is a place in a playlist, so one Track can
+    // hold several. Removing a playlist takes its entries and nothing else.
+    "
+    CREATE TABLE playlists (
+        id TEXT PRIMARY KEY NOT NULL,
+        name TEXT NOT NULL
+    ) STRICT;
+    CREATE TABLE playlist_entries (
+        id INTEGER PRIMARY KEY NOT NULL,
+        playlist_id TEXT NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+        position INTEGER NOT NULL,
+        track_id TEXT NOT NULL REFERENCES tracks(id)
+    ) STRICT;
+    CREATE INDEX playlist_entries_by_position ON playlist_entries(playlist_id, position);
+    ",
 ];
 
 /// The version a fresh database ends at.
