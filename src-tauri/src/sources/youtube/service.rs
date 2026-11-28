@@ -265,9 +265,15 @@ impl<S: SecretStore, T: Transport, C: GateClock> YouTube<S, T, C> {
     /// The session's generation, if something may be sent now. The error says
     /// why not. Sends nothing.
     pub fn ready(&self) -> Result<Generation, ServiceError> {
-        let (generation, _) = self.account.session_for_request()?;
+        self.ready_login().map(|(generation, _)| generation)
+    }
+
+    /// As [`Self::ready`], with the name of the login too (see
+    /// [`Session::login_id`]).
+    pub fn ready_login(&self) -> Result<(Generation, String), ServiceError> {
+        let (generation, session) = self.account.session_for_request()?;
         match self.gate.view() {
-            GateView::Ready => Ok(generation),
+            GateView::Ready => Ok((generation, session.login_id())),
             GateView::CoolingDown { .. } => Err(GateError::CoolingDown.into()),
             GateView::Paused { .. } => Err(GateError::Paused.into()),
         }

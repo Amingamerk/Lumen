@@ -12,14 +12,17 @@ use crate::sources::youtube::GateClock;
 
 mod history;
 mod likes;
+mod matches;
 mod playlists;
 mod schema;
+mod streams;
 mod tracks;
 mod writer;
 
 pub use history::{EndReason, HistoryChange, NoLog, PlayId, PlayLog};
 pub use likes::LikeChange;
 pub use playlists::PlaylistSummary;
+pub use streams::StoredStream;
 pub use writer::HistoryWriter;
 
 /// Why the library could not be used.

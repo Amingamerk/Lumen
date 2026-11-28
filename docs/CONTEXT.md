@@ -77,7 +77,7 @@ a song is chosen or resolved), with its start time, the time it actually sounded
 `skipped`, `replaced`, `failed`, `exit`, or `interrupted` after a crash). A pause, a seek, a stream recovery or
 a failed load adds no row and no listened time. The Library view's **Recently played** lists each song once, the
 latest play first. A file made by a newer Lumen, or a damaged one, is reported and left as it is; likes and
-history stay off until it is dealt with. Songs of the library, and the rows of a local playlist, play one at a
+history stay off until it is dealt with. It also holds the **kept streams** of the Resolver and the **match** cache. Songs of the library, and the rows of a local playlist, play one at a
 time, as a search result does, until Milestone 4. A run with `--list` opens a **throwaway library** in the system's
 temp folder, holding one sample playlist of 5,000 songs, and never reads or writes the user's `library.db`.
 
@@ -87,15 +87,18 @@ Stream URL, headers or the Engine's own words.
 
 ### Source
 The metadata role of a service, behind the `Source` trait: `search` and `related` (radio seeds), returning
-Tracks. Library import also belongs to the source module. A Source never produces audio.
+Tracks. YouTube Music is the first one. `related` answers "unsupported" without sending anything until
+Milestone 6. Library import also belongs to the source module. A Source never produces audio.
 
 ### Resolver
 The audio role: `SourceRef` -> `StreamInfo`. `yt-dlp` with Deno is the first backend
 ([ADR 0001](adr/0001-ytdlp-primary-resolver.md)). Only `YouTube` and `SoundCloud` refs can be resolved.
-Today it takes a YouTube video id; the `Resolver` trait that makes backends swappable comes in Milestone 3.
+The `Resolver` trait (`resolve`, `forget`, `forget_all`) makes backends swappable; `YtDlpResolver` is the first.
+A Spotify ref is never resolved: it is "unsupported" and nothing runs.
 
-A resolve is one `yt-dlp` run through the Account-safety gate. Its `StreamInfo` is cached in memory for that one
-Session and used again while the URL has at least 10 minutes left. A selection that has been replaced before
+A resolve is one `yt-dlp` run through the Account-safety gate. Its `StreamInfo` is cached in memory and kept in
+the library for the login that resolved it, and used again, even after a restart, while the URL has at least
+10 minutes left. A new login, a disconnect and a failed load drop it. A selection that has been replaced before
 its turn runs nothing.
 
 ### Stream URL and StreamInfo
@@ -104,7 +107,7 @@ is needed to play it:
 
 | Part | Meaning |
 |---|---|
-| `url` | The Stream URL. Sensitive (can include the client IP): never logged or sent to the UI |
+| `url` | The Stream URL. Sensitive (can include the client IP): never logged or sent to the UI. Kept unencrypted in the library, without any cookie or login header |
 | expiry | When the URL stops working (about 6 h in the Milestone 0 YouTube resolves) |
 | `available_at` | Optional earliest time to use the URL; wait for it before loading |
 | headers | HTTP headers mpv must send, including the pinned `User-Agent` |
@@ -114,7 +117,7 @@ in Milestone 4). HTTP 403, an expired URL or a stall means resolve again; mpv do
 
 ### Match
 A cached mapping from a Spotify Track to a playable `YouTube` (else `SoundCloud`) `SourceRef`, with its
-scores. ISRC search first, then title/artist/duration scoring. With no match anywhere, the Track is greyed
+scores (artist, title, duration and overall), kept in the library. ISRC search first, then title/artist/duration scoring. With no match anywhere, the Track is greyed
 out, skipped, and a toast is shown.
 
 ### Review list

@@ -226,21 +226,32 @@ struct Track {
 Metadata and audio are **separate roles**. Spotify is a metadata source only; it never provides audio.
 
 ```rust
-#[async_trait]
 trait Source {
-    async fn search(&self, q: &str, limit: usize) -> Result<Vec<Track>>;
-    async fn related(&self, r: &SourceRef) -> Result<Vec<Track>>;    // radio seeds
+    // `wanted` is asked when the search's turn comes; false sends nothing.
+    async fn search(&self, q: &str, limit: usize, wanted: impl Fn() -> bool) -> Result<Vec<Track>, SourceError>;
+    // Radio seeds. `Unsupported`, with nothing sent, until Milestone 6.
+    async fn related(&self, r: &SourceRef) -> Result<Vec<Track>, SourceError>;
 }
 
-#[async_trait]
 trait Resolver {
-    async fn resolve(&self, r: &SourceRef) -> Result<StreamInfo>;    // url + expiry + available_at + headers
+    // url + expiry + available_at + headers. Spotify refs are `Unsupported`.
+    async fn resolve(&self, r: &SourceRef, wanted: impl Fn() -> bool) -> Result<StreamInfo, ResolveError>;
+    fn forget(&self, r: &SourceRef);   // drop one stream, as after a failed load
+    fn forget_all(&self);              // drop every stream, as after an account change
 }
 ```
+
+Both traits use native `async fn` and are used through generics, so tests swap in `FakeSource` and
+`FakeResolver`. `YouTube` is the first `Source`; `YtDlpResolver` is the first `Resolver`.
 
 ### Resolving playback
 - YouTube / SoundCloud track -> resolver returns a direct stream URL with its **expiry time** -> hand to mpv.
 - Wait until the stream's `available_at` time, when yt-dlp reports one, before handing the URL to mpv.
+- Store each URL's expiry. A YouTube stream is also written to the library (`streams` table), bound to a
+  digest of the login's cookies, so a replay after a restart starts no yt-dlp run. It is used again only with at
+  least 10 minutes left, only for the same login, and only if it still points at `googlevideo.com`. A new login,
+  a disconnect and a failed load clear it. The URL is stored unencrypted and holds no cookie or other header
+  of the login; it is never logged or sent to the UI. A library that fails costs the saving, never playback.
 - Store each URL's expiry. **Pre-resolve the next 1-2 tracks** in the queue before the current one ends so
   there are no gaps. **Re-resolve on HTTP 403 or a stall**, mpv will not do this on its own.
 - Recovery of the current track: a load or playback error, 10 s without progress while playing, or an end
@@ -268,7 +279,8 @@ scoring.
    when the average is under 75.
 6. Hard cuts: artist score < 70 or title match <= 60. Penalise "live", "remix", "cover", "sped up" (15 each) only
    when absent from the Spotify title; clamp the title score at 0. Prefer Topic / official-audio channels.
-7. Weights live in data, not magic numbers. Cache the match together with its scores.
+7. Weights live in data, not magic numbers. Cache the match together with its scores (the `matches` table: the
+   Spotify song, the playable `SourceRef` and the artist, title, duration and overall scores).
 
 **Unmatched or low-confidence tracks:**
 - No match on YouTube Music -> try SoundCloud -> otherwise grey the track out, skip it during playback and
@@ -313,8 +325,8 @@ The target layout is documented in [CLAUDE.md](../CLAUDE.md) under "Repo layout"
 sessions in Credential Manager (split into chunks); the Svelte app lives in `src/`; spikes in `spikes/`; developer scripts in `scripts/`; docs in `docs/`. `catalog/` holds the domain
 shapes, the views built from them, search and Track slices; its static fixtures (sample playlists and albums,
 and a generated 5,000-Track playlist) are used by tests and, through `--list`, to fill a throwaway library. The
-app itself starts with an empty catalog. `library/` keeps Tracks, likes, history and the user's local playlists
-(`playlists.rs`); a playlist page gets only the rows it shows, as slices from SQLite. `ipc/library.rs` and
+app itself starts with an empty catalog. `library/` keeps Tracks, likes, history, the user's local playlists
+(`playlists.rs`), the kept stream URLs and the match cache; a playlist page gets only the rows it shows, as slices from SQLite. `ipc/library.rs` and
 `ipc/playlists.rs` run every database command on a blocking thread, and `--list` opens its library in the temp
 folder, never the user's own.
 
@@ -325,10 +337,14 @@ account, the gate and the transport and is the only way a request goes out. The 
 service needs it. `sources/youtube/search/` asks YouTube Music for songs, parses the reply into Tracks and
 keeps recent results in memory.
 
-`resolver/` runs the bundled yt-dlp and Deno for one video at a time through that gate: the arguments
-(`args.rs`), the temporary cookie jar (`jar.rs`), the process tree (`process.rs`), reading the answer
-(`stream.rs`) and the in-memory stream cache. `ipc/` connects these to the UI (`account.rs`, `search.rs`,
-`playback.rs`, `recovery.rs`), and `audio/` holds the engine and the player, including stream recovery.
+`sources/mod.rs` holds the `Source` trait and `sources/youtube/source.rs` implements it over the service.
+
+`resolver/` holds the `Resolver` trait and its first backend, `YtDlpResolver`, which runs the bundled yt-dlp and
+Deno for one video at a time through that gate: the arguments (`args.rs`), the temporary cookie jar (`jar.rs`),
+the process tree (`process.rs`), reading the answer (`stream.rs`), the in-memory stream cache and the streams kept
+in the library (`kept.rs`, over `library/streams.rs`). `library/matches.rs` holds the match cache that Spotify
+import fills later. `ipc/` connects these to the UI (`account.rs`, `search.rs`, `playback.rs`, `recovery.rs`),
+and `audio/` holds the engine and the player, including stream recovery.
 
 ## 7. Milestones
 
