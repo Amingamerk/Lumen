@@ -53,8 +53,11 @@ impl HistoryWriter {
                             started_at_ms,
                         } => {
                             // A write that fails costs one history row, never playback.
-                            if let Ok(change) = library.begin_play(id, &track, started_at_ms) {
-                                changed(change);
+                            match library.begin_play(id, &track, started_at_ms) {
+                                Ok(change) => changed(change),
+                                Err(error) => {
+                                    eprintln!("lumen: could not write play {id}: {error}")
+                                }
                             }
                         }
                         Job::End {
@@ -62,7 +65,9 @@ impl HistoryWriter {
                             listened,
                             reason,
                         } => {
-                            let _ = library.end_play(id, listened, reason);
+                            if let Err(error) = library.end_play(id, listened, reason) {
+                                eprintln!("lumen: could not close play {id}: {error}");
+                            }
                         }
                         Job::Stop => break,
                     }

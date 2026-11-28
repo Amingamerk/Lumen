@@ -53,11 +53,13 @@ pub struct LibrarySummary {
     pub problem: Option<String>,
 }
 
-/// The library as the app holds it: open, or why it is not.
+/// The library as the app holds it: open, or why it is not. Clones share
+/// everything, so one can move to a blocking thread.
+#[derive(Clone)]
 pub struct LibraryHandle {
     library: Result<Arc<Library>, String>,
     writer: Option<Arc<HistoryWriter>>,
-    revision: AtomicU64,
+    revision: Arc<AtomicU64>,
 }
 
 impl LibraryHandle {
@@ -65,7 +67,7 @@ impl LibraryHandle {
         Self {
             library: Ok(library),
             writer,
-            revision: AtomicU64::new(0),
+            revision: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -73,7 +75,7 @@ impl LibraryHandle {
         Self {
             library: Err(problem),
             writer: None,
-            revision: AtomicU64::new(0),
+            revision: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -134,8 +136,9 @@ pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
 pub fn stop<R: Runtime>(app: &AppHandle<R>) {
     if let Some(handle) = app.try_state::<LibraryHandle>()
         && let Some(writer) = &handle.writer
+        && !writer.finish()
     {
-        writer.finish();
+        eprintln!("lumen: the history writer did not finish in time; a play may be missing");
     }
 }
 
@@ -199,15 +202,28 @@ fn video_of(track: &Track) -> Result<String, IpcError> {
         .ok_or(IpcError::NotPlayable)
 }
 
+/// Runs database work on a blocking thread. Commands that wait for the library
+/// must never wait on the thread that serves the window.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
+) -> Result<T, IpcError> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|_| IpcError::LibraryUnavailable("the library work was cut short".to_owned()))?
+}
+
 #[tauri::command]
-pub fn get_library_summary(library: State<'_, LibraryHandle>) -> LibrarySummary {
-    library.summary()
+pub async fn get_library_summary(
+    library: State<'_, LibraryHandle>,
+) -> Result<LibrarySummary, IpcError> {
+    let handle = library.inner().clone();
+    blocking(move || Ok(handle.summary())).await
 }
 
 /// Likes a song from the results on show, the catalog, what plays now, or what
 /// the library already holds.
 #[tauri::command]
-pub fn like_track<R: Runtime>(
+pub async fn like_track<R: Runtime>(
     app: AppHandle<R>,
     state: State<'_, SharedState>,
     player: State<'_, PlayerHandle>,
@@ -216,69 +232,79 @@ pub fn like_track<R: Runtime>(
 ) -> Result<(), IpcError> {
     // The app's lock is released before the player's is taken.
     let known = lock(&state).known_track(track_id);
-    let track = match known {
-        Some(track) => track,
-        None => match player.current_track().filter(|track| track.id == track_id) {
+    let known = known.or_else(|| player.current_track().filter(|track| track.id == track_id));
+    let handle = library.inner().clone();
+    blocking(move || {
+        let track = match known {
             Some(track) => track,
-            None => library
+            None => handle
                 .library()?
                 .track(track_id)?
                 .ok_or(PlayerError::UnknownTrack { id: track_id })?,
-        },
-    };
-    like_and_notify(&library, &track, &app)
+        };
+        like_and_notify(&handle, &track, &app)
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn unlike_track<R: Runtime>(
+pub async fn unlike_track<R: Runtime>(
     app: AppHandle<R>,
     library: State<'_, LibraryHandle>,
     track_id: Uuid,
 ) -> Result<(), IpcError> {
-    unlike_and_notify(&library, track_id, &app)
+    let handle = library.inner().clone();
+    blocking(move || unlike_and_notify(&handle, track_id, &app)).await
 }
 
 /// Which of the songs shown are liked.
 #[tauri::command]
-pub fn get_liked_ids(
+pub async fn get_liked_ids(
     library: State<'_, LibraryHandle>,
     track_ids: Vec<Uuid>,
 ) -> Result<Vec<Uuid>, IpcError> {
-    Ok(library.library()?.liked_among(&track_ids)?)
+    let handle = library.inner().clone();
+    blocking(move || Ok(handle.library()?.liked_among(&track_ids)?)).await
 }
 
 /// The visible window of the liked songs. The rest stay in the database.
 #[tauri::command]
-pub fn get_liked_slice(
+pub async fn get_liked_slice(
     library: State<'_, LibraryHandle>,
     offset: usize,
     limit: usize,
 ) -> Result<TrackSlice, IpcError> {
-    Ok(library.library()?.liked_slice(offset, limit)?)
+    let handle = library.inner().clone();
+    blocking(move || Ok(handle.library()?.liked_slice(offset, limit)?)).await
 }
 
 /// The visible window of the songs played, the latest first.
 #[tauri::command]
-pub fn get_recent_slice(
+pub async fn get_recent_slice(
     library: State<'_, LibraryHandle>,
     offset: usize,
     limit: usize,
 ) -> Result<TrackSlice, IpcError> {
-    Ok(library.library()?.recent_slice(offset, limit)?)
+    let handle = library.inner().clone();
+    blocking(move || Ok(handle.library()?.recent_slice(offset, limit)?)).await
 }
 
 /// Plays a song of the library by itself.
 #[tauri::command]
-pub fn play_library_track<R: Runtime>(
+pub async fn play_library_track<R: Runtime>(
     app: AppHandle<R>,
     library: State<'_, LibraryHandle>,
     player: State<'_, PlayerHandle>,
     track_id: Uuid,
 ) -> Result<(), IpcError> {
-    let track = library
-        .library()?
-        .track(track_id)?
-        .ok_or(PlayerError::UnknownTrack { id: track_id })?;
+    let handle = library.inner().clone();
+    let track = blocking(move || {
+        Ok(handle
+            .library()?
+            .track(track_id)?
+            .ok_or(PlayerError::UnknownTrack { id: track_id })?)
+    })
+    .await?;
     let video = video_of(&track)?;
     play_stream(&app, &player, video, TrackRow::from(&track))
 }
@@ -295,6 +321,23 @@ mod tests {
         let dir = tempfile::tempdir().unwrap().keep();
         let (library, _) = library_at(&dir.join("lumen.db"));
         LibraryHandle::available(Arc::new(library), None)
+    }
+
+    #[test]
+    fn library_commands_wait_on_a_thread_of_their_own() {
+        let here = std::thread::current().id();
+
+        let there = tauri::async_runtime::block_on(blocking(|| Ok(std::thread::current().id())));
+
+        assert_ne!(there.unwrap(), here);
+    }
+
+    #[test]
+    fn a_failure_on_the_blocking_thread_reaches_the_caller() {
+        let result: Result<(), IpcError> =
+            tauri::async_runtime::block_on(blocking(|| Err(IpcError::NotPlayable)));
+
+        assert!(matches!(result, Err(IpcError::NotPlayable)));
     }
 
     #[test]
