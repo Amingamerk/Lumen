@@ -8,9 +8,11 @@
   import { countLabel } from '../lib/format';
   import type { AccountStatus, ServiceStatus, SourceFilter } from '../lib/ipc';
   import type { CatalogStore } from '../lib/stores/catalog.svelte';
+  import type { LibraryStore } from '../lib/stores/library.svelte';
 
   interface Props {
     catalog: CatalogStore;
+    library: LibraryStore;
     /** `null` until Rust has said. */
     account: AccountStatus | null;
     /** `null` until Rust has said. */
@@ -27,6 +29,7 @@
 
   let {
     catalog,
+    library,
     account,
     youtube,
     onsignin,
@@ -72,6 +75,11 @@
   });
 
   onMount(() => void catalog.openSearch());
+
+  // Asks Rust which of the songs on show are liked.
+  $effect(() => {
+    if (found) void library.watch(found.tracks.map((track) => track.id));
+  });
 
   $effect(() => {
     if (!focusWanted || !box) return;
@@ -185,7 +193,13 @@
       {#if found.tracks.length}
         <section aria-labelledby="search-tracks">
           <h2 id="search-tracks" class="shelf-title mb-3">{live ? 'Songs' : 'Tracks'}</h2>
-          <TrackList tracks={found.tracks} labelledby="search-tracks" {onplay} />
+          <TrackList
+            tracks={found.tracks}
+            labelledby="search-tracks"
+            {onplay}
+            liked={(id) => library.isLiked(id)}
+            onlike={(id) => void library.toggle(id)}
+          />
         </section>
       {/if}
       {#if found.collections.length}
