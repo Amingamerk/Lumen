@@ -18,9 +18,11 @@ use tauri::{Manager, RunEvent, WindowEvent};
 /// Only one instance ever runs, so there is one session and one rate limiter. A
 /// second launch focuses the running window and exits.
 pub fn run() -> Result<(), tauri::Error> {
-    let args = std::env::args_os()
+    let args: Vec<String> = std::env::args_os()
         .skip(1)
-        .map(|arg| arg.to_string_lossy().into_owned());
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    let list = state::wants_list(&args);
     let play_file = audio::play_file_arg(std::env::args_os().skip(1));
     tauri::Builder::default()
         // First, so a second launch exits before it sets anything up.
@@ -34,10 +36,12 @@ pub fn run() -> Result<(), tauri::Error> {
                 let _ = ipc::account::close_login(window.app_handle());
             }
         })
-        .manage(ipc::SharedState::new(state::AppState::from_args(args)))
+        .manage(ipc::SharedState::new(state::AppState::without_samples(
+            args,
+        )))
         .setup(move |app| {
             ipc::youtube::start(app.handle())?;
-            ipc::library::start(app.handle())?;
+            ipc::library::start(app.handle(), list)?;
             ipc::playback::start(app.handle())?;
             Ok(ipc::player::start(app.handle(), play_file)?)
         })
@@ -71,6 +75,14 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::library::get_liked_slice,
             ipc::library::get_recent_slice,
             ipc::library::play_library_track,
+            ipc::playlists::get_playlists,
+            ipc::playlists::get_playlist,
+            ipc::playlists::get_playlist_slice,
+            ipc::playlists::create_playlist,
+            ipc::playlists::rename_playlist,
+            ipc::playlists::delete_playlist,
+            ipc::playlists::add_to_playlist,
+            ipc::playlists::remove_from_playlist,
             ipc::account::get_account_status,
             ipc::account::sign_in,
             ipc::account::disconnect,

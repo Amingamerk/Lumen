@@ -1,5 +1,6 @@
 //! Likes and history: commands in, events out. The rules live in `library`.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -11,8 +12,8 @@ use super::playback::play_stream;
 use super::player::PlayerHandle;
 use super::{EventSink, IpcError, SharedState, lock};
 use crate::audio::PlayerError;
-use crate::catalog::{SourceKind, Track, TrackRow, TrackSlice};
-use crate::library::{HistoryChange, HistoryWriter, Library, LikeChange};
+use crate::catalog::{Catalog, LONG_PLAYLIST_ID, SourceKind, Track, TrackRow, TrackSlice};
+use crate::library::{HistoryChange, HistoryWriter, Library, LibraryError, LikeChange};
 use crate::sources::youtube::SystemClock;
 
 /// Events sent to the UI. Mirrored in `src/lib/ipc.ts`.
@@ -21,6 +22,9 @@ pub const HISTORY_CHANGED: &str = "history-changed";
 
 /// The file in the app's local data folder.
 const FILE_NAME: &str = "library.db";
+
+/// The folder in the system's temp folder that a `--list` run uses instead.
+const THROWAWAY_FOLDER: &str = "lumen-list";
 
 /// A song was liked or unliked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -79,14 +83,19 @@ impl LibraryHandle {
         }
     }
 
-    fn library(&self) -> Result<&Arc<Library>, IpcError> {
+    pub(super) fn library(&self) -> Result<&Arc<Library>, IpcError> {
         self.library
             .as_ref()
             .map_err(|problem| IpcError::LibraryUnavailable(problem.clone()))
     }
 
-    fn next_revision(&self) -> u64 {
+    pub(super) fn next_revision(&self) -> u64 {
         self.revision.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    /// The revision of the newest library event sent so far.
+    pub(super) fn current_revision(&self) -> u64 {
+        self.revision.load(Ordering::SeqCst)
     }
 
     pub fn summary(&self) -> LibrarySummary {
@@ -108,11 +117,46 @@ impl LibraryHandle {
     }
 }
 
+/// Where the library lives. A `--list` run gets a file of its own in the temp
+/// folder, so it never reads or changes the user's library.
+fn library_path(list: bool, data_dir: &Path, temp_dir: &Path) -> PathBuf {
+    if list {
+        temp_dir.join(THROWAWAY_FOLDER).join(FILE_NAME)
+    } else {
+        data_dir.join(FILE_NAME)
+    }
+}
+
+/// Opens the library for this run. A `--list` run starts from an empty
+/// throwaway library holding the sample long playlist.
+fn open_library(list: bool, data_dir: &Path, temp_dir: &Path) -> Result<Library, LibraryError> {
+    let path = library_path(list, data_dir, temp_dir);
+    if list {
+        // An earlier run's leftovers: a missing folder is as good as an empty one.
+        let _ = std::fs::remove_dir_all(temp_dir.join(THROWAWAY_FOLDER));
+    }
+    let library = Library::open(&path, SystemClock::default())?;
+    if list {
+        let samples = Catalog::default();
+        let tracks: Vec<Track> = samples
+            .listed(LONG_PLAYLIST_ID)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|id| samples.track(*id).cloned())
+            .collect();
+        let name = samples
+            .collection(LONG_PLAYLIST_ID)
+            .map_or_else(|| LONG_PLAYLIST_ID.to_owned(), |c| c.title);
+        library.create_playlist_with(LONG_PLAYLIST_ID, &name, &tracks)?;
+    }
+    Ok(library)
+}
+
 /// Opens the library and starts writing history to it. A file that cannot be
 /// used is reported through the commands and left as it is.
-pub fn start<R: Runtime>(app: &AppHandle<R>) -> anyhow::Result<()> {
-    let path = app.path().app_local_data_dir()?.join(FILE_NAME);
-    let handle = match Library::open(&path, SystemClock::default()) {
+pub fn start<R: Runtime>(app: &AppHandle<R>, list: bool) -> anyhow::Result<()> {
+    let data_dir = app.path().app_local_data_dir()?;
+    let handle = match open_library(list, &data_dir, &std::env::temp_dir()) {
         Ok(library) => {
             let library = Arc::new(library);
             let sink = app.clone();
@@ -204,12 +248,28 @@ fn video_of(track: &Track) -> Result<String, IpcError> {
 
 /// Runs database work on a blocking thread. Commands that wait for the library
 /// must never wait on the thread that serves the window.
-async fn blocking<T: Send + 'static>(
+pub(super) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, IpcError> + Send + 'static,
 ) -> Result<T, IpcError> {
     tauri::async_runtime::spawn_blocking(work)
         .await
         .map_err(|_| IpcError::LibraryUnavailable("the library work was cut short".to_owned()))?
+}
+
+/// The song a command is about: the one the caller already holds, or the one
+/// the library keeps under that id.
+pub(super) fn find_track(
+    handle: &LibraryHandle,
+    known: Option<Track>,
+    id: Uuid,
+) -> Result<Track, IpcError> {
+    match known {
+        Some(track) => Ok(track),
+        None => Ok(handle
+            .library()?
+            .track(id)?
+            .ok_or(PlayerError::UnknownTrack { id })?),
+    }
 }
 
 #[tauri::command]
@@ -235,13 +295,7 @@ pub async fn like_track<R: Runtime>(
     let known = known.or_else(|| player.current_track().filter(|track| track.id == track_id));
     let handle = library.inner().clone();
     blocking(move || {
-        let track = match known {
-            Some(track) => track,
-            None => handle
-                .library()?
-                .track(track_id)?
-                .ok_or(PlayerError::UnknownTrack { id: track_id })?,
-        };
+        let track = find_track(&handle, known, track_id)?;
         like_and_notify(&handle, &track, &app)
     })
     .await
@@ -321,6 +375,52 @@ mod tests {
         let dir = tempfile::tempdir().unwrap().keep();
         let (library, _) = library_at(&dir.join("lumen.db"));
         LibraryHandle::available(Arc::new(library), None)
+    }
+
+    #[test]
+    fn a_list_run_opens_a_throwaway_library_and_leaves_the_users_alone() {
+        let data = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+        let user = data.path().join(FILE_NAME);
+        let (mine, _) = library_at(&user);
+        mine.like(&song(1)).unwrap();
+        mine.create_playlist("Mine").unwrap();
+        drop(mine);
+        let before = std::fs::read(&user).unwrap();
+        // A throwaway left by an earlier run does not carry over.
+        let leftover = library_path(true, data.path(), temp.path());
+        let (stale, _) = library_at(&leftover);
+        stale.create_playlist("Stale").unwrap();
+        drop(stale);
+
+        let library = open_library(true, data.path(), temp.path()).unwrap();
+
+        assert!(leftover.starts_with(temp.path()));
+        assert_ne!(leftover, user);
+        let names: Vec<String> = library
+            .playlists()
+            .unwrap()
+            .into_iter()
+            .map(|p| p.name)
+            .collect();
+        assert_eq!(names, ["The long haul"]);
+        let long = library.playlist(LONG_PLAYLIST_ID).unwrap();
+        assert_eq!(long.track_count, 5_000);
+        drop(library);
+        assert_eq!(std::fs::read(&user).unwrap(), before);
+        assert_eq!(library_path(false, data.path(), temp.path()), user);
+    }
+
+    #[test]
+    fn a_normal_run_opens_the_users_library_with_no_sample_playlist() {
+        let data = tempfile::tempdir().unwrap();
+        let temp = tempfile::tempdir().unwrap();
+
+        let library = open_library(false, data.path(), temp.path()).unwrap();
+
+        assert!(library.playlists().unwrap().is_empty());
+        assert!(data.path().join(FILE_NAME).exists());
+        assert!(std::fs::read_dir(temp.path()).unwrap().next().is_none());
     }
 
     #[test]
