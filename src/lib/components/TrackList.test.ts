@@ -40,7 +40,7 @@ describe('TrackList', () => {
     const onplay = vi.fn();
     render(TrackList, { tracks: [row], labelledby: 'heading', onplay, onqueue });
 
-    await fireEvent.click(screen.getByRole('button', { name: `Play ${row.title} next` }));
+    await fireEvent.click(screen.getByRole('button', { name: `Queue ${row.title} to play next` }));
     await fireEvent.click(screen.getByRole('button', { name: `Add ${row.title} to the queue` }));
 
     expect(onqueue.mock.calls).toEqual([

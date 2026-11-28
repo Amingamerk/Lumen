@@ -16,7 +16,7 @@
 <button
   type="button"
   class="row-action"
-  aria-label="Play {title} next"
+  aria-label="Queue {title} to play next"
   title="Play next"
   onclick={(event) => {
     releasePointerFocus(event);
