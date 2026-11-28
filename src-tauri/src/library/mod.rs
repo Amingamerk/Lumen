@@ -12,12 +12,14 @@ use crate::sources::youtube::GateClock;
 
 mod history;
 mod likes;
+mod playlists;
 mod schema;
 mod tracks;
 mod writer;
 
 pub use history::{EndReason, HistoryChange, NoLog, PlayId, PlayLog};
 pub use likes::LikeChange;
+pub use playlists::PlaylistSummary;
 pub use writer::HistoryWriter;
 
 /// Why the library could not be used.
@@ -34,6 +36,10 @@ pub enum LibraryError {
     Database(#[from] rusqlite::Error),
     #[error("the library folder could not be made: {0}")]
     Folder(#[from] std::io::Error),
+    #[error("a playlist needs a name")]
+    BlankName,
+    #[error("there is no playlist with the id “{id}”")]
+    NoPlaylist { id: String },
 }
 
 /// The time rows are stamped with. A seam so tests move it by hand.
