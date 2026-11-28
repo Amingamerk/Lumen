@@ -5,6 +5,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 pub mod account;
 #[cfg(debug_assertions)]
 mod break_url;
+pub mod library;
 pub mod playback;
 pub mod player;
 mod recovery;
@@ -16,6 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime, State};
 
 use crate::audio::{PlayerError, PlayerPosition, PlayerState};
 use crate::catalog::{CollectionDetail, Library, SearchView, Shelf, TrackSlice};
+use crate::library::LibraryError;
 use crate::secrets::SecretError;
 use crate::state::{AppSnapshot, AppState, NavigationState, Route, StateError};
 
@@ -35,6 +37,12 @@ pub enum IpcError {
     Player(#[from] PlayerError),
     #[error(transparent)]
     Secret(#[from] SecretError),
+    #[error("{0}")]
+    LibraryUnavailable(String),
+    #[error(transparent)]
+    Library(#[from] LibraryError),
+    #[error("this song has no source Lumen can play it from")]
+    NotPlayable,
     #[error("the window failed: {0}")]
     Window(#[from] tauri::Error),
 }
@@ -52,6 +60,8 @@ pub trait EventSink {
     fn player_changed(&self, state: &PlayerState) -> Result<(), IpcError>;
     fn player_position(&self, position: &PlayerPosition) -> Result<(), IpcError>;
     fn search_changed(&self, view: &SearchView) -> Result<(), IpcError>;
+    fn likes_changed(&self, change: &library::LikesChanged) -> Result<(), IpcError>;
+    fn history_changed(&self, change: &library::HistoryChanged) -> Result<(), IpcError>;
 }
 
 impl<R: Runtime> EventSink for AppHandle<R> {
@@ -69,6 +79,14 @@ impl<R: Runtime> EventSink for AppHandle<R> {
 
     fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
         Ok(self.emit_to(MAIN_WINDOW, search::SEARCH_CHANGED, view)?)
+    }
+
+    fn likes_changed(&self, change: &library::LikesChanged) -> Result<(), IpcError> {
+        Ok(self.emit(library::LIKES_CHANGED, change)?)
+    }
+
+    fn history_changed(&self, change: &library::HistoryChanged) -> Result<(), IpcError> {
+        Ok(self.emit(library::HISTORY_CHANGED, change)?)
     }
 }
 
@@ -177,6 +195,8 @@ mod tests {
         pub(super) states: RefCell<Vec<PlayerState>>,
         pub(super) positions: RefCell<Vec<PlayerPosition>>,
         pub(super) searches: RefCell<Vec<SearchView>>,
+        pub(super) likes: RefCell<Vec<library::LikesChanged>>,
+        pub(super) histories: RefCell<Vec<library::HistoryChanged>>,
     }
 
     impl EventSink for RecordingSink {
@@ -197,6 +217,16 @@ mod tests {
 
         fn search_changed(&self, view: &SearchView) -> Result<(), IpcError> {
             self.searches.borrow_mut().push(view.clone());
+            Ok(())
+        }
+
+        fn likes_changed(&self, change: &library::LikesChanged) -> Result<(), IpcError> {
+            self.likes.borrow_mut().push(*change);
+            Ok(())
+        }
+
+        fn history_changed(&self, change: &library::HistoryChanged) -> Result<(), IpcError> {
+            self.histories.borrow_mut().push(*change);
             Ok(())
         }
     }

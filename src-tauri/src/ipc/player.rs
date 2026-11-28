@@ -16,7 +16,8 @@ use crate::audio::{
     Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError,
     PlayerEvent, PlayerState, QueueSlice, file_media,
 };
-use crate::catalog::{Catalog, TrackRow};
+use crate::catalog::{Catalog, Track, TrackRow};
+use crate::library::PlayLog;
 use crate::recs::StaticRecommender;
 use crate::state::SearchPick;
 
@@ -37,6 +38,16 @@ impl PlayerHandle {
         let recommender = Box::new(StaticRecommender::new(Arc::clone(&catalog)));
         let player = Arc::new(Mutex::new(Player::new(engine, catalog, recommender)));
         Self { player }
+    }
+
+    /// Where the plays of this run are written.
+    fn log_to(&self, log: Box<dyn PlayLog>) {
+        lock(&self.player).set_log(log);
+    }
+
+    /// The song that is current, as the library would keep it.
+    pub fn current_track(&self) -> Option<Track> {
+        lock(&self.player).current_track()
     }
 
     /// Plays a file before the UI is there to ask: it reads the state later.
@@ -140,6 +151,9 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::R
     let (engine, events) = MpvEngine::new()?;
     let shutdown = engine.shutdown_handle();
     let handle = PlayerHandle::new(catalog, Box::new(engine));
+    if let Some(writer) = super::library::play_log(app) {
+        handle.log_to(Box::new(writer));
+    }
     if let Some(path) = file {
         handle.play_file(path);
     }
@@ -168,6 +182,10 @@ pub fn start<R: Runtime>(app: &AppHandle<R>, file: Option<PathBuf>) -> anyhow::R
 pub fn stop<R: Runtime>(app: &AppHandle<R>) {
     if let Some(audio) = app.try_state::<AudioThread>() {
         audio.stop();
+    }
+    // The song that plays now ends with the app, and the history says so.
+    if let Some(handle) = app.try_state::<PlayerHandle>() {
+        lock(&handle.player).shutdown();
     }
 }
 

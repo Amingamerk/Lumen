@@ -3,6 +3,7 @@
 mod audio;
 mod catalog;
 mod ipc;
+mod library;
 mod queue;
 mod recs;
 mod resolver;
@@ -36,6 +37,7 @@ pub fn run() -> Result<(), tauri::Error> {
         .manage(ipc::SharedState::new(state::AppState::from_args(args)))
         .setup(move |app| {
             ipc::youtube::start(app.handle())?;
+            ipc::library::start(app.handle())?;
             ipc::playback::start(app.handle())?;
             Ok(ipc::player::start(app.handle(), play_file)?)
         })
@@ -62,6 +64,13 @@ pub fn run() -> Result<(), tauri::Error> {
             ipc::player::change_volume,
             ipc::player::get_queue,
             ipc::player::move_queue_entry,
+            ipc::library::get_library_summary,
+            ipc::library::like_track,
+            ipc::library::unlike_track,
+            ipc::library::get_liked_ids,
+            ipc::library::get_liked_slice,
+            ipc::library::get_recent_slice,
+            ipc::library::play_library_track,
             ipc::account::get_account_status,
             ipc::account::sign_in,
             ipc::account::disconnect,
@@ -73,6 +82,7 @@ pub fn run() -> Result<(), tauri::Error> {
             if matches!(event, RunEvent::Exit) {
                 ipc::playback::stop(app);
                 ipc::player::stop(app);
+                ipc::library::stop(app);
             }
         });
     Ok(())

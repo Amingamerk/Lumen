@@ -255,6 +255,12 @@ impl AppState {
         Ok(SearchPick::Samples { tracks, start })
     }
 
+    /// The Track with this id, from the live results on show or the catalog.
+    pub fn known_track(&self, id: Uuid) -> Option<Track> {
+        let live = self.search.live.iter().find(|track| track.id == id);
+        live.or_else(|| self.catalog.track(id)).cloned()
+    }
+
     /// Enter on the Search view. A ticket means YouTube Music has to be asked.
     /// The SoundCloud chip searches the sample catalog instead.
     pub fn submit_search(&mut self, query: &str, filter: SourceFilter) -> Submitted {
@@ -734,6 +740,18 @@ mod tests {
                 id: "fakeVideo01".to_owned(),
             }],
         }
+    }
+
+    #[test]
+    fn a_live_result_or_a_catalog_track_is_known_by_its_id() {
+        let mut state = AppState::default();
+        let ticket = submit(&mut state, "paper");
+        state.finish_search(ticket.number, songs("Live")).unwrap();
+        let sample = state.catalog().recommendable()[0].clone();
+
+        assert_eq!(state.known_track(song("Live").id), Some(song("Live")));
+        assert_eq!(state.known_track(sample.id), Some(sample));
+        assert_eq!(state.known_track(Uuid::from_u128(999_999)), None);
     }
 
     fn songs(title: &str) -> Result<Parsed, ServiceError> {
