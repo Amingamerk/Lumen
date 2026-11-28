@@ -78,7 +78,7 @@ pub async fn respond<F: Fetch, C: Clock>(
 /// so starting the app does not count what is on disk.
 pub struct ArtHandle {
     dir: PathBuf,
-    cache: OnceCell<Result<ArtCache<HttpFetch>, ArtError>>,
+    cache: OnceCell<ArtCache<HttpFetch>>,
 }
 
 impl ArtHandle {
@@ -89,10 +89,10 @@ impl ArtHandle {
         }
     }
 
+    /// A failed open is not kept, so the next picture tries again.
     async fn cache(&self) -> Result<&ArtCache<HttpFetch>, ArtError> {
-        let opened = self
-            .cache
-            .get_or_init(|| async {
+        self.cache
+            .get_or_try_init(|| async {
                 let dir = self.dir.clone();
                 tokio::task::spawn_blocking(move || {
                     ArtCache::open(
@@ -105,8 +105,7 @@ impl ArtHandle {
                 .await
                 .unwrap_or_else(|_| Err(ArtError::Disk("opening was cut short".to_owned())))
             })
-            .await;
-        opened.as_ref().map_err(Clone::clone)
+            .await
     }
 }
 
