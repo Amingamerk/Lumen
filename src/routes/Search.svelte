@@ -10,6 +10,7 @@
   import type { AccountStatus, SearchKind, ServiceStatus, SourceFilter } from '../lib/ipc';
   import type { CatalogStore } from '../lib/stores/catalog.svelte';
   import type { LibraryStore } from '../lib/stores/library.svelte';
+  import type { QueuePlacement } from '../lib/ipc';
   import type { PlaylistsStore } from '../lib/stores/playlists.svelte';
 
   interface Props {
@@ -24,6 +25,7 @@
     onresume: () => void;
     /** Plays the chosen result. */
     onplay: (trackId: string) => void;
+    onqueue: (trackId: string, placement: QueuePlacement) => void;
     /** Ctrl+F asked for the search box. */
     focusWanted: boolean;
     onfocused: () => void;
@@ -38,6 +40,7 @@
     onsignin,
     onresume,
     onplay,
+    onqueue,
     focusWanted,
     onfocused,
   }: Props = $props();
@@ -274,6 +277,7 @@
             tracks={found.tracks}
             labelledby="search-tracks"
             {onplay}
+            {onqueue}
             liked={(id) => library.isLiked(id)}
             onlike={(id) => void library.toggle(id)}
             onadd={(row) => playlists.choose({ trackId: row.id, title: row.title })}

@@ -18,6 +18,8 @@ pub enum QueueError {
     OutOfRange { index: usize, len: usize },
     #[error("no queue entry has the key {key}")]
     UnknownEntry { key: u32 },
+    #[error("the entry {key} is playing or has played, so it cannot be removed")]
+    NotUpcoming { key: u32 },
 }
 
 /// Entries in play order with one of them current. History is the entries before
@@ -69,6 +71,75 @@ impl Queue {
         let entry = self.entry(track, true);
         self.entries.push(entry);
         self.revision += 1;
+    }
+
+    /// Puts a song right after the current entry, ahead of what was queued
+    /// before. On an empty Queue it becomes the only entry. Returns its key.
+    pub fn insert_next(&mut self, track: Uuid) -> u32 {
+        let entry = self.entry(track, false);
+        let key = entry.key;
+        let at = if self.entries.is_empty() {
+            0
+        } else {
+            self.current + 1
+        };
+        self.entries.insert(at, entry);
+        self.revision += 1;
+        key
+    }
+
+    /// Puts a song after the entries the user queued and ahead of the
+    /// Recommender's picks. Returns its key.
+    pub fn insert_last(&mut self, track: Uuid) -> u32 {
+        let entry = self.entry(track, false);
+        let key = entry.key;
+        let start = if self.entries.is_empty() {
+            0
+        } else {
+            self.current + 1
+        };
+        let at = self.entries[start..]
+            .iter()
+            .position(|e| e.autoplay)
+            .map_or(self.entries.len(), |n| start + n);
+        self.entries.insert(at, entry);
+        self.revision += 1;
+        key
+    }
+
+    /// Makes `track` the current entry of an empty Queue under a key that
+    /// `clear` handed out, for the song that is already playing.
+    pub fn adopt(&mut self, key: u32, track: Uuid) {
+        self.entries.clear();
+        self.entries.push(Entry {
+            key,
+            track,
+            autoplay: false,
+        });
+        self.current = 0;
+        self.revision += 1;
+    }
+
+    /// Takes one upcoming entry out.
+    pub fn remove(&mut self, key: u32) -> Result<(), QueueError> {
+        let at = self.index_of(key)?;
+        if at <= self.current {
+            return Err(QueueError::NotUpcoming { key });
+        }
+        self.entries.remove(at);
+        self.revision += 1;
+        Ok(())
+    }
+
+    /// Drops every upcoming entry. Returns whether there were any.
+    pub fn clear_upcoming(&mut self) -> bool {
+        let keep = (self.current + 1).min(self.entries.len());
+        if self.entries.len() == keep {
+            return false;
+        }
+        self.entries.truncate(keep);
+        self.revision += 1;
+        true
     }
 
     /// Empties the Queue and returns a key no entry has had, for what plays
@@ -386,6 +457,148 @@ mod tests {
             .move_before(key(&queue, 5), Some(key(&queue, 2)))
             .unwrap();
         assert_eq!(queue.revision(), 4);
+    }
+
+    #[test]
+    fn play_next_on_an_empty_upcoming_list_goes_right_after_current() {
+        let mut queue = five(4);
+        let revision = queue.revision();
+
+        let key = queue.insert_next(id(9));
+
+        assert_eq!(numbers(queue.upcoming()), [9]);
+        assert_eq!(queue.upcoming()[0].key, key);
+        assert!(!queue.upcoming()[0].autoplay);
+        assert_eq!(current(&queue), 5);
+        assert_eq!(queue.revision(), revision + 1);
+    }
+
+    #[test]
+    fn two_play_nexts_keep_the_last_one_first() {
+        let mut queue = five(0);
+
+        queue.insert_next(id(8));
+        queue.insert_next(id(9));
+
+        assert_eq!(numbers(queue.upcoming()), [9, 8, 2, 3, 4, 5]);
+        assert_eq!(current(&queue), 1);
+    }
+
+    #[test]
+    fn add_to_queue_goes_after_the_users_entries_and_before_the_picks() {
+        let mut queue = five(3);
+        queue.append_autoplay(id(7));
+
+        queue.insert_last(id(8));
+        queue.insert_last(id(9));
+
+        assert_eq!(numbers(queue.upcoming()), [5, 8, 9, 7]);
+    }
+
+    #[test]
+    fn the_same_track_queued_twice_is_two_entries_with_unique_keys() {
+        let mut queue = five(0);
+
+        let first = queue.insert_next(id(2));
+        let second = queue.insert_last(id(2));
+
+        assert_ne!(first, second);
+        let keys: Vec<u32> = queue.entries.iter().map(|e| e.key).collect();
+        let mut unique = keys.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), keys.len());
+    }
+
+    #[test]
+    fn removing_an_unknown_key_errors_and_changes_nothing() {
+        let mut queue = five(0);
+        let revision = queue.revision();
+
+        assert_eq!(
+            queue.remove(999),
+            Err(QueueError::UnknownEntry { key: 999 })
+        );
+
+        assert_eq!(queue.revision(), revision);
+        assert_eq!(numbers(&queue.entries), [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn the_current_and_played_entries_cannot_be_removed() {
+        let mut queue = five(2);
+
+        assert_eq!(
+            queue.remove(key(&queue, 3)),
+            Err(QueueError::NotUpcoming {
+                key: key(&queue, 3)
+            })
+        );
+        assert_eq!(
+            queue.remove(key(&queue, 1)),
+            Err(QueueError::NotUpcoming {
+                key: key(&queue, 1)
+            })
+        );
+        assert_eq!(numbers(&queue.entries), [1, 2, 3, 4, 5]);
+    }
+
+    #[test]
+    fn removing_an_upcoming_entry_keeps_the_rest_and_never_reuses_its_key() {
+        let mut queue = five(0);
+        let gone = key(&queue, 3);
+        let revision = queue.revision();
+
+        queue.remove(gone).unwrap();
+
+        assert_eq!(numbers(queue.upcoming()), [2, 4, 5]);
+        assert_eq!(queue.revision(), revision + 1);
+        assert!(queue.insert_next(id(3)) != gone);
+    }
+
+    #[test]
+    fn clearing_keeps_the_current_entry_and_the_history() {
+        let mut queue = five(2);
+
+        assert!(queue.clear_upcoming());
+
+        assert_eq!(current(&queue), 3);
+        assert_eq!(numbers(queue.history()), [1, 2]);
+        assert!(queue.upcoming().is_empty());
+    }
+
+    #[test]
+    fn clearing_nothing_changes_nothing() {
+        let mut queue = five(4);
+        let revision = queue.revision();
+
+        assert!(!queue.clear_upcoming());
+
+        assert_eq!(queue.revision(), revision);
+    }
+
+    #[test]
+    fn reordering_by_key_works_after_an_insert() {
+        let mut queue = five(0);
+        let added = queue.insert_next(id(9));
+
+        queue.move_before(key(&queue, 5), Some(added)).unwrap();
+        queue.move_before(added, None).unwrap();
+
+        assert_eq!(numbers(queue.upcoming()), [5, 2, 3, 4, 9]);
+    }
+
+    #[test]
+    fn an_adopted_song_is_current_under_its_old_key() {
+        let mut queue = Queue::default();
+        let key = queue.clear();
+
+        queue.adopt(key, id(4));
+        let next = queue.insert_next(id(5));
+
+        assert_eq!((queue.current().unwrap().key, current(&queue)), (key, 4));
+        assert_ne!(next, key);
+        assert_eq!(numbers(queue.upcoming()), [5]);
     }
 
     #[test]

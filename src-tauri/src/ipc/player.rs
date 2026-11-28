@@ -10,11 +10,11 @@ use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::account::AccountHandle;
-use super::library::blocking;
+use super::library::{LibraryHandle, blocking, find_track};
 use super::playback::{AppResolver, play_stream, resolve_in_background};
 use super::{EventSink, IpcError, SharedState, lock, recovery};
 use crate::audio::{
-    Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Player, PlayerError,
+    Engine, EngineEvent, Media, MpvEngine, MpvEvents, MpvShutdown, Placement, Player, PlayerError,
     PlayerEvent, PlayerState, QueueSlice, TrackLookup, file_media,
 };
 use crate::catalog::{Catalog, Track, TrackRow};
@@ -94,6 +94,16 @@ impl PlayerHandle {
         start: usize,
     ) -> Result<(), IpcError> {
         command(self, sink, |p| p.play_list(tracks, start).map(Some))
+    }
+
+    /// Adds a song the library knows to the Queue and announces it.
+    pub fn enqueue(
+        &self,
+        sink: &impl EventSink,
+        track: Uuid,
+        placement: Placement,
+    ) -> Result<(), IpcError> {
+        command(self, sink, |p| p.enqueue(track, placement))
     }
 
     /// Shows `row` as loading and announces it.
@@ -394,6 +404,63 @@ pub fn move_queue_entry<R: Runtime>(
     before: Option<u32>,
 ) -> Result<(), IpcError> {
     command(&player, &app, |p| p.move_queue_entry(key, before))
+}
+
+/// Adds a song to the Queue: one of the results on show, a catalog song, what
+/// plays now or one the library holds. The song is kept in the library first,
+/// so the Queue finds it by id, and nothing is asked of any service.
+#[tauri::command]
+pub async fn queue_track<R: Runtime>(
+    app: AppHandle<R>,
+    state: State<'_, SharedState>,
+    player: State<'_, PlayerHandle>,
+    library: State<'_, LibraryHandle>,
+    track_id: Uuid,
+    placement: Placement,
+) -> Result<(), IpcError> {
+    // The app's lock is released before the player's is taken.
+    let (known, is_sample) = {
+        let state = lock(&state);
+        (
+            state.known_track(track_id),
+            state.catalog().track(track_id).is_some(),
+        )
+    };
+    let current = player.current_track();
+    let known = known.or_else(|| current.clone().filter(|track| track.id == track_id));
+    let handle = library.inner().clone();
+    let id = blocking(move || {
+        if is_sample {
+            return Ok(track_id);
+        }
+        let track = find_track(&handle, known, track_id)?;
+        let library = handle.library()?;
+        // A stand-alone song that plays now becomes the first entry.
+        if let Some(current) = current {
+            library.keep(&current)?;
+        }
+        Ok(library.keep(&track)?)
+    })
+    .await?;
+    player.enqueue(&app, id, placement)
+}
+
+#[tauri::command]
+pub fn remove_queue_entry<R: Runtime>(
+    app: AppHandle<R>,
+    player: State<'_, PlayerHandle>,
+    key: u32,
+) -> Result<(), IpcError> {
+    command(&player, &app, |p| p.remove_queue_entry(key).map(Some))
+}
+
+/// Drops the upcoming entries. The current song keeps playing.
+#[tauri::command]
+pub fn clear_queue<R: Runtime>(
+    app: AppHandle<R>,
+    player: State<'_, PlayerHandle>,
+) -> Result<(), IpcError> {
+    command(&player, &app, |p| Ok(p.clear_queue()))
 }
 
 #[cfg(test)]
