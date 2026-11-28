@@ -16,7 +16,8 @@ use super::*;
 use crate::audio::{EngineEvent, FakeEngine, PlaybackStatus, Player};
 use crate::catalog::TrackRow;
 use crate::recs::StaticRecommender;
-use crate::resolver::{ProcessOutput, ResolveError, YtDlp, YtDlpResolver};
+use crate::resolver::testing::FakeResolver;
+use crate::resolver::{ProcessOutput, ResolveError, StreamInfo, YtDlp, YtDlpResolver};
 use crate::secrets::fake::MemoryStore;
 use crate::sources::youtube::testing::{
     FakeClock, FakeTransport, TempDir, music_page, signed_in_cookies,
@@ -335,4 +336,48 @@ async fn giving_up_counts_one_failure_at_the_gate() {
     assert!(rig.youtube.ready().is_ok());
     rig.youtube.count_failure();
     assert!(rig.youtube.ready().is_err());
+}
+
+#[tokio::test]
+async fn a_resolver_that_refuses_ends_the_recovery_without_yt_dlp() {
+    let rig = playing().await;
+    rig.fail();
+    let request = rig.due();
+    let resolver = FakeResolver::default();
+    resolver.answer(Err(ResolveError::BotCheck));
+
+    fetch(&rig.player, &resolver, &rig.sink, request).await;
+
+    assert_eq!(rig.status(), PlaybackStatus::Error);
+    assert!(rig.error().contains(&ResolveError::BotCheck.to_string()));
+    assert_eq!(resolver.resolved(), [youtube_ref(VIDEO)]);
+    assert_eq!(rig.runs(), 1);
+}
+
+#[tokio::test]
+async fn a_refused_stream_is_forgotten_by_the_resolver_in_use() {
+    let rig = playing().await;
+    rig.fail();
+    let resolver = FakeResolver::default();
+
+    step(&rig.player, &rig.youtube, &resolver, &rig.sink);
+
+    assert_eq!(resolver.forgotten(), [youtube_ref(VIDEO)]);
+}
+
+#[tokio::test]
+async fn a_resolver_that_answers_gives_the_player_its_stream() {
+    let rig = playing().await;
+    rig.fail();
+    let request = rig.due();
+    let resolver = FakeResolver::default();
+    resolver.answer(Ok(StreamInfo::fake(
+        "https://a.googlevideo.com/fresh",
+        NOW_MS / 1_000 + 21_600,
+    )));
+
+    fetch(&rig.player, &resolver, &rig.sink, request).await;
+
+    assert_eq!(rig.loads(), 2);
+    assert_eq!(rig.runs(), 1);
 }

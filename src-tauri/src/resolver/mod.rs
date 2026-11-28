@@ -397,3 +397,58 @@ where
         }
     }
 }
+
+/// A stand-in for a resolver, for the tests of the modules that use one.
+#[cfg(test)]
+pub(crate) mod testing {
+    use std::collections::VecDeque;
+
+    use super::*;
+
+    /// Gives the queued answers in order and remembers what it was asked.
+    #[derive(Default)]
+    pub struct FakeResolver {
+        answers: Mutex<VecDeque<Result<StreamInfo, ResolveError>>>,
+        resolved: Mutex<Vec<SourceRef>>,
+        forgotten: Mutex<Vec<SourceRef>>,
+    }
+
+    impl FakeResolver {
+        pub fn answer(&self, answer: Result<StreamInfo, ResolveError>) {
+            self.answers.lock().unwrap().push_back(answer);
+        }
+
+        pub fn resolved(&self) -> Vec<SourceRef> {
+            self.resolved.lock().unwrap().clone()
+        }
+
+        pub fn forgotten(&self) -> Vec<SourceRef> {
+            self.forgotten.lock().unwrap().clone()
+        }
+    }
+
+    impl Resolver for FakeResolver {
+        async fn resolve(
+            &self,
+            reference: &SourceRef,
+            wanted: impl Fn() -> bool + Send + Sync,
+        ) -> Result<StreamInfo, ResolveError> {
+            self.resolved.lock().unwrap().push(reference.clone());
+            if !wanted() {
+                return Err(
+                    ServiceError::Gate(crate::sources::youtube::GateError::Superseded).into(),
+                );
+            }
+            let answer = self.answers.lock().unwrap().pop_front();
+            answer.unwrap_or(Err(ResolveError::Failed))
+        }
+
+        fn forget(&self, reference: &SourceRef) {
+            self.forgotten.lock().unwrap().push(reference.clone());
+        }
+
+        fn forget_all(&self) {
+            self.forgotten.lock().unwrap().clear();
+        }
+    }
+}
