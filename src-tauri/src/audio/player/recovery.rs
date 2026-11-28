@@ -369,7 +369,8 @@ impl<E: Engine> Player<E> {
         self.direct.as_ref()?.recovery.planned.as_ref()
     }
 
-    fn resolving_current(&self) -> bool {
+    /// Whether the current song is the one being resolved ahead.
+    pub(super) fn resolving_current(&self) -> bool {
         let current = self.direct.as_ref().and_then(|d| d.video.as_deref());
         current.is_some() && current == self.ahead.resolving()
     }

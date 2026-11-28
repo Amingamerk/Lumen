@@ -1,7 +1,7 @@
 //! Carries out what the player's stream recovery asks for: one watcher wakes
 //! when something changes or a deadline passes, resolves through the gate and
 //! hands the player what came of it. The same watcher runs the resolves ahead
-//! of the Queue, one at a time.
+//! of the Queue, one at a time, and the library reads they need.
 
 use std::future::Future;
 use std::pin::Pin;
@@ -15,8 +15,8 @@ use super::playback::{AppResolver, youtube_ref};
 use super::player::AppPlayer;
 use super::youtube::Service;
 use super::{EventSink, lock};
-use crate::audio::{Fetch, NoStream, PlayerState};
-use crate::resolver::Resolver;
+use crate::audio::{Fetch, Lookup, NoStream, PlayerState};
+use crate::resolver::{ResolveError, Resolver};
 use crate::secrets::SecretStore;
 use crate::sources::youtube::{GateClock, GateView, Transport, YouTube};
 
@@ -27,12 +27,14 @@ enum Next {
     Fetch(Fetch),
     /// Resolve this before its turn, then look again.
     Ahead(Fetch),
+    /// Read the library for the entries to come, then look again.
+    LookUp(Lookup),
     /// Nothing to do until then, or until something changes.
     Sleep(Option<Duration>),
 }
 
-/// The resolve ahead in progress. Dropping it ends its run.
-type Running<'a> = (u32, Pin<Box<dyn Future<Output = ()> + Send + 'a>>);
+/// Work the watcher's loop does itself, between its looks at the player.
+type Work<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// Looks after the player for as long as the app runs. `wake` is told of every
 /// change to the player.
@@ -65,8 +67,10 @@ async fn look_after<S: SecretStore, T: Transport, G: GateClock>(
 ) {
     // A cool-down or an expired session shows here.
     let mut statuses = youtube.watch();
-    // It runs in here, one at a time, so that it can be dropped.
-    let mut ahead: Option<Running> = None;
+    // The resolve ahead runs in here, one at a time, so that it can be dropped,
+    // which ends its run.
+    let mut ahead: Option<(u32, Work<Option<PlayerState>>)> = None;
+    let mut looking: Option<Work<()>> = None;
     let mut account = youtube.account().generation();
     loop {
         let generation = youtube.account().generation();
@@ -83,6 +87,7 @@ async fn look_after<S: SecretStore, T: Transport, G: GateClock>(
                 let run = resolve_ahead(player, resolver, request);
                 ahead = Some((ticket, Box::pin(run)));
             }
+            Next::LookUp(lookup) => looking = Some(Box::pin(look_up(player, lookup))),
             Next::Sleep(wait) => tokio::select! {
                 () = wake.notified() => {}
                 changed = statuses.changed() => {
@@ -91,16 +96,20 @@ async fn look_after<S: SecretStore, T: Transport, G: GateClock>(
                     }
                 }
                 () = tokio::time::sleep(wait.unwrap_or_default()), if wait.is_some() => {}
-                () = finished(&mut ahead), if ahead.is_some() => ahead = None,
+                state = finished(ahead.as_mut().map(|(_, run)| run)), if ahead.is_some() => {
+                    ahead = None;
+                    announce(state, sink);
+                }
+                () = finished(looking.as_mut()), if looking.is_some() => looking = None,
             },
         }
     }
 }
 
-/// Returns once the resolve ahead is done; never without one.
-async fn finished(ahead: &mut Option<Running<'_>>) {
-    match ahead {
-        Some((_, run)) => run.await,
+/// Returns once `work` is done; never without any.
+async fn finished<T>(work: Option<&mut Work<'_, T>>) -> T {
+    match work {
+        Some(work) => work.await,
         None => std::future::pending().await,
     }
 }
@@ -140,19 +149,36 @@ fn step<S: SecretStore, T: Transport, G: GateClock>(
     if let Some(request) = player.due_fetch() {
         return Next::Fetch(request);
     }
-    match open.then(|| player.due_ahead()).flatten() {
-        Some(request) => Next::Ahead(request),
-        None => Next::Sleep(player.recovery_wake()),
+    if open {
+        if let Some(lookup) = player.due_lookup() {
+            return Next::LookUp(lookup);
+        }
+        if let Some(request) = player.due_ahead() {
+            return Next::Ahead(request);
+        }
     }
+    Next::Sleep(player.recovery_wake())
+}
+
+/// Reads the library on a blocking thread, with the player free meanwhile.
+async fn look_up(player: &Mutex<AppPlayer>, lookup: Lookup) {
+    let lost = lookup.unanswered();
+    let found = tokio::task::spawn_blocking(move || lookup.run()).await;
+    lock(player).learn(found.unwrap_or(lost));
 }
 
 /// Resolves an entry before its turn. The resolver keeps the stream, which the
-/// entry's own fetch then finds. Dropping this ends the run.
-async fn resolve_ahead(player: &Mutex<AppPlayer>, resolver: &impl Resolver, request: Fetch) {
-    let wanted = || lock(player).awaits_ahead(request.ticket);
+/// entry's own fetch then finds. Dropping this ends the run. The change to
+/// announce, if the current song was waiting and got none.
+async fn resolve_ahead(
+    player: &Mutex<AppPlayer>,
+    resolver: &impl Resolver,
+    request: Fetch,
+) -> Option<PlayerState> {
+    let wanted = || lock(player).may_run_ahead(request.ticket);
     let outcome = resolver.resolve(&youtube_ref(&request.video), wanted).await;
-    let expires_at = outcome.ok().and_then(|stream| stream.expires_at);
-    lock(player).finish_ahead(request.ticket, expires_at);
+    let outcome = outcome.map(|stream| stream.expires_at).map_err(no_stream);
+    lock(player).finish_ahead(request.ticket, outcome)
 }
 
 /// Resolves the stream asked for and hands the player the outcome, unless
@@ -168,13 +194,18 @@ async fn fetch(
         .resolve(&youtube_ref(&request.video), wanted)
         .await
         .map(|stream| stream.media())
-        .map_err(|error| NoStream {
-            reason: error.to_string(),
-            retry: error.worth_retrying(),
-            skip: error.is_about_the_song(),
-        });
+        .map_err(no_stream);
     let finished = lock(player).finish_fetch(request.ticket, outcome);
     announce(finished, sink);
+}
+
+/// What the player makes of a resolve that gave no stream.
+fn no_stream(error: ResolveError) -> NoStream {
+    NoStream {
+        reason: error.to_string(),
+        retry: error.worth_retrying(),
+        skip: error.is_about_the_song(),
+    }
 }
 
 fn announce(state: Option<PlayerState>, sink: &impl EventSink) {

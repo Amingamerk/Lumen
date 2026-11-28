@@ -53,6 +53,8 @@ impl GateClock for SystemClock {
 pub(crate) mod fake {
     use std::sync::{Arc, Mutex};
 
+    use tokio::sync::oneshot;
+
     use super::*;
 
     /// Time that moves only when slept or advanced. Clones share it.
@@ -66,6 +68,7 @@ pub(crate) mod fake {
         wall_ms: u64,
         monotonic: Duration,
         slept: Vec<Duration>,
+        held: Option<oneshot::Receiver<()>>,
     }
 
     impl FakeClock {
@@ -84,6 +87,13 @@ pub(crate) mod fake {
         pub fn slept(&self) -> Vec<Duration> {
             self.inner.lock().unwrap().slept.clone()
         }
+
+        /// The next sleep lasts until this is sent to or dropped.
+        pub fn hold_next_sleep(&self) -> oneshot::Sender<()> {
+            let (release, held) = oneshot::channel();
+            self.inner.lock().unwrap().held = Some(held);
+            release
+        }
     }
 
     impl GateClock for FakeClock {
@@ -96,7 +106,14 @@ pub(crate) mod fake {
         }
 
         async fn sleep(&self, duration: Duration) {
-            self.inner.lock().unwrap().slept.push(duration);
+            let held = {
+                let mut time = self.inner.lock().unwrap();
+                time.slept.push(duration);
+                time.held.take()
+            };
+            if let Some(held) = held {
+                let _ = held.await;
+            }
             self.advance(duration);
         }
 

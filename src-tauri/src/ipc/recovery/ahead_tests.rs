@@ -4,9 +4,10 @@
 use std::collections::VecDeque;
 use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
+use std::thread::{self, ThreadId};
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use tokio::sync::{Notify, oneshot};
@@ -15,8 +16,10 @@ use uuid::Uuid;
 
 use super::super::tests::RecordingSink;
 use super::*;
-use crate::audio::{EngineEvent, FakeEngine, FakeTracks, Placement, PlaybackStatus, Player};
-use crate::catalog::{Catalog, TrackRow};
+use crate::audio::{
+    EngineEvent, FakeEngine, FakeTracks, Placement, PlaybackStatus, Player, TrackLookup,
+};
+use crate::catalog::{Catalog, Track, TrackRow};
 use crate::queue::Repeat;
 use crate::recs::StaticRecommender;
 use crate::resolver::testing::FakeResolver;
@@ -58,7 +61,7 @@ fn sign_in(youtube: &Service) {
 }
 
 fn rig_with<R: Resolver>(
-    tracks: FakeTracks,
+    tracks: impl TrackLookup + 'static,
     resolver: impl FnOnce(&FakeClock, &Arc<Service>) -> R,
 ) -> Rig<R> {
     let gate = TempDir::new();
@@ -101,13 +104,22 @@ fn stream() -> StreamInfo {
     StreamInfo::fake("https://a.googlevideo.com/x", NOW_MS / 1_000 + 21_600)
 }
 
-async fn settle() {
-    for _ in 0..20 {
-        yield_now().await;
-    }
-}
-
 impl<R: Resolver> Rig<R> {
+    /// Lets the watcher do all it can, and gives a library read, which runs on
+    /// a thread of its own, up to a second to come back.
+    async fn settle(&self) {
+        let deadline = Instant::now() + SECOND;
+        loop {
+            for _ in 0..20 {
+                yield_now().await;
+            }
+            if !lock(&self.player).looking_up() || Instant::now() >= deadline {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     /// Runs `script` while the watcher looks after the player.
     async fn watching(&self, script: impl Future<Output = ()>) {
         let watcher = look_after(
@@ -127,7 +139,7 @@ impl<R: Resolver> Rig<R> {
     /// Does one thing to the player and lets the watcher react.
     async fn act<T>(&self, act: impl FnOnce(&mut AppPlayer) -> T) -> T {
         let done = act(&mut lock(&self.player));
-        settle().await;
+        self.settle().await;
         done
     }
 
@@ -148,7 +160,7 @@ impl<R: Resolver> Rig<R> {
         let request = self.fetches.lock().unwrap().pop_front();
         let request = request.expect("the current song asks for its stream");
         fetch(&self.player, &self.resolver, &self.sink, request).await;
-        settle().await;
+        self.settle().await;
     }
 
     /// The engine opens what it was given.
@@ -160,7 +172,7 @@ impl<R: Resolver> Rig<R> {
     async fn pass(&self, time: Duration) {
         self.clock.advance(time);
         self.wake.notify_one();
-        settle().await;
+        self.settle().await;
     }
 
     /// The fetches the current song waits for.
@@ -193,7 +205,7 @@ impl Rig {
 
     async fn answered(&self, answer: Answer) {
         answer.send(Ok(stream())).expect("the resolve still waits");
-        settle().await;
+        self.settle().await;
     }
 }
 
@@ -308,6 +320,55 @@ async fn skipping_to_the_entry_being_resolved_waits_for_that_answer() {
         rig.answered(pending).await;
         // Now the song asks for it, which the resolver has kept.
         assert_eq!(rig.waiting(), 1);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn an_unavailable_song_the_user_skipped_to_is_not_resolved_again() {
+    let rig = rig();
+
+    rig.watching(async {
+        let pending = rig.resolving_the_second(3).await;
+        rig.act(|p| p.next_track()).await;
+
+        pending.send(Err(ResolveError::Unavailable)).unwrap();
+        rig.settle().await;
+
+        assert_eq!(rig.asked(), ["v1", "v2"]);
+        let skipped = rig.sink.states.borrow().last().cloned().unwrap();
+        assert_eq!(
+            skipped.skipped.unwrap().message,
+            "Lumen skipped “Track 2”: this song is unavailable."
+        );
+        // Only the song that follows asks for its stream.
+        let fetches: Vec<String> = rig
+            .fetches
+            .lock()
+            .unwrap()
+            .drain(..)
+            .map(|f| f.video)
+            .collect();
+        assert_eq!(fetches, ["v3"]);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_failure_the_skipped_to_song_waited_for_is_retried_after_a_wait() {
+    let rig = rig();
+
+    rig.watching(async {
+        let pending = rig.resolving_the_second(3).await;
+        rig.act(|p| p.next_track()).await;
+
+        pending.send(Err(ResolveError::Failed)).unwrap();
+        rig.settle().await;
+        assert_eq!(rig.waiting(), 0);
+
+        rig.pass(2 * SECOND).await;
+        assert_eq!(rig.waiting(), 1);
+        assert_eq!(rig.asked(), ["v1", "v2"]);
     })
     .await;
 }
@@ -448,6 +509,26 @@ async fn removing_or_clearing_the_entry_ends_its_resolve() {
 }
 
 #[tokio::test]
+async fn queueing_a_song_with_nothing_to_resolve_leaves_the_pending_resolve() {
+    let tracks = FakeTracks::of(3);
+    let mut silent = FakeTracks::track(10);
+    silent.sources.clear();
+    tracks.add(silent);
+    let rig = rig_with(tracks, |_, _| FakeResolver::default());
+
+    rig.watching(async {
+        let pending = rig.resolving_the_second(3).await;
+
+        rig.act(|p| p.enqueue(Uuid::from_u128(10), Placement::Next).unwrap())
+            .await;
+
+        assert!(!pending.is_closed());
+        assert_eq!(rig.asked(), ["v1", "v2"]);
+    })
+    .await;
+}
+
+#[tokio::test]
 async fn a_shuffle_that_moves_the_next_entry_ends_its_resolve() {
     let rig = rig();
 
@@ -573,14 +654,14 @@ async fn a_paused_gate_ends_and_holds_back_the_resolve_ahead() {
         for _ in 0..3 {
             rig.youtube.count_failure();
         }
-        settle().await;
+        rig.settle().await;
         rig.pass(5 * SECOND).await;
 
         assert!(pending.is_closed());
         assert_eq!(rig.asked(), ["v1", "v2"]);
         rig.answer_all();
         rig.youtube.resume();
-        settle().await;
+        rig.settle().await;
         assert_eq!(rig.asked(), ["v1", "v2", "v2", "v3"]);
     })
     .await;
@@ -616,6 +697,100 @@ async fn a_stream_that_grew_too_old_is_resolved_ahead_again() {
         rig.act(|p| p.toggle_play()).await;
 
         assert_eq!(rig.asked().iter().filter(|v| *v == "v2").count(), 2);
+    })
+    .await;
+}
+
+/// The next read of this Track waits to be released.
+type SlowRead = (Uuid, mpsc::Receiver<()>);
+
+/// A library that notes which thread reads each Track, and can be slow about
+/// one of them.
+#[derive(Clone)]
+struct SlowLibrary {
+    tracks: FakeTracks,
+    reads: Arc<Mutex<Vec<(Uuid, ThreadId)>>>,
+    slow: Arc<Mutex<Option<SlowRead>>>,
+    /// Nobody released it in time.
+    waited_out: Arc<AtomicBool>,
+}
+
+impl SlowLibrary {
+    fn new() -> Self {
+        Self {
+            tracks: FakeTracks::of(9),
+            reads: Arc::default(),
+            slow: Arc::default(),
+            waited_out: Arc::default(),
+        }
+    }
+
+    fn readers_of(&self, n: u128) -> Vec<ThreadId> {
+        let reads = self.reads.lock().unwrap();
+        let of = reads.iter().filter(|(id, _)| *id == Uuid::from_u128(n));
+        of.map(|&(_, thread)| thread).collect()
+    }
+}
+
+impl TrackLookup for SlowLibrary {
+    fn track(&self, id: Uuid) -> Option<Track> {
+        self.reads
+            .lock()
+            .unwrap()
+            .push((id, thread::current().id()));
+        let slow = self.slow.lock().unwrap().take_if(|(slow, _)| *slow == id);
+        if let Some((_, release)) = slow
+            && release.recv_timeout(10 * SECOND).is_err()
+        {
+            self.waited_out.store(true, Ordering::SeqCst);
+        }
+        self.tracks.track(id)
+    }
+}
+
+#[tokio::test]
+async fn each_entry_to_come_is_read_once_and_away_from_the_watcher() {
+    let library = SlowLibrary::new();
+    let rig = rig_with(library.clone(), |_, _| FakeResolver::default());
+
+    rig.watching(async {
+        rig.answer_all();
+        rig.start(3).await;
+        for volume in [10, 20, 30] {
+            rig.act(|p| p.set_volume(volume)).await;
+            rig.pass(SECOND).await;
+        }
+
+        assert_eq!(rig.asked(), ["v1", "v2", "v3"]);
+        for n in [2, 3] {
+            let readers = library.readers_of(n);
+            assert_eq!(readers.len(), 1, "Track {n}");
+            assert_ne!(readers[0], thread::current().id(), "Track {n}");
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_slow_library_does_not_hold_the_player() {
+    let library = SlowLibrary::new();
+    let (release, slow) = mpsc::channel();
+    *library.slow.lock().unwrap() = Some((Uuid::from_u128(3), slow));
+    let rig = rig_with(library.clone(), |_, _| FakeResolver::default());
+
+    rig.watching(async {
+        rig.answer_all();
+        rig.start(3).await;
+
+        assert!(rig.player.try_lock().is_ok());
+        rig.act(|p| p.set_volume(10)).await;
+        // Nothing is asked for before it is known what comes.
+        assert_eq!(rig.asked(), ["v1"]);
+
+        release.send(()).unwrap();
+        rig.settle().await;
+        assert_eq!(rig.asked(), ["v1", "v2", "v3"]);
+        assert!(!library.waited_out.load(Ordering::SeqCst));
     })
     .await;
 }
@@ -745,7 +920,7 @@ async fn skipping_to_the_entry_yt_dlp_is_on_starts_no_second_run() {
 
         rig.act(|p| p.next_track()).await;
         release.send(()).unwrap();
-        settle().await;
+        rig.settle().await;
         rig.current_resolves().await;
 
         assert_eq!(*ytdlp.runs.lock().unwrap(), videos(&[1, 2]));
@@ -770,6 +945,29 @@ async fn a_song_started_during_a_run_ahead_never_runs_beside_it() {
         assert_eq!(*ytdlp.runs.lock().unwrap(), videos(&[1, 2, 7]));
         assert_eq!(ytdlp.most_alive.load(Ordering::SeqCst), 1);
         assert_eq!(rig.engine.fake().loads.len(), 2);
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_pause_while_the_gate_spaces_runs_starts_no_run_ahead() {
+    let (rig, ytdlp, _jars) = real();
+
+    rig.watching(async {
+        rig.act(|p| p.play_list(FakeTracks::ids(3), 0).unwrap())
+            .await;
+        rig.current_resolves().await;
+        let spaced = rig.clock.hold_next_sleep();
+        rig.open().await;
+
+        rig.act(|p| p.toggle_play()).await;
+        spaced.send(()).unwrap();
+        rig.settle().await;
+        assert_eq!(*ytdlp.runs.lock().unwrap(), videos(&[1]));
+
+        // It did not count as failed.
+        rig.act(|p| p.toggle_play()).await;
+        assert_eq!(*ytdlp.runs.lock().unwrap(), videos(&[1, 2, 3]));
     })
     .await;
 }

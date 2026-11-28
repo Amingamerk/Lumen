@@ -22,6 +22,7 @@ mod modes;
 mod recovery;
 
 use ahead::Ahead;
+pub use ahead::Lookup;
 use entries::NoTracks;
 pub use entries::{Placement, TrackLookup};
 use recovery::PlayerClock;
@@ -82,7 +83,7 @@ pub struct Player<E: Engine> {
     recommender: Box<dyn Recommender>,
     queue: Queue,
     /// Where the Queue's library Tracks are found by id.
-    tracks: Box<dyn TrackLookup>,
+    tracks: Arc<dyn TrackLookup>,
     /// Set while real audio is loaded: of the current Queue entry, or by itself
     /// with the Queue empty.
     direct: Option<Direct>,
@@ -129,7 +130,7 @@ impl<E: Engine> Player<E> {
             catalog,
             recommender,
             queue: Queue::default(),
-            tracks: Box::new(NoTracks),
+            tracks: Arc::new(NoTracks),
             direct: None,
             skipped: None,
             skips: 0,

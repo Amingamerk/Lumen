@@ -262,9 +262,10 @@ Both traits use native `async fn` and are used through generics, so tests swap i
   into the same stream cache; moving on to one of them then starts no run. "Next" follows shuffle and
   repeat all; nothing is resolved ahead while one song repeats. A run is ended when its entry is no longer
   the one to resolve (queue edit, shuffle, skip), or when the current song needs a run of its own; a skip to
-  the entry being resolved waits for that run. A failed run is not repeated, and no more start until another
-  song is current. None starts while the song is paused or loading, or while the gate cools down or is paused.
-  Only stream URLs are fetched ahead, no audio.
+  the entry being resolved waits for that run and takes its failure as its own. A failed run is not repeated,
+  and no more start until another song is current. None starts while the song is paused or loading, also not
+  after waiting out the spacing, or while the gate cools down or is paused. Only stream URLs are fetched
+  ahead, no audio.
 - Gapless via mpv `playlist-append` of pre-resolved URLs (a suggestion, to be verified in a spike).
 - YouTube needs PO tokens / SABR handling in some clients. Bundle Deno + yt-dlp-ejs, optionally a token
   provider later, and auto-update yt-dlp.
